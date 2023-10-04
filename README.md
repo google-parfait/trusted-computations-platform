@@ -1,6 +1,7 @@
 # Trusted Computations Platform
 
-The Trusted Computations Platform project enables stateful rollback protected replicated computations using secure enclaves. This repository holds publicly
+The Trusted Computations Platform project enables stateful rollback protected 
+replicated computations using secure enclaves. This repository holds publicly
 verifiable components that run within enclaves and interact with user data.
 
 ## Contributing
