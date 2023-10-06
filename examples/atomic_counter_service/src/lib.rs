@@ -1,3 +1,3 @@
 #![no_std]
 
-extern crate trusted_raft;
+extern crate trusted;
