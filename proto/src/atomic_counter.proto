@@ -16,6 +16,8 @@ syntax = "proto3";
 
 package examples.atomic_counter;
 
+import "endpoint.proto";
+
 message CounterRequest {
   uint64 id = 1;
   string name = 2;
@@ -55,4 +57,17 @@ message CounterConfig {
 
 message CounterSnapshot {
   map<string, int64> values = 1;
+}
+
+service AtomicCounter {
+  // method_id: 1
+  rpc ReceiveMessage(Request) returns (Response) {}
+}
+
+message Request {
+  runtime.endpoint.EnvelopeIn in = 1;
+}
+
+message Response {
+  repeated runtime.endpoint.EnvelopeOut out = 1;
 }

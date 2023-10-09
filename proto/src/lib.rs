@@ -13,11 +13,13 @@
 // limitations under the License.
 
 #![no_std]
+#![feature(never_type)]
 
 extern crate prost;
 
 pub mod examples {
     pub mod atomic_counter {
+        use prost::Message;
         include!(concat!(env!("OUT_DIR"), "/examples.atomic_counter.rs"));
     }
 }

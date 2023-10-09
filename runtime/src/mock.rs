@@ -14,12 +14,13 @@
 
 #![cfg(all(test, feature = "std"))]
 extern crate mockall;
+extern crate tcp_proto;
 
 use self::mockall::mock;
 use consensus;
 use consensus::{Raft, RaftLightReady, RaftReady, Store};
 use model::{Actor, ActorContext, ActorError};
-use platform::{Attestation, Host, MessageEnvelope, PalError};
+use platform::{Attestation, Host, PalError};
 use raft::{
     eraftpb::ConfChange as RaftConfigChange, eraftpb::ConfState as RaftConfigState,
     eraftpb::Entry as RaftEntry, eraftpb::HardState as RaftHardState,
@@ -27,6 +28,7 @@ use raft::{
     GetEntriesContext as RaftGetEntriesContext, Storage as RaftStorage,
 };
 use slog::Logger;
+use tcp_proto::runtime::endpoint::EnvelopeOut;
 
 mock! {
     pub Actor {
@@ -56,7 +58,7 @@ mock! {
 
         fn get_self_config(&self) -> Vec<u8>;
 
-        fn send_messages(&mut self, messages: &[MessageEnvelope]);
+        fn send_messages(&mut self, messages: Vec<EnvelopeOut>);
 
         fn verify_peer_attestation(
             &self,

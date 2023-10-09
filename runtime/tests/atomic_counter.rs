@@ -25,19 +25,21 @@ extern crate tcp_runtime;
 use alloc::collections::BTreeMap;
 use alloc::string::String;
 use core::cell::RefCell;
+use core::mem;
 use hashbrown::HashMap;
 use prost::Message;
-use slog::{debug, warn};
+use slog::{debug, info, warn, Logger};
 use tcp_proto::examples::atomic_counter::{
     counter_request, counter_response, CounterCompareAndSwapRequest, CounterCompareAndSwapResponse,
     CounterConfig, CounterRequest, CounterResponse, CounterSnapshot, CounterStatus,
 };
 use tcp_proto::runtime::endpoint::*;
+use tcp_runtime::logger::log::create_logger;
 use tcp_runtime::{
     consensus::RaftSimple,
     driver::{Driver, DriverConfig},
     model::{Actor, ActorContext, ActorError},
-    platform::{Application, Attestation, Host, MessageEnvelope, PalError},
+    platform::{Application, Attestation, Host, PalError},
     storage::MemoryStorage,
 };
 
@@ -215,6 +217,7 @@ struct FakeCluster {
     platforms: HashMap<u64, FakePlatform>,
     leader_id: u64,
     pull_messages: Vec<EnvelopeOut>,
+    logger: Logger,
 }
 
 impl FakeCluster {
@@ -224,6 +227,7 @@ impl FakeCluster {
             platforms: HashMap::new(),
             leader_id: 0,
             pull_messages: Vec::new(),
+            logger: create_logger(0),
         }
     }
 
@@ -363,13 +367,18 @@ impl FakeCluster {
     }
 
     fn print_log_messages(&mut self) {
-        let _ = self.extract_pull_messages(&mut |envelope_out| match &envelope_out.msg {
-            Some(envelope_out::Msg::Log(log_message)) => {
-                println!("{}", log_message.message);
-                true
-            }
+        let messages = self.extract_pull_messages(&mut |envelope_out| match &envelope_out.msg {
+            Some(envelope_out::Msg::Log(_)) => true,
             _ => false,
         });
+        for message in &messages {
+            if let EnvelopeOut {
+                msg: Some(envelope_out::Msg::Log(log_message)),
+            } = message
+            {
+                info!(self.logger, "{}", log_message.message);
+            }
+        }
     }
 
     fn stop(&mut self) {}
@@ -525,11 +534,7 @@ impl FakePlatform {
     }
 
     fn send_messages_in(&mut self) {
-        let mut messages: Vec<MessageEnvelope> = Vec::with_capacity(self.messages_in.len());
-        for message_in in &self.messages_in {
-            messages.push(message_in.encode_to_vec());
-        }
-        self.messages_in.clear();
+        let messages = mem::take(&mut self.messages_in);
 
         let mut driver = self.driver.borrow_mut();
         let mut host = self.host.borrow_mut();
@@ -590,11 +595,8 @@ impl Host for FakeHost {
         self.config.clone()
     }
 
-    fn send_messages(&mut self, messages: &[MessageEnvelope]) {
-        for message_envelope in messages {
-            self.messages_out
-                .push(EnvelopeOut::decode(message_envelope.as_ref()).unwrap());
-        }
+    fn send_messages(&mut self, mut messages: Vec<EnvelopeOut>) {
+        self.messages_out.append(&mut messages);
     }
 
     fn verify_peer_attestation(

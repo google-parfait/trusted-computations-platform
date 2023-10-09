@@ -27,8 +27,7 @@ use core::{
     cell::{RefCell, RefMut},
     cmp, mem,
 };
-use platform::{Application, Host, MessageEnvelope, PalError};
-use prost::Message;
+use platform::{Application, Host, PalError};
 use raft::{
     eraftpb::ConfChangeType as RaftConfigChangeType, eraftpb::ConfState as RaftConfigState,
     eraftpb::Entry as RaftEntry, eraftpb::EntryType as RaftEntryType,
@@ -754,16 +753,6 @@ impl<R: Raft<S = S>, S: Store + RaftStorage, A: Actor> Driver<R, S, A> {
     fn stash_message(&mut self, message: envelope_out::Msg) {
         self.messages.push(EnvelopeOut { msg: Some(message) });
     }
-
-    fn send_messages(&mut self, host: &mut impl Host, out_messages: Vec<EnvelopeOut>) {
-        let mut serialized_out_messages: Vec<MessageEnvelope> =
-            Vec::with_capacity(out_messages.len());
-        for out_message in &out_messages {
-            serialized_out_messages.push(out_message.encode_to_vec());
-        }
-
-        host.send_messages(&serialized_out_messages);
-    }
 }
 
 impl<R: Raft<S = S>, S: Store + RaftStorage, A: Actor> Application for Driver<R, S, A> {
@@ -772,51 +761,44 @@ impl<R: Raft<S = S>, S: Store + RaftStorage, A: Actor> Application for Driver<R,
         &mut self,
         host: &mut impl Host,
         instant: u64,
-        opt_message: Option<MessageEnvelope>,
+        opt_message: Option<EnvelopeIn>,
     ) -> Result<(), PalError> {
         // Update state of the context that will remain unchanged while messages are
         // dispatched for processing.
         self.preset_state_machine(instant);
 
         // Dispatch incoming message for processing.
-        if let Some(serialized_message) = opt_message {
-            match EnvelopeIn::decode(serialized_message.as_ref()) {
-                Ok(deserialized_message) => match deserialized_message.msg {
-                    None => {
-                        warn!(self.logger, "Rejecting message: unknown");
-                        // Ignore unknown message.
-                        return Ok(());
-                    }
-                    Some(message) => {
-                        match message {
-                            envelope_in::Msg::StartNode(ref start_node_request) => self
-                                .process_start_node(
-                                    start_node_request,
-                                    host.get_self_config(),
-                                    host.get_self_attestation().public_signing_key(),
-                                ),
-                            envelope_in::Msg::StopNode(ref stop_node_request) => {
-                                self.process_stop_node(stop_node_request)
-                            }
-                            envelope_in::Msg::ChangeCluster(ref change_cluster_request) => {
-                                self.process_change_cluster(change_cluster_request)
-                            }
-                            envelope_in::Msg::CheckCluster(ref check_cluster_request) => {
-                                self.process_check_cluster(check_cluster_request)
-                            }
-                            envelope_in::Msg::DeliverMessage(ref deliver_message) => {
-                                self.process_deliver_message(deliver_message)
-                            }
-                            envelope_in::Msg::ExecuteProposal(ref execute_proposal_request) => {
-                                self.process_execute_proposal(execute_proposal_request)
-                            }
-                        }?;
-                    }
-                },
-                Err(e) => {
-                    warn!(self.logger, "Rejecting message: {}", e);
-                    // Ignore message that cannot be decoded.
+        if let Some(deserialized_message) = opt_message {
+            match deserialized_message.msg {
+                None => {
+                    warn!(self.logger, "Rejecting message: unknown");
+                    // Ignore unknown message.
                     return Ok(());
+                }
+                Some(message) => {
+                    match message {
+                        envelope_in::Msg::StartNode(ref start_node_request) => self
+                            .process_start_node(
+                                start_node_request,
+                                host.get_self_config(),
+                                host.get_self_attestation().public_signing_key(),
+                            ),
+                        envelope_in::Msg::StopNode(ref stop_node_request) => {
+                            self.process_stop_node(stop_node_request)
+                        }
+                        envelope_in::Msg::ChangeCluster(ref change_cluster_request) => {
+                            self.process_change_cluster(change_cluster_request)
+                        }
+                        envelope_in::Msg::CheckCluster(ref check_cluster_request) => {
+                            self.process_check_cluster(check_cluster_request)
+                        }
+                        envelope_in::Msg::DeliverMessage(ref deliver_message) => {
+                            self.process_deliver_message(deliver_message)
+                        }
+                        envelope_in::Msg::ExecuteProposal(ref execute_proposal_request) => {
+                            self.process_execute_proposal(execute_proposal_request)
+                        }
+                    }?;
                 }
             };
         }
@@ -828,7 +810,7 @@ impl<R: Raft<S = S>, S: Store + RaftStorage, A: Actor> Application for Driver<R,
         let out_messages = self.process_state_machine()?;
 
         // Send messages to Raft peers and consumers through the trusted host.
-        self.send_messages(host, out_messages);
+        host.send_messages(out_messages);
 
         Ok(())
     }
@@ -880,48 +862,45 @@ mod test {
         }
     }
 
-    fn create_start_node_request(leader: bool, node_id_hint: u64) -> MessageEnvelope {
+    fn create_start_node_request(leader: bool, node_id_hint: u64) -> EnvelopeIn {
         let envelope = EnvelopeIn {
             msg: Some(envelope_in::Msg::StartNode(StartNodeRequest {
                 is_leader: leader,
                 node_id_hint,
             })),
         };
-        envelope.encode_to_vec()
+        envelope
     }
 
     fn create_start_node_response(node_id: u64) -> envelope_out::Msg {
         envelope_out::Msg::StartNode(StartNodeResponse { node_id })
     }
 
-    fn create_stop_node_request() -> MessageEnvelope {
+    fn create_stop_node_request() -> EnvelopeIn {
         let envelope = EnvelopeIn {
             msg: Some(envelope_in::Msg::StopNode(StopNodeRequest {})),
         };
-        envelope.encode_to_vec()
+        envelope
     }
 
     fn create_stop_node_response() -> envelope_out::Msg {
         envelope_out::Msg::StopNode(StopNodeResponse {})
     }
 
-    fn create_execute_proposal_request(proposal_contents: Vec<u8>) -> MessageEnvelope {
+    fn create_execute_proposal_request(proposal_contents: Vec<u8>) -> EnvelopeIn {
         let envelope = EnvelopeIn {
             msg: Some(envelope_in::Msg::ExecuteProposal(ExecuteProposalRequest {
                 proposal_contents,
             })),
         };
-        envelope.encode_to_vec()
+        envelope
     }
 
     fn create_execute_proposal_response(result_contents: Vec<u8>) -> envelope_out::Msg {
         envelope_out::Msg::ExecuteProposal(ExecuteProposalResponse { result_contents })
     }
 
-    fn create_change_cluster_request(
-        node_id: u64,
-        change_type: ChangeClusterType,
-    ) -> MessageEnvelope {
+    fn create_change_cluster_request(node_id: u64, change_type: ChangeClusterType) -> EnvelopeIn {
         let envelope = EnvelopeIn {
             msg: Some(envelope_in::Msg::ChangeCluster(ChangeClusterRequest {
                 change_id: 1,
@@ -929,7 +908,7 @@ mod test {
                 change_type: change_type.into(),
             })),
         };
-        envelope.encode_to_vec()
+        envelope
     }
 
     fn create_change_cluster_response(change_status: ChangeClusterStatus) -> envelope_out::Msg {
@@ -939,11 +918,11 @@ mod test {
         })
     }
 
-    fn create_check_cluster_request() -> MessageEnvelope {
+    fn create_check_cluster_request() -> EnvelopeIn {
         let envelope = EnvelopeIn {
             msg: Some(envelope_in::Msg::CheckCluster(CheckClusterRequest {})),
         };
-        envelope.encode_to_vec()
+        envelope
     }
 
     fn create_check_cluster_response(raft_state: &RaftState) -> envelope_out::Msg {
@@ -955,7 +934,7 @@ mod test {
         })
     }
 
-    fn create_deliver_message_request(raft_message: &RaftMessage) -> MessageEnvelope {
+    fn create_deliver_message_request(raft_message: &RaftMessage) -> EnvelopeIn {
         let envelope = EnvelopeIn {
             msg: Some(envelope_in::Msg::DeliverMessage(DeliverMessage {
                 recipient_node_id: raft_message.to,
@@ -963,7 +942,7 @@ mod test {
                 message_contents: serialize_raft_message(raft_message).unwrap(),
             })),
         };
-        envelope.encode_to_vec()
+        envelope
     }
 
     fn create_deliver_message_response(raft_message: &RaftMessage) -> envelope_out::Msg {
@@ -976,11 +955,11 @@ mod test {
 
     fn create_send_messages_matcher(
         expected: Vec<envelope_out::Msg>,
-    ) -> impl Fn(&[MessageEnvelope]) -> bool {
-        move |envelopes: &[MessageEnvelope]| {
+    ) -> impl Fn(&Vec<EnvelopeOut>) -> bool {
+        move |envelopes: &Vec<EnvelopeOut>| {
             let actual: Vec<envelope_out::Msg> = envelopes
                 .iter()
-                .map(|m| EnvelopeOut::decode(m.as_ref()).unwrap().msg.unwrap())
+                .map(|m| m.msg.clone().unwrap())
                 .filter(|m| {
                     if let envelope_out::Msg::Log(_) = m {
                         return false;
