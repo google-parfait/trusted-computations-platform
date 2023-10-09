@@ -1,7 +1,7 @@
 cargo-features = ["per-package-target"]
 
 [package]
-name = "atomic_counter_enclave_app"
+name = "tcp_atomic_counter_enclave_app"
 version = "0.1.0"
 edition = "2021"
 license = "Apache-2.0"
@@ -14,9 +14,9 @@ oak_channel = { workspace = true }
 oak_core = { workspace = true }
 oak_enclave_runtime_support = { workspace = true }
 oak_restricted_kernel_api = { workspace = true }
-atomic_counter_service = { path = "../atomic_counter_service" }
+tcp_atomic_counter_service = { path = "../atomic_counter_service" }
 
 [[bin]]
-name = "atomic_counter_enclave_app"
+name = "tcp_atomic_counter_enclave_app"
 test = false
 bench = false

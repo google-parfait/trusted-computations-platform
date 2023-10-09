@@ -12,7 +12,12 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-#![no_std]
+use std::io::Result;
 
-extern crate prost;
-extern crate tcp_runtime;
+fn main() -> Result<()> {
+    micro_rpc_build::compile(
+        &["src/endpoint.proto", "src/atomic_counter.proto"],
+        &["src"],
+    );
+    Ok(())
+}

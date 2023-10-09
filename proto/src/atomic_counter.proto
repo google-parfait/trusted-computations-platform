@@ -13,7 +13,8 @@
 // limitations under the License.
 
 syntax = "proto3";
-package counter;
+
+package examples.atomic_counter;
 
 message CounterRequest {
   uint64 id = 1;

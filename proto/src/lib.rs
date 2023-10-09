@@ -12,33 +12,17 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-#![cfg_attr(not(feature = "std"), no_std)]
-#![cfg_attr(not(feature = "std"), feature(error_in_core))]
+#![no_std]
 
-extern crate alloc;
-#[cfg(feature = "std")]
-extern crate core;
-extern crate hashbrown;
 extern crate prost;
-extern crate raft;
-extern crate slog;
 
-pub mod endpoint {
-    #![allow(non_snake_case)]
-    include!(concat!(env!("OUT_DIR"), "/endpoint.rs"));
+pub mod examples {
+    pub mod atomic_counter {
+        include!(concat!(env!("OUT_DIR"), "/examples.atomic_counter.rs"));
+    }
 }
-
-pub mod consensus;
-pub mod driver;
-pub mod logger;
-#[cfg(all(test, feature = "std"))]
-pub mod mock;
-pub mod model;
-pub mod platform;
-pub mod storage;
-pub mod util;
-
-#[cfg(not(feature = "std"))]
-use core::error::Error as StdError;
-#[cfg(feature = "std")]
-use std::error::Error as StdError;
+pub mod runtime {
+    pub mod endpoint {
+        include!(concat!(env!("OUT_DIR"), "/runtime.endpoint.rs"));
+    }
+}

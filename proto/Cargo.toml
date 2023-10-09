@@ -1,5 +1,5 @@
 [package]
-name = "tcp_atomic_counter_service"
+name = "tcp_proto"
 version = "0.1.0"
 edition = "2021"
 license = "Apache-2.0"
@@ -7,7 +7,6 @@ license = "Apache-2.0"
 [dependencies]
 byteorder = { version = "*", default-features = false }
 micro_rpc = { workspace = true }
-tcp_runtime = { path = "../../runtime", default-features = false, features = ["prost-codec"] }
 prost = { version = "0.11", default-features = false, features = ["prost-derive"] }
 
 [build-dependencies]

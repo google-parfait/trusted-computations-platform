@@ -17,8 +17,8 @@ use alloc::format;
 use alloc::string::String;
 use alloc::vec::Vec;
 use core::result::Result;
-use endpoint::{LogMessage, LogSeverity};
 use slog::{o, Drain, Logger, Serializer, KV};
+use tcp_proto::runtime::endpoint::{LogMessage, LogSeverity};
 
 pub trait DrainOutput {
     fn take_entries(&mut self) -> Vec<LogMessage>;

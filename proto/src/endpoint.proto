@@ -13,7 +13,8 @@
 // limitations under the License.
 
 syntax = "proto3";
-package endpoint;
+
+package runtime.endpoint;
 
 // Envelope for the messages coming from the Untrusted Launcher to the Trusted
 // Host.

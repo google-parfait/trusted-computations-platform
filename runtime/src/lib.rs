@@ -12,14 +12,29 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-use std::io::Result;
+#![cfg_attr(not(feature = "std"), no_std)]
+#![cfg_attr(not(feature = "std"), feature(error_in_core))]
 
-fn main() -> Result<()> {
-    let mut prost_build = prost_build::Config::new();
-    prost_build.btree_map(["."]);
-    prost_build.compile_protos(
-        &["proto/counter.proto", "proto/endpoint.proto"],
-        &["proto/"],
-    )?;
-    Ok(())
-}
+extern crate alloc;
+#[cfg(feature = "std")]
+extern crate core;
+extern crate hashbrown;
+extern crate prost;
+extern crate raft;
+extern crate slog;
+extern crate tcp_proto;
+
+pub mod consensus;
+pub mod driver;
+pub mod logger;
+#[cfg(all(test, feature = "std"))]
+pub mod mock;
+pub mod model;
+pub mod platform;
+pub mod storage;
+pub mod util;
+
+#[cfg(not(feature = "std"))]
+use core::error::Error as StdError;
+#[cfg(feature = "std")]
+use std::error::Error as StdError;

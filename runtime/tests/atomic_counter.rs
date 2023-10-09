@@ -19,27 +19,23 @@ extern crate core;
 extern crate hashbrown;
 extern crate prost;
 extern crate slog;
-extern crate trusted;
+extern crate tcp_proto;
+extern crate tcp_runtime;
 
-pub mod counter {
-    #![allow(non_snake_case)]
-    include!(concat!(env!("OUT_DIR"), "/counter.rs"));
-}
-
-use crate::counter::{
-    counter_request, counter_response, CounterCompareAndSwapRequest, CounterCompareAndSwapResponse,
-    CounterConfig, CounterRequest, CounterResponse, CounterSnapshot, CounterStatus,
-};
 use alloc::collections::BTreeMap;
 use alloc::string::String;
 use core::cell::RefCell;
 use hashbrown::HashMap;
 use prost::Message;
 use slog::{debug, warn};
-use trusted::{
+use tcp_proto::examples::atomic_counter::{
+    counter_request, counter_response, CounterCompareAndSwapRequest, CounterCompareAndSwapResponse,
+    CounterConfig, CounterRequest, CounterResponse, CounterSnapshot, CounterStatus,
+};
+use tcp_proto::runtime::endpoint::*;
+use tcp_runtime::{
     consensus::RaftSimple,
     driver::{Driver, DriverConfig},
-    endpoint::*,
     model::{Actor, ActorContext, ActorError},
     platform::{Application, Attestation, Host, MessageEnvelope, PalError},
     storage::MemoryStorage,

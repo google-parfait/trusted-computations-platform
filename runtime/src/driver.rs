@@ -14,7 +14,6 @@
 
 #![allow(clippy::useless_conversion)]
 use crate::consensus::{Raft, RaftState, Store};
-use crate::endpoint::*;
 use crate::logger::{log::create_remote_logger, DrainOutput};
 use crate::model::{Actor, ActorContext};
 use crate::util::raft::{
@@ -37,6 +36,7 @@ use raft::{
     Storage as RaftStorage,
 };
 use slog::{debug, error, info, o, warn, Logger};
+use tcp_proto::runtime::endpoint::*;
 
 struct DriverContextCore {
     id: u64,

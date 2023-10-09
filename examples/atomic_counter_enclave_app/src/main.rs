@@ -17,6 +17,7 @@
 #![feature(alloc_error_handler)]
 
 extern crate alloc;
+extern crate tcp_atomic_counter_service;
 
 use core::panic::PanicInfo;
 use oak_restricted_kernel_api::StderrLogger;

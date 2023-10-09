@@ -46,28 +46,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "atomic_counter_enclave_app"
-version = "0.1.0"
-dependencies = [
- "atomic_counter_service",
- "log",
- "micro_rpc",
- "oak_channel",
- "oak_core",
- "oak_enclave_runtime_support",
- "oak_restricted_kernel_api",
-]
-
-[[package]]
-name = "atomic_counter_service"
-version = "0.1.0"
-dependencies = [
- "byteorder",
- "micro_rpc",
- "trusted",
-]
-
-[[package]]
 name = "atty"
 version = "0.2.14"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -974,6 +952,57 @@ dependencies = [
 ]
 
 [[package]]
+name = "tcp_atomic_counter_enclave_app"
+version = "0.1.0"
+dependencies = [
+ "log",
+ "micro_rpc",
+ "oak_channel",
+ "oak_core",
+ "oak_enclave_runtime_support",
+ "oak_restricted_kernel_api",
+ "tcp_atomic_counter_service",
+]
+
+[[package]]
+name = "tcp_atomic_counter_service"
+version = "0.1.0"
+dependencies = [
+ "byteorder",
+ "micro_rpc",
+ "micro_rpc_build",
+ "prost",
+ "tcp_runtime",
+]
+
+[[package]]
+name = "tcp_proto"
+version = "0.1.0"
+dependencies = [
+ "byteorder",
+ "micro_rpc",
+ "micro_rpc_build",
+ "prost",
+]
+
+[[package]]
+name = "tcp_runtime"
+version = "0.1.0"
+dependencies = [
+ "hashbrown",
+ "mockall",
+ "prost",
+ "prost-build",
+ "protobuf",
+ "raft",
+ "raft-proto",
+ "slog",
+ "slog-term",
+ "spin 0.9.8",
+ "tcp_proto",
+]
+
+[[package]]
 name = "tempfile"
 version = "3.8.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1061,22 +1090,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "4ad70d68dba9e1f8aceda7aa6711965dfec1cac869f311a51bd08b3a2ccbce20"
 dependencies = [
  "time-core",
-]
-
-[[package]]
-name = "trusted"
-version = "0.1.0"
-dependencies = [
- "hashbrown",
- "mockall",
- "prost",
- "prost-build",
- "protobuf",
- "raft",
- "raft-proto",
- "slog",
- "slog-term",
- "spin 0.9.8",
 ]
 
 [[package]]
