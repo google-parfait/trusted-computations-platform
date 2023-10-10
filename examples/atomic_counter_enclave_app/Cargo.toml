@@ -14,7 +14,8 @@ oak_channel = { workspace = true }
 oak_core = { workspace = true }
 oak_enclave_runtime_support = { workspace = true }
 oak_restricted_kernel_api = { workspace = true }
-tcp_atomic_counter_service = { path = "../atomic_counter_service" }
+tcp_proto = { path = "../../proto" }
+tcp_runtime = { path = "../../runtime" }
 
 [[bin]]
 name = "tcp_atomic_counter_enclave_app"

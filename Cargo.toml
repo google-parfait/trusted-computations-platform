@@ -1,8 +1,7 @@
 [workspace]
 resolver = "2"
 members = [
-    "examples/atomic_counter_service",
-    "examples/atomic_counter_enclave_app",
+    "examples/*",
     "runtime",
     "proto"
 ]

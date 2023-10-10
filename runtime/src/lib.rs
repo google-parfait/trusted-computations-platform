@@ -26,11 +26,13 @@ extern crate tcp_proto;
 
 pub mod consensus;
 pub mod driver;
+pub mod examples;
 pub mod logger;
 #[cfg(all(test, feature = "std"))]
 pub mod mock;
 pub mod model;
 pub mod platform;
+pub mod service;
 pub mod storage;
 pub mod util;
 

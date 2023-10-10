@@ -16,58 +16,66 @@ syntax = "proto3";
 
 package examples.atomic_counter;
 
-import "endpoint.proto";
-
+// Represents a request to execute an operation on a named counter.
 message CounterRequest {
+  // The id that uniquely identifies this request. Needed for the response
+  // correlation.
   uint64 id = 1;
+  // The name of the counter to execute operation on.
   string name = 2;
+  // The operation to execute.
   oneof op {
     CounterCompareAndSwapRequest compare_and_swap = 3;
   }
 }
 
+// Represents a request to execute an compare and swap operation.
 message CounterCompareAndSwapRequest {
+  // Expected counter value at the time of execution.
   int64 expected_value = 1;
+  // New value to swap expected counter value with.
   int64 new_value = 2;
 }
 
 message CounterResponse {
+  // The id of the counter request that this response corresponds to.
   uint64 id = 1;
+  // The status of the requested operation execution.
   CounterStatus status = 2;
+  // The operation result.
   oneof op {
     CounterCompareAndSwapResponse compare_and_swap = 3;
   }
 }
 
+// Enumerates the possible outcomes of the operation execution.
 enum CounterStatus {
   UNSPECIFIED = 0;
+  // The operation has been successfully executed.
   SUCCESS = 1;
+  // The operation has been rejected because the
   NOT_LEADER_ERROR = 2;
+  // The operation is malformed.
   INVALID_ARGUMENT_ERROR = 3;
 }
 
+// Represents the response to the compare and swap operation request.
 message CounterCompareAndSwapResponse {
+  // The value of the counter found at the time of operation execution.
   int64 old_value = 1;
+  // The new value of the counter after the operation execution. If the
+  // operation was not successful the new value is equal to the old value.
   int64 new_value = 2;
 }
 
+// Represents configuration for the atomic counter.
 message CounterConfig {
+  // Holds the initial values.
   map<string, int64> initial_values = 1;
 }
 
+// Represents snapshot of the atomic counter.
 message CounterSnapshot {
+  // Holds the values at the time of the snapshot.
   map<string, int64> values = 1;
-}
-
-service AtomicCounter {
-  // method_id: 1
-  rpc ReceiveMessage(Request) returns (Response) {}
-}
-
-message Request {
-  runtime.endpoint.EnvelopeIn in = 1;
-}
-
-message Response {
-  repeated runtime.endpoint.EnvelopeOut out = 1;
 }

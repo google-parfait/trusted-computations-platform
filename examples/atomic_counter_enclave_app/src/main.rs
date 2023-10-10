@@ -17,32 +17,53 @@
 #![feature(alloc_error_handler)]
 
 extern crate alloc;
-extern crate tcp_atomic_counter_service;
+extern crate tcp_proto;
+extern crate tcp_runtime;
 
+use alloc::boxed::Box;
 use core::panic::PanicInfo;
-use oak_restricted_kernel_api::StderrLogger;
+use oak_channel::server;
+use oak_core::samplestore::StaticSampleStore;
+use oak_restricted_kernel_api::{syscall, FileDescriptorChannel, StderrLogger};
+use tcp_proto::runtime::endpoint::EndpointServiceServer;
+use tcp_runtime::{driver::DriverConfig, examples::CounterActor, service::ApplicationService};
 
 static LOGGER: StderrLogger = StderrLogger {};
 
 #[no_mangle]
-fn _start() -> () {
+fn _start() -> ! {
     log::set_logger(&LOGGER).unwrap();
     log::set_max_level(log::LevelFilter::Debug);
     oak_enclave_runtime_support::init();
     main();
 }
 
-fn main() -> () {
+fn main() -> ! {
     log::info!("In main!");
+    let mut invocation_stats = StaticSampleStore::<1000>::new().unwrap();
+    let service: ApplicationService<CounterActor> = ApplicationService::new(
+        DriverConfig {
+            tick_period: 10,
+            snapshot_count: 100,
+        },
+        CounterActor::new(),
+    );
+    let server = EndpointServiceServer::new(service);
+    server::start_blocking_server(
+        Box::<FileDescriptorChannel>::default(),
+        server,
+        &mut invocation_stats,
+    )
+    .expect("Server encountered an unrecoverable error");
 }
 
 #[alloc_error_handler]
 fn out_of_memory(layout: ::core::alloc::Layout) -> ! {
-    panic!("error allocating memory: {:#?}", layout);
+    panic!("Error allocating memory: {:#?}", layout);
 }
 
 #[panic_handler]
 fn panic(info: &PanicInfo) -> ! {
     log::error!("PANIC: {}", info);
-    oak_restricted_kernel_api::syscall::exit(-1);
+    syscall::exit(-1);
 }

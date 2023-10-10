@@ -184,3 +184,29 @@ message ExecuteProposalResponse {
   // it.
   bytes result_contents = 2;
 }
+
+service EndpointService {
+  // Receives messages to process by the trusted application. Conceptually
+  // represents a computation slice.
+  // method_id: 1
+  rpc ReceiveMessage(ReceiveMessageRequest) returns (ReceiveMessageResponse) {}
+}
+
+message ReceiveMessageRequest {
+  // A measurement of a monotonically nondecreasing clock provided by
+  // the untrusted launcher to the trusted host. The resolution of the instant
+  // is mesured in milliseconds. Instants are opaque that can only be compared
+  // to one another. In other words the absolute value must not be interpretted
+  // as wall clock time or time since the trusted application start.
+  uint64 instant = 1;
+
+  // A potentially empty message received from the untrusted
+  // launcher for the trusted application to process.
+  EnvelopeIn message = 2;
+}
+
+message ReceiveMessageResponse {
+  // A potentially empty set of messages that must be sent out to the peers or
+  // the consumers.
+  repeated EnvelopeOut messages = 1;
+}
