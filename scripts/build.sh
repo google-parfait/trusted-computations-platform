@@ -28,8 +28,11 @@ if [ "$1" == "release" ]; then
   # always be set during CI builds.
   if [[ ! -z "${KOKORO_ARTIFACTS_DIR}" ]]; then
     mkdir -p "${KOKORO_ARTIFACTS_DIR}/binaries"
-    cp -v \
+    cp --preserve=timestamps -v \
         target/x86_64-unknown-none/release/tcp_atomic_counter_enclave_app \
         "${KOKORO_ARTIFACTS_DIR}/binaries/"
   fi
+
+  # Store the git commit hash in the name of an empty file, so that it can be efficiently found via a glob.
+  touch "$KOKORO_ARTIFACTS_DIR/binaries/git_commit_${KOKORO_GOB_COMMIT:?}"
 fi
