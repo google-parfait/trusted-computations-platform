@@ -34,5 +34,5 @@ if [ "$1" == "release" ]; then
   fi
 
   # Store the git commit hash in the name of an empty file, so that it can be efficiently found via a glob.
-  touch "$KOKORO_ARTIFACTS_DIR/binaries/git_commit_${KOKORO_GOB_COMMIT:?}"
+  touch "$KOKORO_ARTIFACTS_DIR/binaries/git_commit_${KOKORO_GOB_COMMIT_trusted_computations_platform:?}"
 fi
