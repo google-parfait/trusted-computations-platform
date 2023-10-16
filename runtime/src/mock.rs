@@ -19,7 +19,7 @@ extern crate tcp_proto;
 use self::mockall::mock;
 use consensus;
 use consensus::{Raft, RaftLightReady, RaftReady, Store};
-use model::{Actor, ActorContext, ActorError};
+use model::{Actor, ActorContext, ActorError, CommandOutcome, EventOutcome};
 use platform::{Attestation, Host, PalError};
 use raft::{
     eraftpb::ConfChange as RaftConfigChange, eraftpb::ConfState as RaftConfigState,
@@ -43,9 +43,9 @@ mock! {
 
         fn on_load_snapshot(&mut self, snapshot: &[u8]) -> Result<(), ActorError>;
 
-        fn on_process_command(&mut self, command: &[u8]) -> Result<(), ActorError>;
+        fn on_process_command(&mut self, command: &[u8]) -> Result<CommandOutcome, ActorError>;
 
-        fn on_apply_event(&mut self, index: u64, event: &[u8]) -> Result<(), ActorError>;
+        fn on_apply_event(&mut self, index: u64, event: &[u8]) -> Result<EventOutcome, ActorError>;
     }
 }
 

@@ -26,7 +26,7 @@ use tcp_proto::examples::atomic_counter::{
     CounterConfig, CounterRequest, CounterResponse, CounterSnapshot, CounterStatus,
 };
 
-use crate::model::{Actor, ActorContext, ActorError};
+use crate::model::{Actor, ActorContext, ActorError, CommandOutcome, EventOutcome};
 
 pub struct CounterActor {
     context: Option<Box<dyn ActorContext>>,
@@ -46,10 +46,6 @@ impl CounterActor {
             .as_mut()
             .expect("Context is initialized")
             .as_mut()
-    }
-
-    fn send_message<M: Message>(&mut self, message: &M) {
-        self.get_context().send_message(message.encode_to_vec())
     }
 
     fn apply_compare_and_swap(
@@ -133,7 +129,12 @@ impl Actor for CounterActor {
         Ok(())
     }
 
-    fn on_process_command(&mut self, command: &[u8]) -> Result<(), ActorError> {
+    fn on_process_command(&mut self, command: &[u8]) -> Result<CommandOutcome, ActorError> {
+        let mut response = CounterResponse {
+            ..Default::default()
+        };
+        let mut status = CounterStatus::Success;
+
         match CounterRequest::decode(command) {
             Ok(request) => {
                 debug!(
@@ -141,11 +142,7 @@ impl Actor for CounterActor {
                     "Processing #{} command", request.id
                 );
 
-                let mut response = CounterResponse {
-                    id: request.id,
-                    ..Default::default()
-                };
-                let mut status = CounterStatus::Success;
+                response.id = request.id;
                 if request.op.is_none() {
                     status = CounterStatus::InvalidArgumentError;
 
@@ -154,6 +151,7 @@ impl Actor for CounterActor {
                         "Rejecting #{} command: unknown op", request.id
                     );
                 }
+
                 if !self.get_context().leader() {
                     status = CounterStatus::NotLeaderError;
 
@@ -164,21 +162,20 @@ impl Actor for CounterActor {
                 }
 
                 if let CounterStatus::Success = status {
-                    self.get_context().propose_event(command.to_vec())?;
-                } else {
-                    response.status = status.into();
-                    self.send_message(&response);
+                    return Ok(CommandOutcome::Event(command.to_vec()));
                 }
             }
             Err(e) => {
                 warn!(self.get_context().logger(), "Rejecting command: {}", e);
+                status = CounterStatus::InvalidArgumentError;
             }
         }
 
-        Ok(())
+        response.status = status.into();
+        Ok(CommandOutcome::Response(response.encode_to_vec()))
     }
 
-    fn on_apply_event(&mut self, _index: u64, event: &[u8]) -> Result<(), ActorError> {
+    fn on_apply_event(&mut self, _index: u64, event: &[u8]) -> Result<EventOutcome, ActorError> {
         let request = CounterRequest::decode(event).map_err(|_| ActorError::Internal)?;
 
         let op = request.op.unwrap();
@@ -190,9 +187,9 @@ impl Actor for CounterActor {
         };
 
         if self.get_context().leader() {
-            self.send_message(&response);
+            return Ok(EventOutcome::Response(response.encode_to_vec()));
         }
 
-        Ok(())
+        Ok(EventOutcome::None)
     }
 }

@@ -15,7 +15,7 @@
 #![allow(clippy::useless_conversion)]
 use crate::consensus::{Raft, RaftState, Store};
 use crate::logger::{log::create_remote_logger, DrainOutput};
-use crate::model::{Actor, ActorContext};
+use crate::model::{Actor, ActorContext, CommandOutcome, EventOutcome};
 use crate::util::raft::{
     create_raft_config_change, deserialize_config_change, deserialize_raft_message,
     get_config_state, get_metadata, serialize_raft_message,
@@ -130,22 +130,6 @@ impl ActorContext for DriverContext {
 
     fn leader(&self) -> bool {
         self.core.borrow().leader()
-    }
-
-    fn propose_event(&mut self, event: Vec<u8>) -> Result<(), crate::model::ActorError> {
-        self.core.borrow_mut().append_proposal(event);
-
-        Ok(())
-    }
-
-    fn send_message(&mut self, message: Vec<u8>) {
-        self.core
-            .borrow_mut()
-            .append_message(envelope_out::Msg::ExecuteProposal(
-                ExecuteProposalResponse {
-                    result_contents: message,
-                },
-            ));
     }
 }
 
@@ -384,7 +368,8 @@ impl<R: Raft<S = S>, S: Store + RaftStorage, A: Actor> Driver<R, S, A> {
                 debug!(self.logger, "Applying Raft entry");
 
                 // Pass committed entry to the actor to make effective.
-                self.actor
+                match self
+                    .actor
                     .on_apply_event(committed_entry.index, committed_entry.get_data())
                     .map_err(|e| {
                         error!(
@@ -393,7 +378,19 @@ impl<R: Raft<S = S>, S: Store + RaftStorage, A: Actor> Driver<R, S, A> {
                         );
                         // Failure to apply committed event to actor state must lead to termination.
                         PalError::Actor
-                    })?;
+                    })? {
+                    EventOutcome::Response(response) => {
+                        self.mut_core()
+                            .append_message(envelope_out::Msg::ExecuteProposal(
+                                ExecuteProposalResponse {
+                                    result_contents: response,
+                                },
+                            ));
+                    }
+                    EventOutcome::None => {
+                        // There is nothing to send
+                    }
+                }
             }
         }
 
@@ -702,14 +699,25 @@ impl<R: Raft<S = S>, S: Store + RaftStorage, A: Actor> Driver<R, S, A> {
     ) -> Result<(), PalError> {
         self.check_driver_started()?;
 
-        self.actor
+        match self
+            .actor
             .on_process_command(execute_proposal_request.proposal_contents.as_ref())
             .map_err(|e| {
                 error!(self.logger, "Failed to process actor command: {}", e);
 
                 // Failure to process actor command must lead to termination.
                 PalError::Actor
-            })?;
+            })? {
+            CommandOutcome::Response(response) => {
+                self.mut_core()
+                    .append_message(envelope_out::Msg::ExecuteProposal(
+                        ExecuteProposalResponse {
+                            result_contents: response,
+                        },
+                    ));
+            }
+            CommandOutcome::Event(event) => self.mut_core().append_proposal(event),
+        }
 
         Ok(())
     }
@@ -1239,7 +1247,7 @@ mod test {
         fn expect_on_process_command(
             &mut self,
             command: Vec<u8>,
-            result: Result<(), ActorError>,
+            result: Result<CommandOutcome, ActorError>,
         ) -> &mut DriverBuilder {
             self.mock_actor
                 .expect_on_process_command()
@@ -1275,7 +1283,7 @@ mod test {
             &mut self,
             index: u64,
             data: Vec<u8>,
-            result: Result<(), ActorError>,
+            result: Result<EventOutcome, ActorError>,
         ) -> &mut DriverBuilder {
             self.mock_actor
                 .expect_on_apply_event()
@@ -1384,11 +1392,14 @@ mod test {
     fn test_driver_execute_proposal_request() {
         let (node_id, instant, driver_config) = create_default_parameters();
         let proposal_contents = vec![1, 2, 3];
+        let proposal_result = vec![4, 4, 6];
 
         let mut mock_host = MockHostBuilder::new()
             .expect_public_signing_key(vec![])
             .expect_send_messages(vec![create_start_node_response(node_id)])
-            .expect_send_messages(vec![])
+            .expect_send_messages(vec![create_execute_proposal_response(
+                proposal_result.clone(),
+            )])
             .take();
 
         let raft_builder = RaftBuilder::new()
@@ -1401,7 +1412,10 @@ mod test {
 
         let mut driver = DriverBuilder::new(driver_config.clone())
             .expect_on_init(|_| Ok(()))
-            .expect_on_process_command(proposal_contents.clone(), Ok(()))
+            .expect_on_process_command(
+                proposal_contents.clone(),
+                Ok(CommandOutcome::Response(proposal_result)),
+            )
             .take(raft_builder);
 
         assert_eq!(
@@ -1432,10 +1446,7 @@ mod test {
         let mut mock_host = MockHostBuilder::new()
             .expect_public_signing_key(vec![])
             .expect_get_self_config(self_config.clone())
-            .expect_send_messages(vec![
-                create_start_node_response(node_id),
-                create_execute_proposal_response(proposal_response.clone()),
-            ])
+            .expect_send_messages(vec![create_start_node_response(node_id)])
             .take();
 
         let raft_builder = RaftBuilder::new()
@@ -1451,7 +1462,6 @@ mod test {
                 assert_eq!(instant, actor_context.instant());
                 assert_eq!(self_config, actor_context.config());
                 assert!(!actor_context.leader());
-                actor_context.send_message(proposal_response.clone());
 
                 Ok(())
             })
@@ -1642,7 +1652,7 @@ mod test {
             .expect_on_apply_event(
                 committed_normal_entry.index,
                 committed_normal_entry.data.to_vec(),
-                Ok(()),
+                Ok(EventOutcome::None),
             )
             .take(raft_builder);
 
@@ -1799,7 +1809,7 @@ mod test {
             .expect_on_apply_event(
                 committed_normal_entry.index,
                 committed_normal_entry.data.to_vec(),
-                Ok(()),
+                Ok(EventOutcome::None),
             )
             .expect_on_save_snapshot(Ok(snapshot.clone()))
             .take(raft_builder);

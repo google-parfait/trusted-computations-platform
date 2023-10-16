@@ -72,14 +72,24 @@ pub trait ActorContext {
     /// Checks if the underlying consensus module is currently executing under leader
     /// role.
     fn leader(&self) -> bool;
+}
 
-    /// Proposes an even to the underlying consensus module for replication. Returns
-    /// error if underlying consensus module is not currently executing under leader
-    /// role.
-    fn propose_event(&mut self, event: Vec<u8>) -> Result<(), ActorError>;
+// Represents an outcome of command processing.
+pub enum CommandOutcome {
+    // Command has been processed immediately and resulted in serialized response.
+    Response(Vec<u8>),
 
-    /// Sends message through the trusted host to the untrusted launcher.
-    fn send_message(&mut self, message: Vec<u8>);
+    // Command will be processed once the serialized event is committed and applied.
+    Event(Vec<u8>),
+}
+
+// Represents an outcome of event application.
+pub enum EventOutcome {
+    // Response to the send to the consumer after event has been applied to the actor.
+    Response(Vec<u8>),
+
+    // Nothing to send.
+    None,
 }
 
 /// Represents a stateful actor backed by replicated state machine.
@@ -100,13 +110,15 @@ pub trait Actor {
     /// is considered is unknown state and is destroyed.
     fn on_load_snapshot(&mut self, snapshot: &[u8]) -> Result<(), ActorError>;
 
-    /// Handles processing of command by the actor. Command represents an intent of a
-    /// consumer (e.g. request to update staet) and may result in event proposal.
-    /// Events are then replicated by the consensus module.
-    fn on_process_command(&mut self, command: &[u8]) -> Result<(), ActorError>;
+    /// Handles processing of a command by the actor. Command represents an intent of a
+    /// consumer (e.g. request to update actor state). The command processing logic may
+    /// decide to immediately respond (e.g. the command validation failed and cannot be
+    /// executed) or to propose an event for replication by the consensus module (e.g. the
+    /// event to update actor state once replicated).
+    fn on_process_command(&mut self, command: &[u8]) -> Result<CommandOutcome, ActorError>;
 
     /// Handles committed events by applying them to the actor state. Event represents
     /// a state transition of the actor and may result in messages being sent to the
     /// consumer (e.g. response to the command that generated this event).
-    fn on_apply_event(&mut self, index: u64, event: &[u8]) -> Result<(), ActorError>;
+    fn on_apply_event(&mut self, index: u64, event: &[u8]) -> Result<EventOutcome, ActorError>;
 }
