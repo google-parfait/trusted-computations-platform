@@ -43,7 +43,7 @@ struct DriverContextCore {
     config: Vec<u8>,
     leader: bool,
     proposals: Vec<Vec<u8>>,
-    messages: Vec<envelope_out::Msg>,
+    messages: Vec<out_message::Msg>,
 }
 
 impl DriverContextCore {
@@ -88,11 +88,11 @@ impl DriverContextCore {
         self.proposals.push(proposal);
     }
 
-    fn append_message(&mut self, message: envelope_out::Msg) {
+    fn append_message(&mut self, message: out_message::Msg) {
         self.messages.push(message);
     }
 
-    fn take_outputs(&mut self) -> (Vec<Vec<u8>>, Vec<envelope_out::Msg>) {
+    fn take_outputs(&mut self) -> (Vec<Vec<u8>>, Vec<out_message::Msg>) {
         (
             mem::take(&mut self.proposals),
             mem::take(&mut self.messages),
@@ -164,7 +164,7 @@ pub struct Driver<R: Raft, S: Store, A: Actor> {
     core: Rc<RefCell<DriverContextCore>>,
     driver_config: DriverConfig,
     driver_state: DriverState,
-    messages: Vec<EnvelopeOut>,
+    messages: Vec<OutMessage>,
     id: u64,
     instant: u64,
     tick_instant: u64,
@@ -237,8 +237,8 @@ impl<R: Raft<S = S>, S: Store + RaftStorage, A: Actor> Driver<R, S, A> {
 
     fn make_raft_step(
         &mut self,
-        sender_node_id: u64,
-        recipient_node_id: u64,
+        sender_replica_id: u64,
+        recipient_replica_id: u64,
         message_contents: &Vec<u8>,
     ) -> Result<(), PalError> {
         match deserialize_raft_message(message_contents) {
@@ -251,19 +251,19 @@ impl<R: Raft<S = S>, S: Store + RaftStorage, A: Actor> Driver<R, S, A> {
                 Ok(())
             }
             Ok(message) => {
-                if self.id != recipient_node_id {
+                if self.id != recipient_replica_id {
                     // Ignore incorrectly routed message
                     warn!(
                         self.logger,
                         "Ignoring incorectly routed Raft message: recipient id {}",
-                        recipient_node_id
+                        recipient_replica_id
                     );
                 }
-                if message.get_from() != sender_node_id {
+                if message.get_from() != sender_replica_id {
                     // Ignore malformed message
                     warn!(
                         self.logger,
-                        "Ignoring malformed Raft message: sender id {}", sender_node_id
+                        "Ignoring malformed Raft message: sender id {}", sender_replica_id
                     );
                 }
 
@@ -381,7 +381,7 @@ impl<R: Raft<S = S>, S: Store + RaftStorage, A: Actor> Driver<R, S, A> {
                     })? {
                     EventOutcome::Response(response) => {
                         self.mut_core()
-                            .append_message(envelope_out::Msg::ExecuteProposal(
+                            .append_message(out_message::Msg::ExecuteProposal(
                                 ExecuteProposalResponse {
                                     result_contents: response,
                                 },
@@ -400,9 +400,9 @@ impl<R: Raft<S = S>, S: Store + RaftStorage, A: Actor> Driver<R, S, A> {
     fn send_raft_messages(&mut self, raft_messages: Vec<RaftMessage>) -> Result<(), PalError> {
         for raft_message in raft_messages {
             // Buffer message to be sent out.
-            self.stash_message(envelope_out::Msg::DeliverMessage(DeliverMessage {
-                recipient_node_id: raft_message.to,
-                sender_node_id: self.id,
+            self.stash_message(out_message::Msg::DeliverMessage(DeliverMessage {
+                recipient_replica_id: raft_message.to,
+                sender_replica_id: self.id,
                 message_contents: serialize_raft_message(&raft_message).unwrap(),
             }));
         }
@@ -551,10 +551,10 @@ impl<R: Raft<S = S>, S: Store + RaftStorage, A: Actor> Driver<R, S, A> {
 
         self.prev_raft_state = self.raft_state.clone();
 
-        self.stash_message(envelope_out::Msg::CheckCluster(CheckClusterResponse {
-            leader_node_id: self.raft_state.leader_node_id,
+        self.stash_message(out_message::Msg::CheckCluster(CheckClusterResponse {
+            leader_replica_id: self.raft_state.leader_replica_id,
             leader_term: self.raft_state.leader_term,
-            cluster_node_ids: self.raft_state.committed_cluster_config.clone(),
+            cluster_replica_ids: self.raft_state.committed_cluster_config.clone(),
             has_pending_changes: self.raft_state.has_pending_change,
         }));
     }
@@ -583,9 +583,9 @@ impl<R: Raft<S = S>, S: Store + RaftStorage, A: Actor> Driver<R, S, A> {
         &mut self,
         app_config: Vec<u8>,
         _app_signing_key: Vec<u8>,
-        node_id_hint: u64,
+        replica_id_hint: u64,
     ) {
-        let id = node_id_hint;
+        let id = replica_id_hint;
         self.mut_core().set_immutable_state(id, app_config);
         self.id = id;
         (self.logger, self.logger_output) = create_remote_logger(self.id);
@@ -593,15 +593,19 @@ impl<R: Raft<S = S>, S: Store + RaftStorage, A: Actor> Driver<R, S, A> {
 
     fn process_start_node(
         &mut self,
-        start_node_request: &StartNodeRequest,
+        start_replica_request: &StartReplicaRequest,
         app_config: Vec<u8>,
         app_signing_key: Vec<u8>,
     ) -> Result<(), PalError> {
         self.check_driver_state(DriverState::Created)?;
 
-        self.initialize_driver(app_config, app_signing_key, start_node_request.node_id_hint);
+        self.initialize_driver(
+            app_config,
+            app_signing_key,
+            start_replica_request.replica_id_hint,
+        );
 
-        self.initilize_raft_node(start_node_request.is_leader)?;
+        self.initilize_raft_node(start_replica_request.is_leader)?;
 
         let actor_context = Box::new(DriverContext::new(
             Rc::clone(&self.core),
@@ -617,14 +621,17 @@ impl<R: Raft<S = S>, S: Store + RaftStorage, A: Actor> Driver<R, S, A> {
 
         self.driver_state = DriverState::Started;
 
-        self.stash_message(envelope_out::Msg::StartNode(StartNodeResponse {
-            node_id: self.id,
+        self.stash_message(out_message::Msg::StartReplica(StartReplicaResponse {
+            replica_id: self.id,
         }));
 
         Ok(())
     }
 
-    fn process_stop_node(&mut self, _stop_node_request: &StopNodeRequest) -> Result<(), PalError> {
+    fn process_stop_node(
+        &mut self,
+        _stop_replica_request: &StopReplicaRequest,
+    ) -> Result<(), PalError> {
         if let DriverState::Stopped = self.driver_state {
             return Ok(());
         }
@@ -633,7 +640,7 @@ impl<R: Raft<S = S>, S: Store + RaftStorage, A: Actor> Driver<R, S, A> {
 
         self.driver_state = DriverState::Stopped;
 
-        self.stash_message(envelope_out::Msg::StopNode(StopNodeResponse {}));
+        self.stash_message(out_message::Msg::StopReplica(StopReplicaResponse {}));
 
         Ok(())
     }
@@ -645,13 +652,14 @@ impl<R: Raft<S = S>, S: Store + RaftStorage, A: Actor> Driver<R, S, A> {
         self.check_driver_started()?;
 
         let change_status = match ChangeClusterType::from_i32(change_cluster_request.change_type) {
-            Some(ChangeClusterType::ChangeTypeAddNode) => self.make_raft_config_change_proposal(
-                change_cluster_request.node_id,
-                RaftConfigChangeType::AddNode,
-            )?,
-            Some(ChangeClusterType::ChangeTypeRemoveNode) => self
+            Some(ChangeClusterType::ChangeTypeAddReplica) => self
                 .make_raft_config_change_proposal(
-                    change_cluster_request.node_id,
+                    change_cluster_request.replica_id,
+                    RaftConfigChangeType::AddNode,
+                )?,
+            Some(ChangeClusterType::ChangeTypeRemoveReplica) => self
+                .make_raft_config_change_proposal(
+                    change_cluster_request.replica_id,
                     RaftConfigChangeType::RemoveNode,
                 )?,
             _ => {
@@ -661,7 +669,7 @@ impl<R: Raft<S = S>, S: Store + RaftStorage, A: Actor> Driver<R, S, A> {
             }
         };
 
-        self.stash_message(envelope_out::Msg::ChangeCluster(ChangeClusterResponse {
+        self.stash_message(out_message::Msg::ChangeCluster(ChangeClusterResponse {
             change_id: change_cluster_request.change_id,
             change_status: change_status.into(),
         }));
@@ -687,8 +695,8 @@ impl<R: Raft<S = S>, S: Store + RaftStorage, A: Actor> Driver<R, S, A> {
         self.check_driver_started()?;
 
         self.make_raft_step(
-            deliver_message.sender_node_id,
-            deliver_message.recipient_node_id,
+            deliver_message.sender_replica_id,
+            deliver_message.recipient_replica_id,
             &deliver_message.message_contents,
         )
     }
@@ -710,11 +718,9 @@ impl<R: Raft<S = S>, S: Store + RaftStorage, A: Actor> Driver<R, S, A> {
             })? {
             CommandOutcome::Response(response) => {
                 self.mut_core()
-                    .append_message(envelope_out::Msg::ExecuteProposal(
-                        ExecuteProposalResponse {
-                            result_contents: response,
-                        },
-                    ));
+                    .append_message(out_message::Msg::ExecuteProposal(ExecuteProposalResponse {
+                        result_contents: response,
+                    }));
             }
             CommandOutcome::Event(event) => self.mut_core().append_proposal(event),
         }
@@ -734,7 +740,7 @@ impl<R: Raft<S = S>, S: Store + RaftStorage, A: Actor> Driver<R, S, A> {
         }
     }
 
-    fn process_state_machine(&mut self) -> Result<Vec<EnvelopeOut>, PalError> {
+    fn process_state_machine(&mut self) -> Result<Vec<OutMessage>, PalError> {
         if self.raft.initialized() {
             // Advance Raft internal state.
             self.advance_raft()?;
@@ -754,12 +760,12 @@ impl<R: Raft<S = S>, S: Store + RaftStorage, A: Actor> Driver<R, S, A> {
 
     fn stash_log_entries(&mut self) {
         for log_message in self.logger_output.take_entries() {
-            self.stash_message(envelope_out::Msg::Log(log_message));
+            self.stash_message(out_message::Msg::Log(log_message));
         }
     }
 
-    fn stash_message(&mut self, message: envelope_out::Msg) {
-        self.messages.push(EnvelopeOut { msg: Some(message) });
+    fn stash_message(&mut self, message: out_message::Msg) {
+        self.messages.push(OutMessage { msg: Some(message) });
     }
 }
 
@@ -769,7 +775,7 @@ impl<R: Raft<S = S>, S: Store + RaftStorage, A: Actor> Application for Driver<R,
         &mut self,
         host: &mut impl Host,
         instant: u64,
-        opt_message: Option<EnvelopeIn>,
+        opt_message: Option<InMessage>,
     ) -> Result<(), PalError> {
         // Update state of the context that will remain unchanged while messages are
         // dispatched for processing.
@@ -785,25 +791,25 @@ impl<R: Raft<S = S>, S: Store + RaftStorage, A: Actor> Application for Driver<R,
                 }
                 Some(message) => {
                     match message {
-                        envelope_in::Msg::StartNode(ref start_node_request) => self
+                        in_message::Msg::StartReplica(ref start_node_request) => self
                             .process_start_node(
                                 start_node_request,
                                 host.get_self_config(),
                                 host.get_self_attestation().public_signing_key(),
                             ),
-                        envelope_in::Msg::StopNode(ref stop_node_request) => {
+                        in_message::Msg::StopReplica(ref stop_node_request) => {
                             self.process_stop_node(stop_node_request)
                         }
-                        envelope_in::Msg::ChangeCluster(ref change_cluster_request) => {
+                        in_message::Msg::ChangeCluster(ref change_cluster_request) => {
                             self.process_change_cluster(change_cluster_request)
                         }
-                        envelope_in::Msg::CheckCluster(ref check_cluster_request) => {
+                        in_message::Msg::CheckCluster(ref check_cluster_request) => {
                             self.process_check_cluster(check_cluster_request)
                         }
-                        envelope_in::Msg::DeliverMessage(ref deliver_message) => {
+                        in_message::Msg::DeliverMessage(ref deliver_message) => {
                             self.process_deliver_message(deliver_message)
                         }
-                        envelope_in::Msg::ExecuteProposal(ref execute_proposal_request) => {
+                        in_message::Msg::ExecuteProposal(ref execute_proposal_request) => {
                             self.process_execute_proposal(execute_proposal_request)
                         }
                     }?;
@@ -863,113 +869,113 @@ mod test {
 
     fn create_default_raft_state(node_id: u64) -> RaftState {
         RaftState {
-            leader_node_id: node_id,
+            leader_replica_id: node_id,
             leader_term: 1,
             committed_cluster_config: vec![node_id],
             has_pending_change: false,
         }
     }
 
-    fn create_start_node_request(leader: bool, node_id_hint: u64) -> EnvelopeIn {
-        let envelope = EnvelopeIn {
-            msg: Some(envelope_in::Msg::StartNode(StartNodeRequest {
+    fn create_start_replica_request(leader: bool, replica_id_hint: u64) -> InMessage {
+        let envelope = InMessage {
+            msg: Some(in_message::Msg::StartReplica(StartReplicaRequest {
                 is_leader: leader,
-                node_id_hint,
+                replica_id_hint,
             })),
         };
         envelope
     }
 
-    fn create_start_node_response(node_id: u64) -> envelope_out::Msg {
-        envelope_out::Msg::StartNode(StartNodeResponse { node_id })
+    fn create_start_replica_response(replica_id: u64) -> out_message::Msg {
+        out_message::Msg::StartReplica(StartReplicaResponse { replica_id })
     }
 
-    fn create_stop_node_request() -> EnvelopeIn {
-        let envelope = EnvelopeIn {
-            msg: Some(envelope_in::Msg::StopNode(StopNodeRequest {})),
+    fn create_stop_replica_request() -> InMessage {
+        let envelope = InMessage {
+            msg: Some(in_message::Msg::StopReplica(StopReplicaRequest {})),
         };
         envelope
     }
 
-    fn create_stop_node_response() -> envelope_out::Msg {
-        envelope_out::Msg::StopNode(StopNodeResponse {})
+    fn create_stop_replica_response() -> out_message::Msg {
+        out_message::Msg::StopReplica(StopReplicaResponse {})
     }
 
-    fn create_execute_proposal_request(proposal_contents: Vec<u8>) -> EnvelopeIn {
-        let envelope = EnvelopeIn {
-            msg: Some(envelope_in::Msg::ExecuteProposal(ExecuteProposalRequest {
+    fn create_execute_proposal_request(proposal_contents: Vec<u8>) -> InMessage {
+        let envelope = InMessage {
+            msg: Some(in_message::Msg::ExecuteProposal(ExecuteProposalRequest {
                 proposal_contents,
             })),
         };
         envelope
     }
 
-    fn create_execute_proposal_response(result_contents: Vec<u8>) -> envelope_out::Msg {
-        envelope_out::Msg::ExecuteProposal(ExecuteProposalResponse { result_contents })
+    fn create_execute_proposal_response(result_contents: Vec<u8>) -> out_message::Msg {
+        out_message::Msg::ExecuteProposal(ExecuteProposalResponse { result_contents })
     }
 
-    fn create_change_cluster_request(node_id: u64, change_type: ChangeClusterType) -> EnvelopeIn {
-        let envelope = EnvelopeIn {
-            msg: Some(envelope_in::Msg::ChangeCluster(ChangeClusterRequest {
+    fn create_change_cluster_request(replica_id: u64, change_type: ChangeClusterType) -> InMessage {
+        let envelope = InMessage {
+            msg: Some(in_message::Msg::ChangeCluster(ChangeClusterRequest {
                 change_id: 1,
-                node_id,
+                replica_id,
                 change_type: change_type.into(),
             })),
         };
         envelope
     }
 
-    fn create_change_cluster_response(change_status: ChangeClusterStatus) -> envelope_out::Msg {
-        envelope_out::Msg::ChangeCluster(ChangeClusterResponse {
+    fn create_change_cluster_response(change_status: ChangeClusterStatus) -> out_message::Msg {
+        out_message::Msg::ChangeCluster(ChangeClusterResponse {
             change_id: 1,
             change_status: change_status.into(),
         })
     }
 
-    fn create_check_cluster_request() -> EnvelopeIn {
-        let envelope = EnvelopeIn {
-            msg: Some(envelope_in::Msg::CheckCluster(CheckClusterRequest {})),
+    fn create_check_cluster_request() -> InMessage {
+        let envelope = InMessage {
+            msg: Some(in_message::Msg::CheckCluster(CheckClusterRequest {})),
         };
         envelope
     }
 
-    fn create_check_cluster_response(raft_state: &RaftState) -> envelope_out::Msg {
-        envelope_out::Msg::CheckCluster(CheckClusterResponse {
-            leader_node_id: raft_state.leader_node_id,
+    fn create_check_cluster_response(raft_state: &RaftState) -> out_message::Msg {
+        out_message::Msg::CheckCluster(CheckClusterResponse {
+            leader_replica_id: raft_state.leader_replica_id,
             leader_term: raft_state.leader_term,
-            cluster_node_ids: raft_state.committed_cluster_config.clone(),
+            cluster_replica_ids: raft_state.committed_cluster_config.clone(),
             has_pending_changes: raft_state.has_pending_change,
         })
     }
 
-    fn create_deliver_message_request(raft_message: &RaftMessage) -> EnvelopeIn {
-        let envelope = EnvelopeIn {
-            msg: Some(envelope_in::Msg::DeliverMessage(DeliverMessage {
-                recipient_node_id: raft_message.to,
-                sender_node_id: raft_message.from,
+    fn create_deliver_message_request(raft_message: &RaftMessage) -> InMessage {
+        let envelope = InMessage {
+            msg: Some(in_message::Msg::DeliverMessage(DeliverMessage {
+                recipient_replica_id: raft_message.to,
+                sender_replica_id: raft_message.from,
                 message_contents: serialize_raft_message(raft_message).unwrap(),
             })),
         };
         envelope
     }
 
-    fn create_deliver_message_response(raft_message: &RaftMessage) -> envelope_out::Msg {
-        envelope_out::Msg::DeliverMessage(DeliverMessage {
-            recipient_node_id: raft_message.to,
-            sender_node_id: raft_message.from,
+    fn create_deliver_message_response(raft_message: &RaftMessage) -> out_message::Msg {
+        out_message::Msg::DeliverMessage(DeliverMessage {
+            recipient_replica_id: raft_message.to,
+            sender_replica_id: raft_message.from,
             message_contents: serialize_raft_message(raft_message).unwrap(),
         })
     }
 
     fn create_send_messages_matcher(
-        expected: Vec<envelope_out::Msg>,
-    ) -> impl Fn(&Vec<EnvelopeOut>) -> bool {
-        move |envelopes: &Vec<EnvelopeOut>| {
-            let actual: Vec<envelope_out::Msg> = envelopes
+        expected: Vec<out_message::Msg>,
+    ) -> impl Fn(&Vec<OutMessage>) -> bool {
+        move |envelopes: &Vec<OutMessage>| {
+            let actual: Vec<out_message::Msg> = envelopes
                 .iter()
                 .map(|m| m.msg.clone().unwrap())
                 .filter(|m| {
-                    if let envelope_out::Msg::Log(_) = m {
+                    if let out_message::Msg::Log(_) = m {
                         return false;
                     };
                     true
@@ -1012,7 +1018,7 @@ mod test {
 
         fn expect_send_messages(
             &mut self,
-            sent_messages: Vec<envelope_out::Msg>,
+            sent_messages: Vec<out_message::Msg>,
         ) -> &mut MockHostBuilder {
             self.mock_host
                 .expect_send_messages()
@@ -1318,7 +1324,7 @@ mod test {
 
         let mut mock_host = MockHostBuilder::new()
             .expect_public_signing_key(vec![])
-            .expect_send_messages(vec![create_start_node_response(node_id)])
+            .expect_send_messages(vec![create_start_replica_response(node_id)])
             .take();
 
         let raft_builder = RaftBuilder::new()
@@ -1341,7 +1347,7 @@ mod test {
             driver.receive_message(
                 &mut mock_host,
                 instant,
-                Some(create_start_node_request(true, node_id)),
+                Some(create_start_replica_request(true, node_id)),
             )
         );
     }
@@ -1352,8 +1358,8 @@ mod test {
 
         let mut mock_host = MockHostBuilder::new()
             .expect_public_signing_key(vec![])
-            .expect_send_messages(vec![create_start_node_response(node_id)])
-            .expect_send_messages(vec![create_stop_node_response()])
+            .expect_send_messages(vec![create_start_replica_response(node_id)])
+            .expect_send_messages(vec![create_stop_replica_response()])
             .take();
 
         let raft_builder = RaftBuilder::new()
@@ -1374,7 +1380,7 @@ mod test {
             driver.receive_message(
                 &mut mock_host,
                 instant,
-                Some(create_start_node_request(true, node_id)),
+                Some(create_start_replica_request(true, node_id)),
             )
         );
 
@@ -1383,7 +1389,7 @@ mod test {
             driver.receive_message(
                 &mut mock_host,
                 instant + 10,
-                Some(create_stop_node_request()),
+                Some(create_stop_replica_request()),
             )
         );
     }
@@ -1396,7 +1402,7 @@ mod test {
 
         let mut mock_host = MockHostBuilder::new()
             .expect_public_signing_key(vec![])
-            .expect_send_messages(vec![create_start_node_response(node_id)])
+            .expect_send_messages(vec![create_start_replica_response(node_id)])
             .expect_send_messages(vec![create_execute_proposal_response(
                 proposal_result.clone(),
             )])
@@ -1423,7 +1429,7 @@ mod test {
             driver.receive_message(
                 &mut mock_host,
                 instant,
-                Some(create_start_node_request(true, node_id)),
+                Some(create_start_replica_request(true, node_id)),
             )
         );
 
@@ -1446,7 +1452,7 @@ mod test {
         let mut mock_host = MockHostBuilder::new()
             .expect_public_signing_key(vec![])
             .expect_get_self_config(self_config.clone())
-            .expect_send_messages(vec![create_start_node_response(node_id)])
+            .expect_send_messages(vec![create_start_replica_response(node_id)])
             .take();
 
         let raft_builder = RaftBuilder::new()
@@ -1472,7 +1478,7 @@ mod test {
             driver.receive_message(
                 &mut mock_host,
                 instant,
-                Some(create_start_node_request(true, node_id)),
+                Some(create_start_replica_request(true, node_id)),
             )
         );
     }
@@ -1484,7 +1490,7 @@ mod test {
 
         let mut mock_host = MockHostBuilder::new()
             .expect_public_signing_key(vec![])
-            .expect_send_messages(vec![create_start_node_response(node_id)])
+            .expect_send_messages(vec![create_start_replica_response(node_id)])
             .expect_send_messages(vec![create_change_cluster_response(
                 ChangeClusterStatus::ChangeStatusPending,
             )])
@@ -1511,7 +1517,7 @@ mod test {
             driver.receive_message(
                 &mut mock_host,
                 instant,
-                Some(create_start_node_request(true, node_id)),
+                Some(create_start_replica_request(true, node_id)),
             )
         );
 
@@ -1522,7 +1528,7 @@ mod test {
                 instant + 10,
                 Some(create_change_cluster_request(
                     peer_id,
-                    ChangeClusterType::ChangeTypeAddNode
+                    ChangeClusterType::ChangeTypeAddReplica
                 )),
             )
         );
@@ -1537,7 +1543,7 @@ mod test {
 
         let mut mock_host = MockHostBuilder::new()
             .expect_public_signing_key(vec![])
-            .expect_send_messages(vec![create_start_node_response(node_id)])
+            .expect_send_messages(vec![create_start_replica_response(node_id)])
             .expect_send_messages(vec![create_check_cluster_response(&raft_state)])
             .take();
 
@@ -1562,7 +1568,7 @@ mod test {
             driver.receive_message(
                 &mut mock_host,
                 instant,
-                Some(create_start_node_request(true, node_id)),
+                Some(create_start_replica_request(true, node_id)),
             )
         );
 
@@ -1625,7 +1631,7 @@ mod test {
 
         let mut mock_host = MockHostBuilder::new()
             .expect_public_signing_key(vec![])
-            .expect_send_messages(vec![create_start_node_response(node_id)])
+            .expect_send_messages(vec![create_start_replica_response(node_id)])
             .expect_send_messages(vec![
                 create_deliver_message_response(&message_a),
                 create_deliver_message_response(&message_b),
@@ -1661,7 +1667,7 @@ mod test {
             driver.receive_message(
                 &mut mock_host,
                 instant,
-                Some(create_start_node_request(true, node_id)),
+                Some(create_start_replica_request(true, node_id)),
             )
         );
 
@@ -1679,7 +1685,7 @@ mod test {
 
         let mut mock_host = MockHostBuilder::new()
             .expect_public_signing_key(vec![])
-            .expect_send_messages(vec![create_start_node_response(node_id)])
+            .expect_send_messages(vec![create_start_replica_response(node_id)])
             .expect_send_messages(vec![])
             .take();
 
@@ -1701,7 +1707,7 @@ mod test {
             driver.receive_message(
                 &mut mock_host,
                 instant,
-                Some(create_start_node_request(true, node_id)),
+                Some(create_start_replica_request(true, node_id)),
             )
         );
 
@@ -1722,7 +1728,7 @@ mod test {
 
         let mut mock_host = MockHostBuilder::new()
             .expect_public_signing_key(vec![])
-            .expect_send_messages(vec![create_start_node_response(node_id)])
+            .expect_send_messages(vec![create_start_replica_response(node_id)])
             .expect_send_messages(vec![])
             .take();
 
@@ -1744,7 +1750,7 @@ mod test {
             driver.receive_message(
                 &mut mock_host,
                 instant,
-                Some(create_start_node_request(true, node_id)),
+                Some(create_start_replica_request(true, node_id)),
             )
         );
 
@@ -1766,7 +1772,7 @@ mod test {
 
         let mut mock_host = MockHostBuilder::new()
             .expect_public_signing_key(vec![])
-            .expect_send_messages(vec![create_start_node_response(node_id)])
+            .expect_send_messages(vec![create_start_replica_response(node_id)])
             .expect_send_messages(vec![])
             .take();
 
@@ -1819,7 +1825,7 @@ mod test {
             driver.receive_message(
                 &mut mock_host,
                 instant,
-                Some(create_start_node_request(true, node_id)),
+                Some(create_start_replica_request(true, node_id)),
             )
         );
 

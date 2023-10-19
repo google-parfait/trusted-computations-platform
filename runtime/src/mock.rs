@@ -28,7 +28,7 @@ use raft::{
     GetEntriesContext as RaftGetEntriesContext, Storage as RaftStorage,
 };
 use slog::Logger;
-use tcp_proto::runtime::endpoint::EnvelopeOut;
+use tcp_proto::runtime::endpoint::OutMessage;
 
 mock! {
     pub Actor {
@@ -58,7 +58,7 @@ mock! {
 
         fn get_self_config(&self) -> Vec<u8>;
 
-        fn send_messages(&mut self, messages: Vec<EnvelopeOut>);
+        fn send_messages(&mut self, messages: Vec<OutMessage>);
 
         fn verify_peer_attestation(
             &self,

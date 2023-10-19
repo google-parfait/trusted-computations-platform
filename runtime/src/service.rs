@@ -29,11 +29,11 @@ use alloc::vec::Vec;
 use core::mem;
 use service::micro_rpc::Status;
 use tcp_proto::runtime::endpoint::{
-    EndpointService, EnvelopeOut, ReceiveMessageRequest, ReceiveMessageResponse,
+    EndpointService, OutMessage, ReceiveMessageRequest, ReceiveMessageResponse,
 };
 
 struct ApplicationHost {
-    messages: Vec<EnvelopeOut>,
+    messages: Vec<OutMessage>,
 }
 
 impl ApplicationHost {
@@ -43,7 +43,7 @@ impl ApplicationHost {
         }
     }
 
-    fn take_messages(&mut self) -> Vec<EnvelopeOut> {
+    fn take_messages(&mut self) -> Vec<OutMessage> {
         mem::take(&mut self.messages)
     }
 }
@@ -57,7 +57,7 @@ impl Host for ApplicationHost {
         Vec::new()
     }
 
-    fn send_messages(&mut self, mut messages: Vec<EnvelopeOut>) {
+    fn send_messages(&mut self, mut messages: Vec<OutMessage>) {
         self.messages.append(&mut messages)
     }
 

@@ -64,7 +64,7 @@ pub trait Store {
 
 #[derive(PartialEq, Eq, Clone, Default)]
 pub struct RaftState {
-    pub leader_node_id: u64,
+    pub leader_replica_id: u64,
     pub leader_term: u64,
     pub committed_cluster_config: Vec<u64>,
     pub has_pending_change: bool,
@@ -259,7 +259,7 @@ impl<S: Store + RaftStorage> Raft for RaftSimple<S> {
 
         let mut state = RaftState::new();
         if raft_soft_state.raft_state == RaftStateRole::Leader {
-            state.leader_node_id = raft_soft_state.leader_id;
+            state.leader_replica_id = raft_soft_state.leader_id;
             state.leader_term = raft_hard_state.term;
             state.has_pending_change = self.raft_node().raft.has_pending_conf();
             state.committed_cluster_config = self.committed_voters.clone();

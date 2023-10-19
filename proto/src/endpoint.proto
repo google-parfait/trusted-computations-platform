@@ -16,27 +16,25 @@ syntax = "proto3";
 
 package runtime.endpoint;
 
-// Envelope for the messages coming from the Untrusted Launcher to the Trusted
-// Host.
-message EnvelopeIn {
+// Messages coming from the Untrusted Launcher to the Trusted Host.
+message InMessage {
   oneof msg {
-    // Requests the Trusted Host to start a new Raft node. Must be the first
+    // Requests the Trusted Host to start a new Raft replica. Must be the first
     // message sent by the Untrusted Launcher to the Trusted Host.
-    StartNodeRequest start_node = 1;
-    // Requests the Trusted Host to stop an already running Raft node. Must be
-    // the last message sent by the Untrusted Launcher to the Trusted
-    // Host.
-    StopNodeRequest stop_node = 2;
+    StartReplicaRequest start_replica = 1;
+    // Requests the Trusted Host to stop an already running Raft replica. Must
+    // be the last message sent by the Untrusted Launcher to the Trusted Host.
+    StopReplicaRequest stop_replica = 2;
     // Requests the Trusted Host to issue a command to change Raft cluster that
-    // is led by the node.
+    // is led by the replica.
     ChangeClusterRequest change_cluster = 3;
     // Requests the Trusted Host to report the current state of the Raft
-    // cluster, including which node is the leader, which nodes are in the
+    // cluster, including which replica is the leader, which replicas are in the
     // cluster, are there any pending cluster changes. The latter is important
     // to enable cluster membership changes which must be carried out one at a
     // time.
     CheckClusterRequest check_cluster = 4;
-    // Requests the Trusted Host to deliver a Raft message to the node.
+    // Requests the Trusted Host to deliver a Raft message to the replica.
     DeliverMessage deliver_message = 5;
     // Requests the Trusted Host to execute a proposal representing a client
     // action or a query. Note that it is up to the application to interpret and
@@ -45,17 +43,17 @@ message EnvelopeIn {
   }
 }
 
-// Envelope for the messages coming from the Trusted Host to the Untrusted
-// Launcher. The Untrusted Launcher is then responsible for delivery of the
-// messages to the intended recipients.
-message EnvelopeOut {
+// Messages coming from the Trusted Host to the Untrusted Launcher. The
+// Untrusted Launcher is then responsible for delivery of the messages to the
+// intended recipients.
+message OutMessage {
   oneof msg {
-    // Responds to the Untrusted Launcher with the started node idenity and
-    // indication status. The generated node identity will be used to route
-    // messages between nodes.
-    StartNodeResponse start_node = 1;
-    // Responds to the Untrsuted Launcher with the stop node result.
-    StopNodeResponse stop_node = 2;
+    // Responds to the Untrusted Launcher with the started replica identity and
+    // indication status. The generated replica identity will be used to route
+    // messages between replicas.
+    StartReplicaResponse start_replica = 1;
+    // Responds to the Untrsuted Launcher with the stop replica result.
+    StopReplicaResponse stop_replica = 2;
     // Requests the Untrusted Launcher to log given message for troubleshooting.
     LogMessage log = 3;
     // Responds to the Untrusted Launcher with the indication if the requested
@@ -65,41 +63,48 @@ message EnvelopeOut {
     ChangeClusterResponse change_cluster = 4;
     // Responds to the Untrusted Launcher with the state of the cluster. The
     // response may be sent because it was explicitly requested or because the
-    // internal state of the Raft node has changed.
+    // internal state of the Raft replica has changed.
     CheckClusterResponse check_cluster = 5;
     // Requests the Untrusted Launcher to deliver the Raft message to a Raft
-    // node hosted in a different Trusted Host.
+    // replica hosted in a different Trusted Host.
     DeliverMessage deliver_message = 6;
     // Responds to the Untrusted Launcher with the proposal result in case of
-    // success or an error (for example, the node which received the proposal is
-    // not the leader). Note that it may take some time for the Trusted
+    // success or an error (for example, the replica which received the proposal
+    // is not the leader). Note that it may take some time for the Trusted
     // Application to respond to the proposal (the execution of a proposal
     // requires it to be committed to the replicated log). Also it is possible
-    // that the node that has accepted the proposal and the node that has
-    // responded to the proposal are not the same node due failures.
+    // that the replica that has accepted the proposal and the replica that has
+    // responded to the proposal are not the same replica due failures.
     ExecuteProposalResponse execute_proposal = 7;
   }
 }
 
-message StartNodeRequest {
-  // Inidicates if the new Raft node to be started as the leader of the Raft
+// Instructs the trusted application to start by initializing its internal state
+// and generating a replica identity for its raft replica. This must be the
+// first message sent by the untrusted launcher to the trusted application.
+message StartReplicaRequest {
+  // Indicates if the new Raft replica to be started as the leader of the Raft
   // cluster.
   bool is_leader = 1;
-  // If set is used as the started node id. Must only be used for testing
+  // If set is used as the started replica id. Must only be used for testing
   // purposes.
-  uint64 node_id_hint = 2;
+  uint64 replica_id_hint = 2;
 }
 
-message StartNodeResponse {
-  // Started node id, generated by the node or set to the provided in the
+message StartReplicaResponse {
+  // Started replica id, generated by the replica or set to the provided in the
   // request id.
-  uint64 node_id = 1;
+  uint64 replica_id = 1;
 }
 
-message StopNodeRequest {}
+// Instructs the trusted application to stop the corresponding raft replica.
+// This must be the last message sent by the untrusted launcher to the trusted
+// application.
+message StopReplicaRequest {}
 
-message StopNodeResponse {}
+message StopReplicaResponse {}
 
+// Request to log given message for troubleshooting.
 message LogMessage {
   // Holds severity of the message.
   LogSeverity severity = 1;
@@ -117,27 +122,31 @@ enum LogSeverity {
   LOG_SEVERITY_TRACE = 6;
 }
 
+// Request to change the cluster membership such as adding/removing replicas.
 message ChangeClusterRequest {
-  // Holds unique id that identifies the Raft cluster change.
+  // Unique id to identify Raft cluster change.
   uint64 change_id = 1;
-  // Holds id of the node to be either added or removed from the Raft cluster.
-  uint64 node_id = 2;
-  // Inidicates whether the node must be added or removed.
+  // Unique identity of the replica to be added or removed.
+  uint64 replica_id = 2;
+  // Type of change to be performed i.e. addition or removal of a replica.
   ChangeClusterType change_type = 3;
 }
 
+// Response to ChangeClusterRequest.
 message ChangeClusterResponse {
+  // Unique id associated with ChangeClusterRequest so as to correlate the
+  // response with the corresponding request.
   uint64 change_id = 1;
-  // Indicates if the Raft cluster change has been accepted or
+  // Indicates if Raft cluster change has been accepted and pending or rejected.
   ChangeClusterStatus change_status = 2;
 }
 
 enum ChangeClusterType {
   CHANGE_TYPE_UNSPECIFIED = 0;
-  // Requests to add node to the Raft cluster.
-  CHANGE_TYPE_ADD_NODE = 1;
-  // Requests to remove node from the Raft cluster.
-  CHANGE_TYPE_REMOVE_NODE = 2;
+  // Requests to add replica to the Raft cluster.
+  CHANGE_TYPE_ADD_REPLICA = 1;
+  // Requests to remove replica from the Raft cluster.
+  CHANGE_TYPE_REMOVE_REPLICA = 2;
 }
 
 enum ChangeClusterStatus {
@@ -145,44 +154,50 @@ enum ChangeClusterStatus {
   // Indicates that the Raft cluster change has been accepted for processing.
   CHANGE_STATUS_PENDING = 1;
   // Indicates that the Raft cluster change has been rejected which can be
-  // either because the node is not a leader or there is already a pending
+  // either because the replica is not a leader or there is already a pending
   // cluster change.
   CHANGE_STATUS_REJECTED = 2;
 }
 
+// Checks the current state of the Raft cluster.
 message CheckClusterRequest {}
 
+// Describes the state of the Raft cluster.
+// This can also be issued by the raft cluster leader in the absence of any
+// request e.g. if the leadership changes the new leader will send this message
+// with its information and the old leader will send an empty
+// CheckClusterResponse message indicating that it lost leadership.
 message CheckClusterResponse {
-  // Holds the id of the Raft node currently elected leader. Set to 0 if the
+  // Holds the id of the Raft replica currently elected leader. Set to 0 if the
   // leader is not known.
-  uint64 leader_node_id = 1;
+  uint64 leader_replica_id = 1;
   // Holds the term of the leader. Set to 0 if leader is not known.
   uint64 leader_term = 2;
-  // Holds the set of node ids that currently belong to the cluster.
-  repeated uint64 cluster_node_ids = 3;
+  // Holds the set of replica ids that currently belong to the cluster.
+  repeated uint64 cluster_replica_ids = 3;
   // Indicates if there are any pending cluster changes.
   bool has_pending_changes = 4;
 }
 
 message DeliverMessage {
-  // Holds the id of the recipient node.
-  uint64 recipient_node_id = 1;
-  // Holds the id of the sender node.
-  uint64 sender_node_id = 2;
-  // Holds a potentially encrypted contents of the message to be delivered.
+  // The replica id of the recipient.
+  uint64 recipient_replica_id = 1;
+  // The replica id of the sender.
+  uint64 sender_replica_id = 2;
+  // Message to be delivered, potentially encrypted.
   bytes message_contents = 3;
 }
 
 message ExecuteProposalRequest {
   // Holds serialized proposal contents. It is up to the Trusted Application to
   // interpret it.
-  bytes proposal_contents = 2;
+  bytes proposal_contents = 1;
 }
 
 message ExecuteProposalResponse {
   // Holds serialized proposal response. It is up to the consumer to interpret
   // it.
-  bytes result_contents = 2;
+  bytes result_contents = 1;
 }
 
 service EndpointService {
@@ -195,18 +210,18 @@ service EndpointService {
 message ReceiveMessageRequest {
   // A measurement of a monotonically nondecreasing clock provided by
   // the untrusted launcher to the trusted host. The resolution of the instant
-  // is mesured in milliseconds. Instants are opaque that can only be compared
-  // to one another. In other words the absolute value must not be interpretted
+  // is measured in milliseconds. Instants are opaque that can only be compared
+  // to one another. In other words the absolute value must not be interpreted
   // as wall clock time or time since the trusted application start.
   uint64 instant = 1;
 
   // A potentially empty message received from the untrusted
   // launcher for the trusted application to process.
-  EnvelopeIn message = 2;
+  InMessage message = 2;
 }
 
 message ReceiveMessageResponse {
   // A potentially empty set of messages that must be sent out to the peers or
   // the consumers.
-  repeated EnvelopeOut messages = 1;
+  repeated OutMessage messages = 1;
 }

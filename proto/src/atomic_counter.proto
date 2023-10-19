@@ -29,7 +29,7 @@ message CounterRequest {
   }
 }
 
-// Represents a request to execute an compare and swap operation.
+// Represents a request to execute compare and swap operation.
 message CounterCompareAndSwapRequest {
   // Expected counter value at the time of execution.
   int64 expected_value = 1;
@@ -50,13 +50,14 @@ message CounterResponse {
 
 // Enumerates the possible outcomes of the operation execution.
 enum CounterStatus {
-  UNSPECIFIED = 0;
+  COUNTER_STATUS_UNSPECIFIED = 0;
   // The operation has been successfully executed.
-  SUCCESS = 1;
-  // The operation has been rejected because the
-  NOT_LEADER_ERROR = 2;
+  COUNTER_STATUS_SUCCESS = 1;
+  // The operation has been rejected (for example, because the underlying
+  // replica is not a leader).
+  COUNTER_STATUS_REJECTED = 2;
   // The operation is malformed.
-  INVALID_ARGUMENT_ERROR = 3;
+  COUNTER_STATUS_INVALID_ARGUMENT_ERROR = 3;
 }
 
 // Represents the response to the compare and swap operation request.

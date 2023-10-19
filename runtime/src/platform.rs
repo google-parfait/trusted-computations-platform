@@ -38,7 +38,7 @@ use alloc::boxed::Box;
 use alloc::vec::Vec;
 use core::fmt;
 use core::result::Result;
-use tcp_proto::runtime::endpoint::{EnvelopeIn, EnvelopeOut};
+use tcp_proto::runtime::endpoint::{InMessage, OutMessage};
 
 #[derive(Debug, PartialEq)]
 pub enum PalError {
@@ -171,7 +171,7 @@ pub trait Host {
     /// # Panics
     ///
     /// If the communication channel is irrepairably broken, a success otherise.
-    fn send_messages(&mut self, messages: Vec<EnvelopeOut>);
+    fn send_messages(&mut self, messages: Vec<OutMessage>);
 
     /// Attempts to deserialize peer attestation and perform initial verification
     /// of the attestation. The application specific verification (e.g. ensuring
@@ -224,6 +224,6 @@ pub trait Application {
         &mut self,
         host: &mut impl Host,
         instant: u64,
-        opt_message: Option<EnvelopeIn>,
+        opt_message: Option<InMessage>,
     ) -> Result<(), PalError>;
 }

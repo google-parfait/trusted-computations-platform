@@ -153,7 +153,7 @@ impl Actor for CounterActor {
                 }
 
                 if !self.get_context().leader() {
-                    status = CounterStatus::NotLeaderError;
+                    status = CounterStatus::Rejected;
 
                     warn!(
                         self.get_context().logger(),

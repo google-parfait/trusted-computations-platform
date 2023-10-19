@@ -43,7 +43,7 @@ struct FakeCluster {
     advance_step: u64,
     platforms: HashMap<u64, FakePlatform>,
     leader_id: u64,
-    pull_messages: Vec<EnvelopeOut>,
+    pull_messages: Vec<OutMessage>,
     logger: Logger,
 }
 
@@ -91,15 +91,15 @@ impl FakeCluster {
         self.platforms
             .get_mut(&self.leader_id)
             .unwrap()
-            .send_change_cluster(0, node_id, ChangeClusterType::ChangeTypeAddNode);
+            .send_change_cluster(0, node_id, ChangeClusterType::ChangeTypeAddReplica);
 
         self.advance_until_added_to_cluster(node_id);
     }
 
     fn advance_until_added_to_cluster(&mut self, node_id: u64) {
         self.advance_until(&mut |envelope_out| match &envelope_out.msg {
-            Some(envelope_out::Msg::CheckCluster(response)) => {
-                !response.has_pending_changes && response.cluster_node_ids.contains(&node_id)
+            Some(out_message::Msg::CheckCluster(response)) => {
+                !response.has_pending_changes && response.cluster_replica_ids.contains(&node_id)
             }
             _ => false,
         });
@@ -109,18 +109,18 @@ impl FakeCluster {
         let mut leader_id = 0;
 
         self.advance_until(&mut |envelope_out| match &envelope_out.msg {
-            Some(envelope_out::Msg::CheckCluster(response)) => {
-                if response.leader_node_id == 0 {
+            Some(out_message::Msg::CheckCluster(response)) => {
+                if response.leader_replica_id == 0 {
                     return false;
                 }
                 match excluding_node_id {
                     Some(exclucding_leader_id)
-                        if exclucding_leader_id == response.leader_node_id =>
+                        if exclucding_leader_id == response.leader_replica_id =>
                     {
                         false
                     }
                     _ => {
-                        leader_id = response.leader_node_id;
+                        leader_id = response.leader_replica_id;
                         true
                     }
                 }
@@ -133,8 +133,8 @@ impl FakeCluster {
 
     fn advance_until(
         &mut self,
-        condition: &mut impl FnMut(&EnvelopeOut) -> bool,
-    ) -> Vec<EnvelopeOut> {
+        condition: &mut impl FnMut(&OutMessage) -> bool,
+    ) -> Vec<OutMessage> {
         loop {
             self.advance();
 
@@ -151,7 +151,7 @@ impl FakeCluster {
         for (_, platform) in &mut self.platforms {
             let messages_out = platform.take_messages_out();
             for message_out in messages_out {
-                if let Some(envelope_out::Msg::DeliverMessage(deliver_message)) = message_out.msg {
+                if let Some(out_message::Msg::DeliverMessage(deliver_message)) = message_out.msg {
                     messages_in.push(deliver_message);
                 } else {
                     self.pull_messages.push(message_out);
@@ -160,9 +160,9 @@ impl FakeCluster {
         }
 
         for message_in in messages_in {
-            if let Some(platform) = self.platforms.get_mut(&message_in.recipient_node_id) {
-                platform.append_meessage_in(EnvelopeIn {
-                    msg: Some(envelope_in::Msg::DeliverMessage(message_in)),
+            if let Some(platform) = self.platforms.get_mut(&message_in.recipient_replica_id) {
+                platform.append_meessage_in(InMessage {
+                    msg: Some(in_message::Msg::DeliverMessage(message_in)),
                 });
             }
         }
@@ -177,9 +177,9 @@ impl FakeCluster {
 
     fn extract_pull_messages(
         &mut self,
-        filter: &mut impl FnMut(&EnvelopeOut) -> bool,
-    ) -> Vec<EnvelopeOut> {
-        let mut result: Vec<EnvelopeOut> = Vec::new();
+        filter: &mut impl FnMut(&OutMessage) -> bool,
+    ) -> Vec<OutMessage> {
+        let mut result: Vec<OutMessage> = Vec::new();
 
         let mut i = 0;
         while i < self.pull_messages.len() {
@@ -195,12 +195,12 @@ impl FakeCluster {
 
     fn print_log_messages(&mut self) {
         let messages = self.extract_pull_messages(&mut |envelope_out| match &envelope_out.msg {
-            Some(envelope_out::Msg::Log(_)) => true,
+            Some(out_message::Msg::Log(_)) => true,
             _ => false,
         });
         for message in &messages {
-            if let EnvelopeOut {
-                msg: Some(envelope_out::Msg::Log(log_message)),
+            if let OutMessage {
+                msg: Some(out_message::Msg::Log(log_message)),
             } = message
             {
                 info!(self.logger, "{}", log_message.message);
@@ -243,7 +243,7 @@ impl FakeCluster {
     fn advance_until_counter_response(&mut self, response_id: u64) -> CounterResponse {
         let mut counter_response_opt: Option<CounterResponse> = None;
         let response_messages = self.advance_until(&mut |envelope_out| match &envelope_out.msg {
-            Some(envelope_out::Msg::ExecuteProposal(response)) => {
+            Some(out_message::Msg::ExecuteProposal(response)) => {
                 let counter_response =
                     CounterResponse::decode(response.result_contents.as_ref()).unwrap();
                 if counter_response.id == response_id {
@@ -291,7 +291,7 @@ impl FakeCluster {
 
 struct FakePlatform {
     id: u64,
-    messages_in: Vec<EnvelopeIn>,
+    messages_in: Vec<InMessage>,
     instant: u64,
     driver: RefCell<Driver<RaftSimple<MemoryStorage>, MemoryStorage, CounterActor>>,
     host: RefCell<FakeHost>,
@@ -317,38 +317,38 @@ impl FakePlatform {
     }
 
     fn send_start_node(&mut self, is_leader: bool) {
-        self.append_meessage_in(EnvelopeIn {
-            msg: Some(envelope_in::Msg::StartNode(StartNodeRequest {
+        self.append_meessage_in(InMessage {
+            msg: Some(in_message::Msg::StartReplica(StartReplicaRequest {
                 is_leader,
-                node_id_hint: self.id,
+                replica_id_hint: self.id,
             })),
         });
     }
 
     fn send_stop_node(&mut self) {
-        self.append_meessage_in(EnvelopeIn {
-            msg: Some(envelope_in::Msg::StopNode(StopNodeRequest {})),
+        self.append_meessage_in(InMessage {
+            msg: Some(in_message::Msg::StopReplica(StopReplicaRequest {})),
         });
     }
 
     fn send_change_cluster(
         &mut self,
         change_id: u64,
-        node_id: u64,
+        replica_id: u64,
         change_type: ChangeClusterType,
     ) {
-        self.append_meessage_in(EnvelopeIn {
-            msg: Some(envelope_in::Msg::ChangeCluster(ChangeClusterRequest {
+        self.append_meessage_in(InMessage {
+            msg: Some(in_message::Msg::ChangeCluster(ChangeClusterRequest {
                 change_id,
-                node_id,
+                replica_id,
                 change_type: change_type.into(),
             })),
         });
     }
 
     fn send_check_cluster(&mut self) {
-        self.append_meessage_in(EnvelopeIn {
-            msg: Some(envelope_in::Msg::CheckCluster(CheckClusterRequest {})),
+        self.append_meessage_in(InMessage {
+            msg: Some(in_message::Msg::CheckCluster(CheckClusterRequest {})),
         });
     }
 
@@ -356,7 +356,7 @@ impl FakePlatform {
         self.instant += duration;
     }
 
-    fn append_meessage_in(&mut self, message_in: EnvelopeIn) {
+    fn append_meessage_in(&mut self, message_in: InMessage) {
         self.messages_in.push(message_in)
     }
 
@@ -379,13 +379,13 @@ impl FakePlatform {
         }
     }
 
-    fn take_messages_out(&mut self) -> Vec<EnvelopeOut> {
+    fn take_messages_out(&mut self) -> Vec<OutMessage> {
         self.host.borrow_mut().take_messages_out()
     }
 
     fn send_counter_request(&mut self, counter_request: &CounterRequest) {
-        self.append_meessage_in(EnvelopeIn {
-            msg: Some(envelope_in::Msg::ExecuteProposal(ExecuteProposalRequest {
+        self.append_meessage_in(InMessage {
+            msg: Some(in_message::Msg::ExecuteProposal(ExecuteProposalRequest {
                 proposal_contents: counter_request.encode_to_vec(),
             })),
         });
@@ -394,7 +394,7 @@ impl FakePlatform {
 
 struct FakeHost {
     config: Vec<u8>,
-    messages_out: Vec<EnvelopeOut>,
+    messages_out: Vec<OutMessage>,
 }
 
 impl FakeHost {
@@ -408,7 +408,7 @@ impl FakeHost {
         }
     }
 
-    fn take_messages_out(&mut self) -> Vec<EnvelopeOut> {
+    fn take_messages_out(&mut self) -> Vec<OutMessage> {
         core::mem::take(&mut self.messages_out)
     }
 }
@@ -422,7 +422,7 @@ impl Host for FakeHost {
         self.config.clone()
     }
 
-    fn send_messages(&mut self, mut messages: Vec<EnvelopeOut>) {
+    fn send_messages(&mut self, mut messages: Vec<OutMessage>) {
         self.messages_out.append(&mut messages);
     }
 
@@ -480,7 +480,7 @@ mod test {
         cluster.add_node_to_cluster(3);
 
         cluster.send_cas_counter_request(cluster.non_leader_id(), 3, "counter 1", 1, 2);
-        assert!(cluster.advance_until_cas_counter_response(3, CounterStatus::NotLeaderError, 0, 0));
+        assert!(cluster.advance_until_cas_counter_response(3, CounterStatus::Rejected, 0, 0));
 
         let leader_id = cluster.leader_id();
         cluster.stop_node(leader_id);
