@@ -383,7 +383,9 @@ impl<R: Raft<S = S>, S: Store + RaftStorage, A: Actor> Driver<R, S, A> {
                         self.mut_core()
                             .append_message(out_message::Msg::ExecuteProposal(
                                 ExecuteProposalResponse {
+                                    entry_id: None,
                                     result_contents: response,
+                                    status: ExecuteProposalStatus::ProposalStatusUnspecified.into(),
                                 },
                             ));
                     }
@@ -719,7 +721,9 @@ impl<R: Raft<S = S>, S: Store + RaftStorage, A: Actor> Driver<R, S, A> {
             CommandOutcome::Response(response) => {
                 self.mut_core()
                     .append_message(out_message::Msg::ExecuteProposal(ExecuteProposalResponse {
+                        entry_id: None,
                         result_contents: response,
+                        status: ExecuteProposalStatus::ProposalStatusUnspecified.into(),
                     }));
             }
             CommandOutcome::Event(event) => self.mut_core().append_proposal(event),
@@ -911,7 +915,11 @@ mod test {
     }
 
     fn create_execute_proposal_response(result_contents: Vec<u8>) -> out_message::Msg {
-        out_message::Msg::ExecuteProposal(ExecuteProposalResponse { result_contents })
+        out_message::Msg::ExecuteProposal(ExecuteProposalResponse {
+            entry_id: None,
+            result_contents: result_contents,
+            status: ExecuteProposalStatus::ProposalStatusUnspecified.into(),
+        })
     }
 
     fn create_change_cluster_request(replica_id: u64, change_type: ChangeClusterType) -> InMessage {

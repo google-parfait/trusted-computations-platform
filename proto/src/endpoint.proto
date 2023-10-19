@@ -195,9 +195,26 @@ message ExecuteProposalRequest {
 }
 
 message ExecuteProposalResponse {
+  // Unique Id for this proposal.
+  EntryId entry_id = 1;
   // Holds serialized proposal response. It is up to the consumer to interpret
-  // it.
-  bytes result_contents = 1;
+  // it. This is only populated when status is EXECUTE_PROPOSAL_STATUS_COMPLETED.
+  bytes result_contents = 2;
+  // Indicates if proposal execution has completed or pending.
+  ExecuteProposalStatus status = 3;
+}
+
+message EntryId {
+  // Unique id to identify this entry.
+  uint64 id = 1;
+}
+
+enum ExecuteProposalStatus {
+  PROPOSAL_STATUS_UNSPECIFIED = 0;
+  // Indicates that the proposal execution is still pending.
+  PROPOSAL_STATUS_PENDING = 1;
+  // Indicates that the proposal execution has completed.
+  PROPOSAL_STATUS_COMPLETED = 2;
 }
 
 service EndpointService {
