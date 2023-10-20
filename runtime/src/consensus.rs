@@ -31,11 +31,14 @@ use crate::util::raft::{
     create_raft_config_state, create_raft_snapshot, create_raft_snapshot_metadata,
 };
 
+// This file describes abstraction layer for the Raft protocol implementation.
+
+/// Raft storage abstraction.
 pub trait Store {
     /// Saves the current Raft hard state.
     fn set_hard_state(&mut self, state: RaftHardState);
 
-    /// Append the new entries to storage.
+    /// Appends the new entries to storage.
     ///
     /// # Panics
     ///
