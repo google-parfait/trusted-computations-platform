@@ -198,15 +198,28 @@ message ExecuteProposalResponse {
   // Unique Id for this proposal.
   EntryId entry_id = 1;
   // Holds serialized proposal response. It is up to the consumer to interpret
-  // it. This is only populated when status is EXECUTE_PROPOSAL_STATUS_COMPLETED.
+  // it. This is only populated when status is
+  // EXECUTE_PROPOSAL_STATUS_COMPLETED.
   bytes result_contents = 2;
   // Indicates if proposal execution has completed or pending.
   ExecuteProposalStatus status = 3;
 }
 
+// Represents composite id that uniquely identifies an entry within Raft
+// cluster.
 message EntryId {
-  // Unique id to identify this entry.
-  uint64 id = 1;
+  // Id of the replicate that proposed this entry.
+  uint64 replica_id = 1;
+  // Unique id of this entry within the replica.
+  uint64 entry_id = 2;
+}
+
+// Represents an entry of the replicated log.
+message Entry {
+  // Unique Id for the proposal that generated this entry.
+  EntryId entry_id = 1;
+  // Contents of the entry.
+  bytes entry_contents = 2;
 }
 
 enum ExecuteProposalStatus {

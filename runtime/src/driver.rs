@@ -17,8 +17,8 @@ use crate::consensus::{Raft, RaftState, Store};
 use crate::logger::{log::create_remote_logger, DrainOutput};
 use crate::model::{Actor, ActorContext, CommandOutcome, EventOutcome};
 use crate::util::raft::{
-    create_raft_config_change, deserialize_config_change, deserialize_raft_message,
-    get_config_state, get_metadata, serialize_raft_message,
+    create_entry, create_entry_id, create_raft_config_change, deserialize_config_change,
+    deserialize_raft_message, get_config_state, get_metadata, serialize_raft_message,
 };
 use alloc::boxed::Box;
 use alloc::rc::Rc;
@@ -28,6 +28,7 @@ use core::{
     cmp, mem,
 };
 use platform::{Application, Host, PalError};
+use prost::Message;
 use raft::{
     eraftpb::ConfChangeType as RaftConfigChangeType, eraftpb::ConfState as RaftConfigState,
     eraftpb::Entry as RaftEntry, eraftpb::EntryType as RaftEntryType,
@@ -147,7 +148,12 @@ pub struct DriverConfig {
 }
 
 struct RaftProgress {
+    // Index of the last committed entry that has been applied to the actor.
     applied_index: u64,
+    // Counter that is used to generate unique ids within this Raft instance.
+    // The counter must never go back.
+    next_entry_id: u64,
+    // The lastest configuration of the cluster that has been committed.
     config_state: RaftConfigState,
 }
 
@@ -155,6 +161,7 @@ impl RaftProgress {
     fn new() -> RaftProgress {
         RaftProgress {
             applied_index: 0,
+            next_entry_id: 1,
             config_state: RaftConfigState::default(),
         }
     }
@@ -366,11 +373,17 @@ impl<R: Raft<S = S>, S: Store + RaftStorage, A: Actor> Driver<R, S, A> {
                 };
             } else {
                 debug!(self.logger, "Applying Raft entry");
+                // Recover the entry id so that execute proposal response can be correlated
+                let entry = Entry::decode(committed_entry.get_data()).map_err(|e| {
+                    error!(self.logger, "Failed to deserialize Raft entry: {}", e);
+                    // Failure to deserialize Raft config change must lead to termination.
+                    return PalError::Raft;
+                })?;
 
                 // Pass committed entry to the actor to make effective.
                 match self
                     .actor
-                    .on_apply_event(committed_entry.index, committed_entry.get_data())
+                    .on_apply_event(committed_entry.index, &entry.entry_contents.as_ref())
                     .map_err(|e| {
                         error!(
                             self.logger,
@@ -380,14 +393,15 @@ impl<R: Raft<S = S>, S: Store + RaftStorage, A: Actor> Driver<R, S, A> {
                         PalError::Actor
                     })? {
                     EventOutcome::Response(response) => {
-                        self.mut_core()
-                            .append_message(out_message::Msg::ExecuteProposal(
-                                ExecuteProposalResponse {
-                                    entry_id: None,
-                                    result_contents: response,
-                                    status: ExecuteProposalStatus::ProposalStatusUnspecified.into(),
-                                },
-                            ));
+                        // Send follow up execute proposal response after the corresponding entry
+                        // has been committed and applied.
+                        self.stash_message(out_message::Msg::ExecuteProposal(
+                            ExecuteProposalResponse {
+                                entry_id: entry.entry_id,
+                                result_contents: response,
+                                status: ExecuteProposalStatus::ProposalStatusCompleted.into(),
+                            },
+                        ));
                     }
                     EventOutcome::None => {
                         // There is nothing to send
@@ -708,6 +722,10 @@ impl<R: Raft<S = S>, S: Store + RaftStorage, A: Actor> Driver<R, S, A> {
         execute_proposal_request: &ExecuteProposalRequest,
     ) -> Result<(), PalError> {
         self.check_driver_started()?;
+        // Generate unique entry id that will be used to correlate pending execute proposal
+        // response and committed entry.
+        let entry_id = create_entry_id(self.id, self.raft_progress.next_entry_id);
+        self.raft_progress.next_entry_id += 1;
 
         match self
             .actor
@@ -719,14 +737,18 @@ impl<R: Raft<S = S>, S: Store + RaftStorage, A: Actor> Driver<R, S, A> {
                 PalError::Actor
             })? {
             CommandOutcome::Response(response) => {
-                self.mut_core()
-                    .append_message(out_message::Msg::ExecuteProposal(ExecuteProposalResponse {
-                        entry_id: None,
-                        result_contents: response,
-                        status: ExecuteProposalStatus::ProposalStatusUnspecified.into(),
-                    }));
+                // The proposal has been executed and there will be no follow up response.
+                self.stash_message(out_message::Msg::ExecuteProposal(ExecuteProposalResponse {
+                    entry_id: Some(entry_id),
+                    result_contents: response,
+                    status: ExecuteProposalStatus::ProposalStatusCompleted.into(),
+                }));
             }
-            CommandOutcome::Event(event) => self.mut_core().append_proposal(event),
+            CommandOutcome::Event(event) => {
+                // The proposal has been accepted and there will be a follow up response.
+                let entry = create_entry(entry_id, event);
+                self.mut_core().append_proposal(entry.encode_to_vec())
+            }
         }
 
         Ok(())
@@ -914,11 +936,15 @@ mod test {
         envelope
     }
 
-    fn create_execute_proposal_response(result_contents: Vec<u8>) -> out_message::Msg {
+    fn create_execute_proposal_response(
+        entry_id: Option<EntryId>,
+        result_contents: Vec<u8>,
+        status: ExecuteProposalStatus,
+    ) -> out_message::Msg {
         out_message::Msg::ExecuteProposal(ExecuteProposalResponse {
-            entry_id: None,
+            entry_id,
             result_contents: result_contents,
-            status: ExecuteProposalStatus::ProposalStatusUnspecified.into(),
+            status: status.into(),
         })
     }
 
@@ -1407,12 +1433,15 @@ mod test {
         let (node_id, instant, driver_config) = create_default_parameters();
         let proposal_contents = vec![1, 2, 3];
         let proposal_result = vec![4, 4, 6];
+        let entry_id = create_entry_id(node_id, 1);
 
         let mut mock_host = MockHostBuilder::new()
             .expect_public_signing_key(vec![])
             .expect_send_messages(vec![create_start_replica_response(node_id)])
             .expect_send_messages(vec![create_execute_proposal_response(
+                Some(entry_id),
                 proposal_result.clone(),
+                ExecuteProposalStatus::ProposalStatusCompleted,
             )])
             .take();
 
@@ -1605,8 +1634,12 @@ mod test {
 
         let entries = vec![create_empty_raft_entry(3, 2)];
 
+        let proposal_result = vec![4, 5, 6];
+        let entry_id = create_entry_id(node_id, 1);
+        let entry = create_entry(entry_id.clone(), proposal_result.clone());
         let committed_normal_entry =
-            create_raft_entry(2, 2, RaftEntryType::EntryNormal, vec![1, 2, 3]);
+            create_raft_entry(2, 2, RaftEntryType::EntryNormal, entry.encode_to_vec());
+
         let config_change = create_raft_config_change(peer_id, RaftConfigChangeType::AddNode);
         let config_state = create_raft_config_state(vec![node_id, peer_id]);
         let committed_config_entry = create_raft_entry(
@@ -1643,6 +1676,11 @@ mod test {
             .expect_send_messages(vec![
                 create_deliver_message_response(&message_a),
                 create_deliver_message_response(&message_b),
+                create_execute_proposal_response(
+                    Some(entry_id.clone()),
+                    proposal_result.clone(),
+                    ExecuteProposalStatus::ProposalStatusCompleted,
+                ),
             ])
             .take();
 
@@ -1665,8 +1703,8 @@ mod test {
             .expect_on_load_snapshot(snapshot.data.to_vec(), Ok(()))
             .expect_on_apply_event(
                 committed_normal_entry.index,
-                committed_normal_entry.data.to_vec(),
-                Ok(EventOutcome::None),
+                entry.entry_contents,
+                Ok(EventOutcome::Response(proposal_result)),
             )
             .take(raft_builder);
 
@@ -1778,14 +1816,23 @@ mod test {
 
         let raft_state = create_default_raft_state(node_id);
 
+        let proposal_result = vec![4, 5, 6];
+
+        let entry_id = create_entry_id(node_id, 1);
+        let entry = create_entry(entry_id.clone(), proposal_result.clone());
+
         let mut mock_host = MockHostBuilder::new()
             .expect_public_signing_key(vec![])
             .expect_send_messages(vec![create_start_replica_response(node_id)])
-            .expect_send_messages(vec![])
+            .expect_send_messages(vec![create_execute_proposal_response(
+                Some(entry_id.clone()),
+                proposal_result.clone(),
+                ExecuteProposalStatus::ProposalStatusCompleted,
+            )])
             .take();
 
         let committed_normal_entry =
-            create_raft_entry(2, 2, RaftEntryType::EntryNormal, vec![1, 2, 3]);
+            create_raft_entry(2, 2, RaftEntryType::EntryNormal, entry.encode_to_vec());
 
         let ready = RaftReady::new(
             vec![],
@@ -1822,8 +1869,8 @@ mod test {
             .expect_on_init(|_| Ok(()))
             .expect_on_apply_event(
                 committed_normal_entry.index,
-                committed_normal_entry.data.to_vec(),
-                Ok(EventOutcome::None),
+                entry.entry_contents,
+                Ok(EventOutcome::Response(proposal_result)),
             )
             .expect_on_save_snapshot(Ok(snapshot.clone()))
             .take(raft_builder);

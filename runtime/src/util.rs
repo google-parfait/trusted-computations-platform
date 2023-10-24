@@ -22,6 +22,7 @@ use raft::eraftpb::{
     Message as RaftMessage, MessageType as RaftMessageType, Snapshot as RaftSnapshot,
     SnapshotMetadata as RaftSnapshotMetadata,
 };
+use tcp_proto::runtime::endpoint::{Entry, EntryId};
 
 #[derive(Debug)]
 pub enum UtilError {
@@ -167,6 +168,22 @@ pub mod raft {
         }
     }
 
+    pub fn create_entry_id(node_id: u64, entry_id: u64) -> EntryId {
+        EntryId {
+            replica_id: node_id,
+            entry_id,
+        }
+    }
+
+    pub fn create_entry(entry_id: EntryId, entry_contents: Vec<u8>) -> Entry {
+        let mut entry = Entry {
+            entry_contents: entry_contents.into(),
+            ..Default::default()
+        };
+        *entry.mutable_entry_id() = entry_id;
+        entry
+    }
+
     pub fn config_state_contains_node(config_state: &RaftConfigState, node_id: u64) -> bool {
         config_state
             .get_voters()
@@ -282,6 +299,20 @@ pub mod raft {
             to: node_to,
             from: node_from,
             ..Default::default()
+        }
+    }
+
+    pub fn create_entry_id(node_id: u64, entry_id: u64) -> EntryId {
+        EntryId {
+            replica_id: node_id,
+            entry_id,
+        }
+    }
+
+    pub fn create_entry(entry_id: EntryId, entry_contents: Vec<u8>) -> Entry {
+        Entry {
+            entry_id: Some(entry_id),
+            entry_contents,
         }
     }
 
