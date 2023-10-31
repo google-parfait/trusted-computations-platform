@@ -40,6 +40,9 @@ fn _start() -> ! {
 
 fn main() -> ! {
     log::info!("In main!");
+    // Only log warnings and errors to reduce the risk of accidentally leaking execution
+    // information through debug logs.
+    log::set_max_level(log::LevelFilter::Warn);
     let mut invocation_stats = StaticSampleStore::<1000>::new().unwrap();
     let service: ApplicationService<CounterActor> = ApplicationService::new(
         DriverConfig {

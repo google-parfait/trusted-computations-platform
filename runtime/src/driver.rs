@@ -89,10 +89,6 @@ impl DriverContextCore {
         self.proposals.push(proposal);
     }
 
-    fn append_message(&mut self, message: out_message::Msg) {
-        self.messages.push(message);
-    }
-
     fn take_outputs(&mut self) -> (Vec<Vec<u8>>, Vec<out_message::Msg>) {
         (
             mem::take(&mut self.proposals),

@@ -55,10 +55,15 @@ fn create_log_message(record: &slog::Record, values: &slog::OwnedKVList) -> LogM
         .unwrap();
     values.serialize(record, &mut value_serializer).unwrap();
 
+    let file = match record.file().rfind('/') {
+        Some(pos) => &record.file()[pos + 1..],
+        None => record.file(),
+    };
+
     let message = format!(
         "{:?} {} @ {} : {} / {} / {}",
         record.level(),
-        record.file(),
+        file,
         record.line(),
         record.column(),
         record.msg(),
