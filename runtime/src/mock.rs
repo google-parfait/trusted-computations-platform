@@ -24,8 +24,8 @@ use platform::{Attestation, Host, PalError};
 use raft::{
     eraftpb::ConfChange as RaftConfigChange, eraftpb::ConfState as RaftConfigState,
     eraftpb::Entry as RaftEntry, eraftpb::HardState as RaftHardState,
-    eraftpb::Message as RaftMessage, eraftpb::Snapshot as RaftSnapshot, Error as RaftError,
-    GetEntriesContext as RaftGetEntriesContext, Storage as RaftStorage,
+    eraftpb::Message as RaftMessage, eraftpb::Snapshot as RaftSnapshot, Config as RaftConfig,
+    Error as RaftError, GetEntriesContext as RaftGetEntriesContext, Storage as RaftStorage,
 };
 use slog::Logger;
 use tcp_proto::runtime::endpoint::OutMessage;
@@ -151,7 +151,7 @@ mock! {
 
         fn mut_store(&mut self) -> &mut S;
 
-        fn init(&mut self, node_id: u64, leader: bool, store: S, logger: &Logger) -> Result<(), RaftError>;
+        fn init(&mut self, node_id: u64, config: &RaftConfig, leader: bool, store: S, logger: &Logger) -> Result<(), RaftError>;
 
         fn make_step(&mut self, message: RaftMessage) -> Result<(), RaftError>;
 

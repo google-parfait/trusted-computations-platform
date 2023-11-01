@@ -26,7 +26,7 @@ use oak_channel::server;
 use oak_core::samplestore::StaticSampleStore;
 use oak_restricted_kernel_api::{syscall, FileDescriptorChannel, StderrLogger};
 use tcp_proto::runtime::endpoint::EndpointServiceServer;
-use tcp_runtime::{driver::DriverConfig, examples::CounterActor, service::ApplicationService};
+use tcp_runtime::{examples::CounterActor, service::ApplicationService};
 
 static LOGGER: StderrLogger = StderrLogger {};
 
@@ -43,14 +43,9 @@ fn main() -> ! {
     // Only log warnings and errors to reduce the risk of accidentally leaking execution
     // information through debug logs.
     log::set_max_level(log::LevelFilter::Warn);
+
     let mut invocation_stats = StaticSampleStore::<1000>::new().unwrap();
-    let service: ApplicationService<CounterActor> = ApplicationService::new(
-        DriverConfig {
-            tick_period: 10,
-            snapshot_count: 100,
-        },
-        CounterActor::new(),
-    );
+    let service: ApplicationService<CounterActor> = ApplicationService::new(CounterActor::new());
     let server = EndpointServiceServer::new(service);
     server::start_blocking_server(
         Box::<FileDescriptorChannel>::default(),

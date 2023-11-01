@@ -19,11 +19,7 @@ extern crate tcp_proto;
 
 use crate::model::Actor;
 use crate::platform::{Application, Attestation, Host, PalError};
-use crate::{
-    consensus::RaftSimple,
-    driver::{Driver, DriverConfig},
-    storage::MemoryStorage,
-};
+use crate::{consensus::RaftSimple, driver::Driver, storage::MemoryStorage};
 use alloc::boxed::Box;
 use alloc::vec::Vec;
 use core::mem;
@@ -91,14 +87,9 @@ pub struct ApplicationService<A: Actor> {
 }
 
 impl<A: Actor> ApplicationService<A> {
-    pub fn new(driver_config: DriverConfig, actor: A) -> ApplicationService<A> {
+    pub fn new(actor: A) -> ApplicationService<A> {
         ApplicationService {
-            driver: Driver::new(
-                driver_config,
-                RaftSimple::new(),
-                Box::new(MemoryStorage::new),
-                actor,
-            ),
+            driver: Driver::new(RaftSimple::new(), Box::new(MemoryStorage::new), actor),
         }
     }
 }

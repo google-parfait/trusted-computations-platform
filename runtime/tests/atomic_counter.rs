@@ -33,7 +33,7 @@ use tcp_proto::examples::atomic_counter::{
     CounterConfig, CounterRequest, CounterResponse, CounterStatus,
 };
 use tcp_proto::runtime::endpoint::*;
-use tcp_runtime::driver::{Driver, DriverConfig};
+use tcp_runtime::driver::Driver;
 use tcp_runtime::examples::CounterActor;
 use tcp_runtime::logger::log::create_logger;
 use tcp_runtime::platform::{Application, Attestation, Host, PalError};
@@ -304,10 +304,6 @@ impl FakePlatform {
             messages_in: Vec::new(),
             instant: 0,
             driver: RefCell::new(Driver::new(
-                DriverConfig {
-                    tick_period: 10,
-                    snapshot_count: 1000,
-                },
                 RaftSimple::new(),
                 Box::new(MemoryStorage::new),
                 CounterActor::new(),
@@ -321,6 +317,14 @@ impl FakePlatform {
             msg: Some(in_message::Msg::StartReplica(StartReplicaRequest {
                 is_leader,
                 replica_id_hint: self.id,
+                raft_config: Some(RaftConfig {
+                    tick_period: 10,
+                    election_tick: 20,
+                    heartbeat_tick: 2,
+                    max_size_per_msg: 0,
+                    snapshot_count: 1000,
+                }),
+                app_config: Vec::new(),
             })),
         });
     }

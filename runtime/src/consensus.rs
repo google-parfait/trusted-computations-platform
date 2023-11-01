@@ -179,6 +179,7 @@ pub trait Raft {
     fn init(
         &mut self,
         node_id: u64,
+        config: &RaftConfig,
         leader: bool,
         store: Self::S,
         logger: &Logger,
@@ -278,12 +279,11 @@ impl<S: Store + RaftStorage> Raft for RaftSimple<S> {
     fn init(
         &mut self,
         node_id: u64,
+        config: &RaftConfig,
         leader: bool,
         mut store: S,
         logger: &Logger,
     ) -> Result<(), RaftError> {
-        let config = RaftConfig::new(node_id);
-
         if leader {
             let snapshot = create_raft_snapshot(
                 create_raft_snapshot_metadata(1, 1, create_raft_config_state(vec![node_id])),
