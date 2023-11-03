@@ -56,8 +56,12 @@ enum CounterStatus {
   // The operation has been rejected (for example, because the underlying
   // replica is not a leader).
   COUNTER_STATUS_REJECTED = 2;
-  // The operation is malformed.
+  // The operation has been accepted for execution but failed to execute
+  // (for example, because the counter doesn't have expected value for
+  // compare and swap operation).
   COUNTER_STATUS_INVALID_ARGUMENT_ERROR = 3;
+  // The operation has been rejected for execution because it is malformed.
+  COUNTER_STATUS_INVALID_OPERATION_ERROR = 4;
 }
 
 // Represents the response to the compare and swap operation request.

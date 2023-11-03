@@ -387,7 +387,10 @@ impl<R: Raft<S = S>, S: Store + RaftStorage, A: Actor> Driver<R, S, A> {
                     }
                 };
             } else {
-                debug!(self.logger, "Applying Raft entry");
+                debug!(
+                    self.logger,
+                    "Applying Raft entry #{}", committed_entry.index
+                );
                 // Recover the entry id so that execute proposal response can be correlated
                 let entry = Entry::decode(committed_entry.get_data()).map_err(|e| {
                     error!(self.logger, "Failed to deserialize Raft entry: {}", e);
@@ -756,6 +759,12 @@ impl<R: Raft<S = S>, S: Store + RaftStorage, A: Actor> Driver<R, S, A> {
             }
             CommandOutcome::Event(event) => {
                 // The proposal has been accepted and there will be a follow up response.
+                self.stash_message(out_message::Msg::ExecuteProposal(ExecuteProposalResponse {
+                    entry_id: Some(entry_id.clone()),
+                    status: ExecuteProposalStatus::ProposalStatusPending.into(),
+                    ..Default::default()
+                }));
+
                 let entry = create_entry(entry_id, event);
                 self.mut_core().append_proposal(entry.encode_to_vec())
             }
@@ -1208,6 +1217,19 @@ mod test {
             self
         }
 
+        fn expect_make_proposal(
+            mut self,
+            proposal: Entry,
+            handler: impl Fn(Vec<u8>) -> Result<(), RaftError> + 'static,
+        ) -> RaftBuilder {
+            self.mock_raft
+                .expect_make_proposal()
+                .with(eq(proposal.encode_to_vec()))
+                .returning_st(handler);
+
+            self
+        }
+
         fn expect_make_config_change_proposal(
             mut self,
             config_change: RaftConfigChange,
@@ -1461,33 +1483,51 @@ mod test {
     #[test]
     fn test_driver_execute_proposal_request() {
         let (node_id, instant, raft_config) = create_default_parameters();
-        let proposal_contents = vec![1, 2, 3];
-        let proposal_result = vec![4, 4, 6];
-        let entry_id = create_entry_id(node_id, 1);
+        let proposal_contents_1 = vec![1, 2, 3];
+        let proposal_contents_2 = vec![4, 5, 6];
+        let proposal_result_2 = vec![4, 4, 6];
+        let entry_id_1 = create_entry_id(node_id, 1);
+        let entry_id_2 = create_entry_id(node_id, 2);
 
         let mut mock_host = MockHostBuilder::new()
             .expect_public_signing_key(vec![])
             .expect_send_messages(vec![create_start_replica_response(node_id)])
             .expect_send_messages(vec![create_execute_proposal_response(
-                Some(entry_id),
-                proposal_result.clone(),
+                Some(entry_id_1.clone()),
+                Vec::new(),
+                ExecuteProposalStatus::ProposalStatusPending,
+            )])
+            .expect_send_messages(vec![create_execute_proposal_response(
+                Some(entry_id_2),
+                proposal_result_2.clone(),
                 ExecuteProposalStatus::ProposalStatusCompleted,
             )])
             .take();
+
+        let proposal_entry_1 = Entry {
+            entry_id: Some(entry_id_1),
+            entry_contents: proposal_contents_1.clone(),
+        };
 
         let raft_builder = RaftBuilder::new()
             .expect_leader(false)
             .expect_init(|_, _, _, _, _| Ok(()))
             .expect_has_ready(false)
             .expect_has_ready(false)
+            .expect_has_ready(false)
+            .expect_make_proposal(proposal_entry_1, |_| Ok(()))
             .expect_should_snapshot(false)
             .expect_state(&create_default_raft_state(node_id));
 
         let mut driver = DriverBuilder::new()
             .expect_on_init(|_| Ok(()))
             .expect_on_process_command(
-                proposal_contents.clone(),
-                Ok(CommandOutcome::Response(proposal_result)),
+                proposal_contents_1.clone(),
+                Ok(CommandOutcome::Event(proposal_contents_1.clone())),
+            )
+            .expect_on_process_command(
+                proposal_contents_2.clone(),
+                Ok(CommandOutcome::Response(proposal_result_2)),
             )
             .take(raft_builder);
 
@@ -1510,7 +1550,16 @@ mod test {
             driver.receive_message(
                 &mut mock_host,
                 instant + 10,
-                Some(create_execute_proposal_request(proposal_contents.clone())),
+                Some(create_execute_proposal_request(proposal_contents_1.clone())),
+            )
+        );
+
+        assert_eq!(
+            Ok(()),
+            driver.receive_message(
+                &mut mock_host,
+                instant + 10,
+                Some(create_execute_proposal_request(proposal_contents_2.clone())),
             )
         );
     }

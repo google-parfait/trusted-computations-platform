@@ -19,17 +19,18 @@ declare -ar DOCKER_RUN_FLAGS=(
 # Run test suite using docker image
 docker run "${DOCKER_RUN_FLAGS[@]}" "${DOCKER_IMAGE_ID}" sh -c './scripts/tests.sh'
 
-if [ "$1" == "release" ]; then
+if [ "$1" == "release" ] || [ "$1" == "debug" ]; then
+  mode=$([ "$1" == "release" ] && echo "--$1" || echo "")
   docker run "${DOCKER_RUN_FLAGS[@]}" "${DOCKER_IMAGE_ID}" \
-      cargo build --release \
+      cargo build $mode \
           -p tcp_atomic_counter_enclave_app
 
   # KOKORO_ARTIFACTS_DIR may be unset if this script is run manually; it'll
   # always be set during CI builds.
   if [[ ! -z "${KOKORO_ARTIFACTS_DIR}" ]]; then
     mkdir -p "${KOKORO_ARTIFACTS_DIR}/binaries"
-    cp --preserve=timestamps -v \
-        target/x86_64-unknown-none/release/tcp_atomic_counter_enclave_app \
+    cp --preserve=timestamps -v -f \
+        target/x86_64-unknown-none/$1/tcp_atomic_counter_enclave_app \
         "${KOKORO_ARTIFACTS_DIR}/binaries/"
   fi
 

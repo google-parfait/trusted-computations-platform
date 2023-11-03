@@ -50,13 +50,17 @@ impl CounterActor {
 
     fn apply_compare_and_swap(
         &mut self,
+        index: u64,
         id: u64,
         counter_name: &String,
         compare_and_swap_request: &CounterCompareAndSwapRequest,
     ) -> CounterResponse {
         debug!(
             self.get_context().logger(),
-            "Applying #{} compare and swap command {:?}", id, compare_and_swap_request
+            "Applying at index #{} #{} compare and swap command {:?}",
+            index,
+            id,
+            compare_and_swap_request
         );
 
         let mut response = CounterResponse {
@@ -105,6 +109,8 @@ impl Actor for CounterActor {
     fn on_shutdown(&mut self) {}
 
     fn on_save_snapshot(&mut self) -> Result<Vec<u8>, ActorError> {
+        debug!(self.get_context().logger(), "Saving snapshot");
+
         let mut snapshot = CounterSnapshot {
             values: BTreeMap::new(),
         };
@@ -119,6 +125,8 @@ impl Actor for CounterActor {
     }
 
     fn on_load_snapshot(&mut self, snapshot: &[u8]) -> Result<(), ActorError> {
+        debug!(self.get_context().logger(), "Loading snapshot");
+
         let snapshot =
             CounterSnapshot::decode(snapshot).map_err(|_| ActorError::SnapshotLoading)?;
 
@@ -144,7 +152,7 @@ impl Actor for CounterActor {
 
                 response.id = request.id;
                 if request.op.is_none() {
-                    status = CounterStatus::InvalidArgumentError;
+                    status = CounterStatus::InvalidOperationError;
 
                     warn!(
                         self.get_context().logger(),
@@ -167,7 +175,7 @@ impl Actor for CounterActor {
             }
             Err(e) => {
                 warn!(self.get_context().logger(), "Rejecting command: {}", e);
-                status = CounterStatus::InvalidArgumentError;
+                status = CounterStatus::InvalidOperationError;
             }
         }
 
@@ -175,15 +183,14 @@ impl Actor for CounterActor {
         Ok(CommandOutcome::Response(response.encode_to_vec()))
     }
 
-    fn on_apply_event(&mut self, _index: u64, event: &[u8]) -> Result<EventOutcome, ActorError> {
+    fn on_apply_event(&mut self, index: u64, event: &[u8]) -> Result<EventOutcome, ActorError> {
         let request = CounterRequest::decode(event).map_err(|_| ActorError::Internal)?;
 
         let op = request.op.unwrap();
 
         let response = match op {
-            counter_request::Op::CompareAndSwap(ref compare_and_swap_request) => {
-                self.apply_compare_and_swap(request.id, &request.name, compare_and_swap_request)
-            }
+            counter_request::Op::CompareAndSwap(ref compare_and_swap_request) => self
+                .apply_compare_and_swap(index, request.id, &request.name, compare_and_swap_request),
         };
 
         if self.get_context().leader() {
