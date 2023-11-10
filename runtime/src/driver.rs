@@ -853,6 +853,10 @@ impl<R: Raft<S = S>, S: Store + RaftStorage, A: Actor> Application for Driver<R,
                         in_message::Msg::DeliverMessage(ref deliver_message) => {
                             self.process_deliver_message(deliver_message)
                         }
+                        in_message::Msg::DeliverSnapshot(ref _deliver_snapshot) => {
+                            // Ignore for now
+                            Ok(())
+                        }
                         in_message::Msg::ExecuteProposal(ref execute_proposal_request) => {
                             self.process_execute_proposal(execute_proposal_request)
                         }
