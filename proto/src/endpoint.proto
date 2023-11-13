@@ -37,7 +37,9 @@ message InMessage {
     // Requests the Trusted Host to deliver a Raft message to the replica.
     DeliverMessage deliver_message = 5;
     // Requests the Trusted Host to deliver a Raft snapshot to the replica.
-    DeliverSnapshot deliver_snapshot = 8;
+    DeliverSnapshot deliver_snapshot = 7;
+    // Signifies that an attempt to deliver message or snapshot has failed.
+    DeliverFailure deliver_failure = 8;
     // Requests the Trusted Host to execute a proposal representing a client
     // action or a query. Note that it is up to the application to interpret and
     // execute that proposal.
@@ -223,6 +225,9 @@ message DeliverMessage {
 
 // Request or response to deliver part of snapshot.
 message DeliverSnapshot {
+  // The unique id that is used to correlate attempt to deliver part of the
+  // snapshot and failure.
+  uint64 delivery_id = 4;
   // The replica id of the recipient.
   uint64 recipient_replica_id = 1;
   // The replica id of the sender.
@@ -285,6 +290,12 @@ enum DeliverSnapshotStatus {
   SNAPSHOT_STATUS_ABORTED = 2;
   // The snapshot transfer has been completed but the snapshot is corrupted.
   SNAPSHOT_STATUS_CORRUPTED = 3;
+}
+
+// Indicates that message or snapshot delivery has failed.
+message DeliverFailure {
+  // Contains list of failed delivery ids.
+  repeated uint64 delivery_ids = 1;
 }
 
 message ExecuteProposalRequest {
