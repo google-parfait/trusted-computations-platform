@@ -22,8 +22,8 @@ use raft::{
     eraftpb::ConfChange as RaftConfigChange, eraftpb::ConfState as RaftConfigState,
     eraftpb::Entry as RaftEntry, eraftpb::HardState as RaftHardState,
     eraftpb::Message as RaftMessage, eraftpb::Snapshot as RaftSnapshot, Config as RaftConfig,
-    Error as RaftError, RawNode as RaftNode, RawNode, Ready, SoftState as RaftSoftState,
-    StateRole as RaftStateRole, Storage as RaftStorage,
+    Error as RaftError, RawNode as RaftNode, RawNode, Ready, SnapshotStatus as RaftSnapshotStatus,
+    SoftState as RaftSoftState, StateRole as RaftStateRole, Storage as RaftStorage,
 };
 use slog::Logger;
 
@@ -178,7 +178,7 @@ pub trait Raft {
 
     fn init(
         &mut self,
-        node_id: u64,
+        replica_id: u64,
         config: &RaftConfig,
         snapshot: Vec<u8>,
         leader: bool,
@@ -209,6 +209,8 @@ pub trait Raft {
     fn advance_ready(&mut self, ready: RaftReady) -> RaftLightReady;
 
     fn advance_apply(&mut self);
+
+    fn report_snapshot(&mut self, replica_id: u64, status: RaftSnapshotStatus);
 }
 
 #[derive(Default)]
@@ -279,7 +281,7 @@ impl<S: Store + RaftStorage> Raft for RaftSimple<S> {
 
     fn init(
         &mut self,
-        node_id: u64,
+        replica_id: u64,
         config: &RaftConfig,
         snapshot: Vec<u8>,
         leader: bool,
@@ -288,12 +290,12 @@ impl<S: Store + RaftStorage> Raft for RaftSimple<S> {
     ) -> Result<(), RaftError> {
         if leader {
             let snapshot = create_raft_snapshot(
-                create_raft_snapshot_metadata(1, 1, create_raft_config_state(vec![node_id])),
+                create_raft_snapshot_metadata(1, 1, create_raft_config_state(vec![replica_id])),
                 snapshot,
             );
 
             store.apply_snapshot(snapshot)?;
-            self.committed_voters = vec![node_id];
+            self.committed_voters = vec![replica_id];
         }
 
         self.raft_node = Some(Box::new(RawNode::new(&config, store, logger)?));
@@ -365,5 +367,9 @@ impl<S: Store + RaftStorage> Raft for RaftSimple<S> {
 
     fn advance_apply(&mut self) {
         self.mut_raft_node().advance_apply()
+    }
+
+    fn report_snapshot(&mut self, replica_id: u64, status: RaftSnapshotStatus) {
+        self.mut_raft_node().report_snapshot(replica_id, status);
     }
 }

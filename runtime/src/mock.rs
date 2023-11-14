@@ -25,7 +25,8 @@ use raft::{
     eraftpb::ConfChange as RaftConfigChange, eraftpb::ConfState as RaftConfigState,
     eraftpb::Entry as RaftEntry, eraftpb::HardState as RaftHardState,
     eraftpb::Message as RaftMessage, eraftpb::Snapshot as RaftSnapshot, Config as RaftConfig,
-    Error as RaftError, GetEntriesContext as RaftGetEntriesContext, Storage as RaftStorage,
+    Error as RaftError, GetEntriesContext as RaftGetEntriesContext,
+    SnapshotStatus as RaftSnapshotStatus, Storage as RaftStorage,
 };
 use slog::Logger;
 use tcp_proto::runtime::endpoint::OutMessage;
@@ -173,5 +174,7 @@ mock! {
         fn advance_ready(&mut self, ready: RaftReady) -> RaftLightReady;
 
         fn advance_apply(&mut self);
+
+        fn report_snapshot(&mut self, replica_id: u64, status: RaftSnapshotStatus);
     }
 }

@@ -33,6 +33,7 @@ pub mod mock;
 pub mod model;
 pub mod platform;
 pub mod service;
+pub mod snapshot;
 pub mod storage;
 pub mod util;
 
