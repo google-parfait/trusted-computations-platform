@@ -40,6 +40,7 @@ use tcp_runtime::platform::{Application, Attestation, Host, PalError};
 use tcp_runtime::{consensus::RaftSimple, storage::MemoryStorage};
 
 struct FakeCluster {
+    app_config: Vec<u8>,
     advance_step: u64,
     platforms: HashMap<u64, FakePlatform>,
     leader_id: u64,
@@ -48,8 +49,9 @@ struct FakeCluster {
 }
 
 impl FakeCluster {
-    fn new() -> FakeCluster {
+    fn new(app_config: Vec<u8>) -> FakeCluster {
         FakeCluster {
+            app_config,
             advance_step: 100,
             platforms: HashMap::new(),
             leader_id: 0,
@@ -76,7 +78,7 @@ impl FakeCluster {
         self.platforms
             .get_mut(&node_id)
             .unwrap()
-            .send_start_node(leader);
+            .send_start_node(self.app_config.clone(), leader);
     }
 
     fn stop_node(&mut self, node_id: u64) {
@@ -312,7 +314,7 @@ impl FakePlatform {
         }
     }
 
-    fn send_start_node(&mut self, is_leader: bool) {
+    fn send_start_node(&mut self, app_config: Vec<u8>, is_leader: bool) {
         self.append_meessage_in(InMessage {
             msg: Some(in_message::Msg::StartReplica(StartReplicaRequest {
                 is_leader,
@@ -324,7 +326,7 @@ impl FakePlatform {
                     max_size_per_msg: 0,
                     snapshot_count: 1000,
                 }),
-                app_config: Vec::new(),
+                app_config: app_config,
             })),
         });
     }
@@ -464,7 +466,18 @@ mod test {
 
     #[test]
     fn integration() {
-        let mut cluster = FakeCluster::new();
+        let counter_name_1 = "counter 1";
+        let counter_value_1: i64 = 10;
+        let counter_name_2 = "counter 2";
+        let counter_value_2: i64 = 15;
+        let config = CounterConfig {
+            initial_values: BTreeMap::from([
+                (counter_name_1.to_string(), counter_value_1),
+                (counter_name_2.to_string(), counter_value_2),
+            ]),
+        };
+
+        let mut cluster = FakeCluster::new(config.encode_to_vec());
 
         cluster.start_node(1, true);
         cluster.advance_until_elected_leader(None);
@@ -475,22 +488,61 @@ mod test {
 
         cluster.add_node_to_cluster(2);
 
-        cluster.send_cas_counter_request(cluster.leader_id(), 1, "counter 1", 0, 1);
-        cluster.send_cas_counter_request(cluster.leader_id(), 2, "counter 2", 0, 1);
+        cluster.send_cas_counter_request(
+            cluster.leader_id(),
+            1,
+            counter_name_1,
+            counter_value_1,
+            counter_value_1 + 1,
+        );
+        cluster.send_cas_counter_request(
+            cluster.leader_id(),
+            2,
+            counter_name_2,
+            counter_value_2,
+            counter_value_2 + 1,
+        );
 
-        assert!(cluster.advance_until_cas_counter_response(1, CounterStatus::Success, 0, 1));
-        assert!(cluster.advance_until_cas_counter_response(2, CounterStatus::Success, 0, 1));
+        assert!(cluster.advance_until_cas_counter_response(
+            1,
+            CounterStatus::Success,
+            counter_value_1,
+            counter_value_1 + 1
+        ));
+        assert!(cluster.advance_until_cas_counter_response(
+            2,
+            CounterStatus::Success,
+            counter_value_2,
+            counter_value_2 + 1
+        ));
 
         cluster.add_node_to_cluster(3);
 
-        cluster.send_cas_counter_request(cluster.non_leader_id(), 3, "counter 1", 1, 2);
+        cluster.send_cas_counter_request(
+            cluster.non_leader_id(),
+            3,
+            counter_name_1,
+            counter_value_1 + 1,
+            counter_value_1 + 2,
+        );
         assert!(cluster.advance_until_cas_counter_response(3, CounterStatus::Rejected, 0, 0));
 
         let leader_id = cluster.leader_id();
         cluster.stop_node(leader_id);
         cluster.advance_until_elected_leader(Some(leader_id));
 
-        cluster.send_cas_counter_request(cluster.leader_id(), 4, "counter 2", 1, 2);
-        assert!(cluster.advance_until_cas_counter_response(4, CounterStatus::Success, 1, 2));
+        cluster.send_cas_counter_request(
+            cluster.leader_id(),
+            4,
+            counter_name_2,
+            counter_value_2 + 1,
+            counter_value_2 + 2,
+        );
+        assert!(cluster.advance_until_cas_counter_response(
+            4,
+            CounterStatus::Success,
+            counter_value_2 + 1,
+            counter_value_2 + 2
+        ));
     }
 }

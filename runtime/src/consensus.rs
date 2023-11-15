@@ -180,6 +180,7 @@ pub trait Raft {
         &mut self,
         node_id: u64,
         config: &RaftConfig,
+        snapshot: Vec<u8>,
         leader: bool,
         store: Self::S,
         logger: &Logger,
@@ -280,6 +281,7 @@ impl<S: Store + RaftStorage> Raft for RaftSimple<S> {
         &mut self,
         node_id: u64,
         config: &RaftConfig,
+        snapshot: Vec<u8>,
         leader: bool,
         mut store: S,
         logger: &Logger,
@@ -287,7 +289,7 @@ impl<S: Store + RaftStorage> Raft for RaftSimple<S> {
         if leader {
             let snapshot = create_raft_snapshot(
                 create_raft_snapshot_metadata(1, 1, create_raft_config_state(vec![node_id])),
-                Vec::new(),
+                snapshot,
             );
 
             store.apply_snapshot(snapshot)?;

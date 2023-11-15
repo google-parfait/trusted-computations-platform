@@ -212,6 +212,7 @@ impl<R: Raft<S = S>, S: Store + RaftStorage, A: Actor> Driver<R, S, A> {
     fn initilize_raft_node(
         &mut self,
         raft_config: &Option<RaftConfig>,
+        snapshot: Vec<u8>,
         leader: bool,
     ) -> Result<(), PalError> {
         let mut config = raft::Config {
@@ -235,6 +236,7 @@ impl<R: Raft<S = S>, S: Store + RaftStorage, A: Actor> Driver<R, S, A> {
             .init(
                 self.id,
                 &config,
+                snapshot,
                 leader,
                 (self.store)(self.logger.clone(), self.driver_config.snapshot_count),
                 &self.logger,
@@ -627,11 +629,6 @@ impl<R: Raft<S = S>, S: Store + RaftStorage, A: Actor> Driver<R, S, A> {
 
         self.initialize_driver(app_signing_key, start_replica_request.replica_id_hint);
 
-        self.initilize_raft_node(
-            &start_replica_request.raft_config,
-            start_replica_request.is_leader,
-        )?;
-
         let id = self.id;
         let app_config = mem::take(&mut start_replica_request.app_config);
         self.mut_core().set_immutable_state(id, app_config);
@@ -647,6 +644,19 @@ impl<R: Raft<S = S>, S: Store + RaftStorage, A: Actor> Driver<R, S, A> {
             // Failure to initialize actor must lead to termination.
             PalError::Actor
         })?;
+
+        let snapshot = self.actor.on_save_snapshot().map_err(|e| {
+            error!(self.logger, "Failed to save actor snapshot: {}", e);
+
+            // Failure to save actor snapshot must lead to termination.
+            PalError::Actor
+        })?;
+
+        self.initilize_raft_node(
+            &start_replica_request.raft_config,
+            snapshot,
+            start_replica_request.is_leader,
+        )?;
 
         self.driver_state = DriverState::Started;
 
@@ -1135,7 +1145,7 @@ mod test {
 
         fn expect_init(
             mut self,
-            handler: impl Fn(u64, &raft::Config, bool, MockStore, &Logger) -> Result<(), RaftError>
+            handler: impl Fn(u64, &raft::Config, Vec<u8>, bool, MockStore, &Logger) -> Result<(), RaftError>
                 + 'static,
         ) -> RaftBuilder {
             self.mock_raft.expect_init().return_once_st(handler);
@@ -1397,6 +1407,7 @@ mod test {
     #[test]
     fn test_driver_start_node_request() {
         let (node_id, instant, raft_config) = create_default_parameters();
+        let init_snapshot = vec![2, 3, 4];
 
         let mut mock_host = MockHostBuilder::new()
             .expect_public_signing_key(vec![])
@@ -1404,9 +1415,10 @@ mod test {
             .take();
 
         let exp_raft_config = raft_config.clone();
+        let exp_init_snapshot = init_snapshot.clone();
         let raft_builder = RaftBuilder::new()
             .expect_leader(false)
-            .expect_init(move |id, config, leader, _, _| {
+            .expect_init(move |id, config, snapshot, leader, _, _| {
                 assert_eq!(node_id, config.id);
                 assert_eq!(exp_raft_config.election_tick as usize, config.election_tick);
                 assert_eq!(
@@ -1415,6 +1427,7 @@ mod test {
                 );
                 assert_eq!(exp_raft_config.max_size_per_msg, config.max_size_per_msg);
                 assert_eq!(node_id, id);
+                assert_eq!(exp_init_snapshot, snapshot);
                 assert!(leader);
                 Ok(())
             })
@@ -1424,6 +1437,7 @@ mod test {
 
         let mut driver = DriverBuilder::new()
             .expect_on_init(|_| Ok(()))
+            .expect_on_save_snapshot(Ok(init_snapshot.clone()))
             .take(raft_builder);
 
         assert_eq!(
@@ -1444,6 +1458,7 @@ mod test {
     #[test]
     fn test_driver_stop_node_request() {
         let (node_id, instant, raft_config) = create_default_parameters();
+        let init_snapshot = vec![2, 3, 4];
 
         let mut mock_host = MockHostBuilder::new()
             .expect_public_signing_key(vec![])
@@ -1453,7 +1468,7 @@ mod test {
 
         let raft_builder = RaftBuilder::new()
             .expect_leader(false)
-            .expect_init(|_, _, _, _, _| Ok(()))
+            .expect_init(|_, _, _, _, _, _| Ok(()))
             .expect_has_ready(false)
             .expect_has_ready(false)
             .expect_should_snapshot(false)
@@ -1461,6 +1476,7 @@ mod test {
 
         let mut driver = DriverBuilder::new()
             .expect_on_init(|_| Ok(()))
+            .expect_on_save_snapshot(Ok(init_snapshot.clone()))
             .expect_on_shutdown(|| ())
             .take(raft_builder);
 
@@ -1491,6 +1507,7 @@ mod test {
     #[test]
     fn test_driver_execute_proposal_request() {
         let (node_id, instant, raft_config) = create_default_parameters();
+        let init_snapshot = vec![2, 3, 4];
         let proposal_contents_1 = vec![1, 2, 3];
         let proposal_contents_2 = vec![4, 5, 6];
         let proposal_result_2 = vec![4, 4, 6];
@@ -1519,7 +1536,7 @@ mod test {
 
         let raft_builder = RaftBuilder::new()
             .expect_leader(false)
-            .expect_init(|_, _, _, _, _| Ok(()))
+            .expect_init(|_, _, _, _, _, _| Ok(()))
             .expect_has_ready(false)
             .expect_has_ready(false)
             .expect_has_ready(false)
@@ -1529,6 +1546,7 @@ mod test {
 
         let mut driver = DriverBuilder::new()
             .expect_on_init(|_| Ok(()))
+            .expect_on_save_snapshot(Ok(init_snapshot.clone()))
             .expect_on_process_command(
                 proposal_contents_1.clone(),
                 Ok(CommandOutcome::Event(proposal_contents_1.clone())),
@@ -1575,6 +1593,7 @@ mod test {
     #[test]
     fn test_driver_actor_context() {
         let (node_id, instant, raft_config) = create_default_parameters();
+        let init_snapshot = vec![2, 3, 4];
         let self_config = vec![1, 2, 3];
 
         let proposal_response = vec![4, 5, 6];
@@ -1585,7 +1604,7 @@ mod test {
 
         let raft_builder = RaftBuilder::new()
             .expect_leader(false)
-            .expect_init(|_, _, _, _, _| Ok(()))
+            .expect_init(|_, _, _, _, _, _| Ok(()))
             .expect_has_ready(false)
             .expect_should_snapshot(false)
             .expect_state(&create_default_raft_state(node_id));
@@ -1600,6 +1619,7 @@ mod test {
 
                 Ok(())
             })
+            .expect_on_save_snapshot(Ok(init_snapshot.clone()))
             .take(raft_builder);
 
         assert_eq!(
@@ -1620,6 +1640,7 @@ mod test {
     #[test]
     fn test_driver_change_cluster_request() {
         let (node_id, instant, raft_config) = create_default_parameters();
+        let init_snapshot = vec![2, 3, 4];
         let peer_id = 2;
 
         let mut mock_host = MockHostBuilder::new()
@@ -1632,7 +1653,7 @@ mod test {
 
         let raft_builder = RaftBuilder::new()
             .expect_leader(false)
-            .expect_init(|_, _, _, _, _| Ok(()))
+            .expect_init(|_, _, _, _, _, _| Ok(()))
             .expect_has_ready(false)
             .expect_has_ready(false)
             .expect_should_snapshot(false)
@@ -1644,6 +1665,7 @@ mod test {
 
         let mut driver = DriverBuilder::new()
             .expect_on_init(|_| Ok(()))
+            .expect_on_save_snapshot(Ok(init_snapshot.clone()))
             .take(raft_builder);
 
         assert_eq!(
@@ -1676,6 +1698,7 @@ mod test {
     #[test]
     fn test_driver_check_cluster_request() {
         let (node_id, instant, raft_config) = create_default_parameters();
+        let init_snapshot = vec![2, 3, 4];
         let peer_id = 2;
 
         let raft_state = create_default_raft_state(node_id);
@@ -1688,7 +1711,7 @@ mod test {
 
         let raft_builder = RaftBuilder::new()
             .expect_leader(false)
-            .expect_init(|_, _, _, _, _| Ok(()))
+            .expect_init(|_, _, _, _, _, _| Ok(()))
             .expect_has_ready(false)
             .expect_has_ready(false)
             .expect_should_snapshot(false)
@@ -1700,6 +1723,7 @@ mod test {
 
         let mut driver = DriverBuilder::new()
             .expect_on_init(|_| Ok(()))
+            .expect_on_save_snapshot(Ok(init_snapshot.clone()))
             .take(raft_builder);
 
         assert_eq!(
@@ -1729,6 +1753,7 @@ mod test {
     #[test]
     fn test_driver_raft_ready() {
         let (node_id, instant, raft_config) = create_default_parameters();
+        let init_snapshot = vec![2, 3, 4];
         let peer_id = 2;
 
         let raft_state = create_default_raft_state(node_id);
@@ -1793,7 +1818,7 @@ mod test {
 
         let raft_builder = RaftBuilder::new()
             .expect_leader(false)
-            .expect_init(|_, _, _, _, _| Ok(()))
+            .expect_init(|_, _, _, _, _, _| Ok(()))
             .expect_should_snapshot(false)
             .expect_state(&raft_state)
             .expect_has_ready(false)
@@ -1807,6 +1832,7 @@ mod test {
 
         let mut driver = DriverBuilder::new()
             .expect_on_init(|_| Ok(()))
+            .expect_on_save_snapshot(Ok(init_snapshot.clone()))
             .expect_on_load_snapshot(snapshot.data.to_vec(), Ok(()))
             .expect_on_apply_event(
                 committed_normal_entry.index,
@@ -1838,6 +1864,7 @@ mod test {
     #[test]
     fn test_driver_raft_tick() {
         let (node_id, instant, raft_config) = create_default_parameters();
+        let init_snapshot = vec![2, 3, 4];
 
         let raft_state = create_default_raft_state(node_id);
 
@@ -1849,7 +1876,7 @@ mod test {
 
         let raft_builder = RaftBuilder::new()
             .expect_leader(false)
-            .expect_init(|_, _, _, _, _| Ok(()))
+            .expect_init(|_, _, _, _, _, _| Ok(()))
             .expect_has_ready(false)
             .expect_has_ready(false)
             .expect_should_snapshot(false)
@@ -1858,6 +1885,7 @@ mod test {
 
         let mut driver = DriverBuilder::new()
             .expect_on_init(|_| Ok(()))
+            .expect_on_save_snapshot(Ok(init_snapshot.clone()))
             .take(raft_builder);
 
         assert_eq!(
@@ -1883,6 +1911,7 @@ mod test {
     #[test]
     fn test_driver_raft_step() {
         let (node_id, instant, raft_config) = create_default_parameters();
+        let init_snapshot = vec![2, 3, 4];
         let peer_id = 2;
 
         let raft_state = create_default_raft_state(node_id);
@@ -1897,7 +1926,7 @@ mod test {
 
         let raft_builder = RaftBuilder::new()
             .expect_leader(false)
-            .expect_init(|_, _, _, _, _| Ok(()))
+            .expect_init(|_, _, _, _, _, _| Ok(()))
             .expect_has_ready(false)
             .expect_has_ready(false)
             .expect_should_snapshot(false)
@@ -1906,6 +1935,7 @@ mod test {
 
         let mut driver = DriverBuilder::new()
             .expect_on_init(|_| Ok(()))
+            .expect_on_save_snapshot(Ok(init_snapshot.clone()))
             .take(raft_builder);
 
         assert_eq!(
@@ -1935,6 +1965,7 @@ mod test {
     #[test]
     fn test_driver_trigger_snapshot() {
         let (node_id, instant, raft_config) = create_default_parameters();
+        let init_snapshot = vec![2, 3, 4];
 
         let raft_state = create_default_raft_state(node_id);
 
@@ -1971,7 +2002,7 @@ mod test {
 
         let raft_builder = RaftBuilder::new()
             .expect_leader(false)
-            .expect_init(|_, _, _, _, _| Ok(()))
+            .expect_init(|_, _, _, _, _, _| Ok(()))
             .expect_has_ready(false)
             .expect_has_ready(true)
             .expect_ready(&ready)
@@ -1989,6 +2020,7 @@ mod test {
 
         let mut driver = DriverBuilder::new()
             .expect_on_init(|_| Ok(()))
+            .expect_on_save_snapshot(Ok(init_snapshot.clone()))
             .expect_on_apply_event(
                 committed_normal_entry.index,
                 entry.entry_contents,

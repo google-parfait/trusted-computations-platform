@@ -151,7 +151,7 @@ mock! {
 
         fn mut_store(&mut self) -> &mut S;
 
-        fn init(&mut self, node_id: u64, config: &RaftConfig, leader: bool, store: S, logger: &Logger) -> Result<(), RaftError>;
+        fn init(&mut self, node_id: u64, config: &RaftConfig, snapshot: Vec<u8>, leader: bool, store: S, logger: &Logger) -> Result<(), RaftError>;
 
         fn make_step(&mut self, message: RaftMessage) -> Result<(), RaftError>;
 
