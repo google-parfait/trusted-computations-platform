@@ -101,8 +101,8 @@ pub trait SnapshotSender {
     ///
     /// # Returns
     ///
-    /// Nothing if there are no eligible requests to send. A tuple containing
-    /// receiver replica id, delivery id and request otherwise.
+    /// Nothing if there are no eligible requests to send. A request containing
+    /// receiver replica id, delivery id and request payload otherwise.
     ///
     /// # Note
     ///
@@ -110,7 +110,7 @@ pub trait SnapshotSender {
     /// there is limited number of in-flight requests across all transfers
     /// to avoid overwhelming the channel. Processing responses or cancelling
     /// transfers frees up the in-flight request slots.
-    fn next_request(&mut self) -> Option<(u64, u64, DeliverSnapshotRequest)>;
+    fn next_request(&mut self) -> Option<DeliverSnapshotRequest>;
 
     /// Processes response identified by the deliver id from replica with given id.
     ///
@@ -150,11 +150,7 @@ pub trait SnapshotReceiver {
     ///
     /// If the request contains snapshot id that is not known, the returned
     /// response will indicate to abort the transfer.
-    fn process_request(
-        &mut self,
-        sender_id: u64,
-        request: DeliverSnapshotRequest,
-    ) -> DeliverSnapshotResponse;
+    fn process_request(&mut self, request: DeliverSnapshotRequest) -> DeliverSnapshotResponse;
 
     /// Attempts to complete snapshot receiving.
     ///

@@ -863,11 +863,15 @@ impl<R: Raft<S = S>, S: Store + RaftStorage, A: Actor> Application for Driver<R,
                         in_message::Msg::DeliverMessage(ref deliver_message) => {
                             self.process_deliver_message(deliver_message)
                         }
-                        in_message::Msg::DeliverSnapshot(ref _deliver_snapshot) => {
+                        in_message::Msg::DeliverSnapshotRequest(ref _deliver_snapshot_request) => {
                             // Ignore for now
                             Ok(())
                         }
-                        in_message::Msg::DeliverFailure(ref _deliver_failure) => {
+                        in_message::Msg::DeliverSnapshotResponse(ref _deliver_snapshot_request) => {
+                            // Ignore for now
+                            Ok(())
+                        }
+                        in_message::Msg::DeliverSnapshotFailure(ref _deliver_snapshot_failure) => {
                             // Ignore for now
                             Ok(())
                         }
