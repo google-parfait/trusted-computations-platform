@@ -29,7 +29,11 @@ use raft::{
     SnapshotStatus as RaftSnapshotStatus, Storage as RaftStorage,
 };
 use slog::Logger;
-use tcp_proto::runtime::endpoint::OutMessage;
+use snapshot::{
+    SnapshotError, SnapshotProcessor, SnapshotProcessorRole, SnapshotReceiver,
+    SnapshotReceiverImpl, SnapshotSender, SnapshotSenderImpl,
+};
+use tcp_proto::runtime::endpoint::{DeliverSnapshotRequest, DeliverSnapshotResponse, OutMessage};
 
 mock! {
     pub Actor {
@@ -176,5 +180,48 @@ mock! {
         fn advance_apply(&mut self);
 
         fn report_snapshot(&mut self, replica_id: u64, status: RaftSnapshotStatus);
+    }
+}
+
+mock! {
+    pub SnapshotReceiver {
+    }
+
+    impl SnapshotReceiverImpl for SnapshotReceiver {
+        fn set_instant(&mut self, instant: u64);
+
+        fn reset(&mut self);
+    }
+
+    impl SnapshotReceiver for SnapshotReceiver {
+        fn process_request(&mut self, request: DeliverSnapshotRequest) -> DeliverSnapshotResponse;
+
+        fn try_complete(&mut self) -> Option<Result<RaftSnapshot, SnapshotError>>;
+    }
+}
+
+mock! {
+    pub SnapshotSender {
+    }
+
+    impl SnapshotSenderImpl for SnapshotSender {
+        fn set_instant(&mut self, instant: u64);
+
+        fn reset(&mut self) -> Vec<(u64, RaftSnapshotStatus)>;
+    }
+
+    impl SnapshotSender for SnapshotSender {
+        fn start(&mut self, receiver_id: u64, snapshot: RaftSnapshot);
+
+        fn next_request(&mut self) -> Option<DeliverSnapshotRequest>;
+
+        fn process_response(
+            &mut self,
+            sender_id: u64,
+            delivery_id: u64,
+            response: Result<DeliverSnapshotResponse, SnapshotError>,
+        );
+
+        fn try_complete(&mut self) -> Option<(u64, RaftSnapshotStatus)>;
     }
 }
