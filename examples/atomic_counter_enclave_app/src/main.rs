@@ -24,7 +24,8 @@ use alloc::boxed::Box;
 use core::panic::PanicInfo;
 use oak_channel::server;
 use oak_core::samplestore::StaticSampleStore;
-use oak_restricted_kernel_api::{syscall, FileDescriptorChannel, StderrLogger};
+use oak_restricted_kernel_interface::syscall;
+use oak_restricted_kernel_sdk::{FileDescriptorChannel, StderrLogger};
 use tcp_proto::runtime::endpoint::EndpointServiceServer;
 use tcp_runtime::{examples::CounterActor, service::ApplicationService};
 

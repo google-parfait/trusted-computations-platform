@@ -18,6 +18,9 @@ fn main() -> Result<()> {
     micro_rpc_build::compile(
         &["src/endpoint.proto", "src/atomic_counter.proto"],
         &["src"],
+        micro_rpc_build::CompileOptions {
+            ..Default::default()
+        },
     );
     Ok(())
 }

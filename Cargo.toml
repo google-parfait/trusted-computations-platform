@@ -7,12 +7,13 @@ members = [
 ]
 
 [workspace.dependencies]
-micro_rpc = { git = "https://github.com/project-oak/oak", rev = "86219fdc11fc005b2be75c1ba718bb158248ec05" }
-micro_rpc_build = { git = "https://github.com/project-oak/oak", rev = "86219fdc11fc005b2be75c1ba718bb158248ec05" }
-oak_enclave_runtime_support = { git = "https://github.com/project-oak/oak", rev = "86219fdc11fc005b2be75c1ba718bb158248ec05" }
-oak_channel = { git = "https://github.com/project-oak/oak", rev = "86219fdc11fc005b2be75c1ba718bb158248ec05" }
-oak_core = { git = "https://github.com/project-oak/oak", rev = "86219fdc11fc005b2be75c1ba718bb158248ec05" }
-oak_restricted_kernel_api = { git = "https://github.com/project-oak/oak", rev = "86219fdc11fc005b2be75c1ba718bb158248ec05" }
+micro_rpc = { git = "https://github.com/project-oak/oak", rev = "5d356359371a457d458e0d5e5414a6ab47f453fa" }
+micro_rpc_build = { git = "https://github.com/project-oak/oak", rev = "5d356359371a457d458e0d5e5414a6ab47f453fa" }
+oak_enclave_runtime_support = { git = "https://github.com/project-oak/oak", rev = "5d356359371a457d458e0d5e5414a6ab47f453fa" }
+oak_channel = { git = "https://github.com/project-oak/oak", rev = "5d356359371a457d458e0d5e5414a6ab47f453fa" }
+oak_core = { git = "https://github.com/project-oak/oak", rev = "5d356359371a457d458e0d5e5414a6ab47f453fa" }
+oak_restricted_kernel_sdk = { git = "https://github.com/project-oak/oak", rev = "5d356359371a457d458e0d5e5414a6ab47f453fa" }
+oak_restricted_kernel_interface = { git = "https://github.com/project-oak/oak", rev = "5d356359371a457d458e0d5e5414a6ab47f453fa" }
 # Temporarily point to the personal github repo, plan to migrate most of the trusted code to the Git on Borg.
-raft = { git = "https://github.com/dzmitry-huba/raft-rs", rev = "28a7ac7ab7aaa49b390e7ec6a7feac92502fb335", package = "raft", default-features = false, features = ["prost-codec"] }
-raft-proto = { git = "https://github.com/dzmitry-huba/raft-rs", rev = "28a7ac7ab7aaa49b390e7ec6a7feac92502fb335", package = "raft-proto", default-features = false, features = ["prost-codec"] }
+raft = { git = "https://github.com/google/raft-rs", rev = "93c40a24182cd595a3f50103a83aee0bacd9881b", package = "raft", default-features = false, features = ["prost-codec"] }
+raft-proto = { git = "https://github.com/google/raft-rs", rev = "93c40a24182cd595a3f50103a83aee0bacd9881b", package = "raft-proto", default-features = false, features = ["prost-codec"] }
