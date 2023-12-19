@@ -249,7 +249,7 @@ message DeliverSnapshotRequest {
     // replica.
     uint32 snapshot_id = 1;
 
-    oneof type {
+    oneof it {
       // Initiates snapshot transfer. Must be sent once in the very first
       // message.
       Header header = 2;
@@ -258,22 +258,27 @@ message DeliverSnapshotRequest {
       Chunk chunk = 3;
     }
 
-    // Initiates snapshot transfer.
+    // Initiates snapshot transfer. Always must be sent first. On receiving
+    // header the receiver must reset the state and start transfer anew.
     message Header {
       // The total size of the snapshot.
       uint64 size = 1;
-      // The checksum of the snapshot.
-      bytes checksum = 2;
-      // The contents of the first snapshot chunk. Identified by offset of zero
-      // in the response.
-      bytes contents = 3;
+      // The snapshot metadata.
+      bytes metadata = 3;
+      // The contents of the first snapshot chunk. Identified by index of zero
+      // in the response. All chunks but the last will be of the same size equal
+      // to the size this first chunk.
+      bytes contents = 4;
     }
 
-    // Continues incremental snapshot transfer.
+    // Continues incremental snapshot transfer. The sender
+    // may retry sending the chunks hence the receiver must be prepared
+    // already seen chunks.
     message Chunk {
-      // The offset of the contents within the snapshot.
-      uint64 offset = 1;
-      // The contents of the subsequent snapshot chunks.
+      // The index of the chunk of the snapshot. Must be positive as the
+      // very first chunk with index zero is sent with the header.
+      uint32 index = 1;
+      // The contents of the chunk.
       bytes contents = 2;
     }
   }
@@ -291,8 +296,8 @@ message DeliverSnapshotResponse {
   message Payload {
     // The id of the snapshot being received.
     uint32 snapshot_id = 1;
-    // The offset of the snapshot chunk received. Zero for the header.
-    uint64 offset = 2;
+    // The index of the chunk of the snapshot. Zero for the header.
+    uint32 index = 2;
     // The status of the snapshot chunk status.
     DeliverSnapshotStatus status = 3;
   }
@@ -303,8 +308,8 @@ enum DeliverSnapshotStatus {
   // The snapshot chunk has been accepted. If the sending side observes that all
   // chunks have been accepted then the snapshot transfer is complete.
   SNAPSHOT_STATUS_ACCEPTED = 1;
-  // The snapshot transfer has been aborted.
-  SNAPSHOT_STATUS_ABORTED = 2;
+  // The snapshot chunk has been rejected.
+  SNAPSHOT_STATUS_REJECTED = 2;
   // The snapshot transfer has been completed but the snapshot is corrupted.
   SNAPSHOT_STATUS_CORRUPTED = 3;
 }
