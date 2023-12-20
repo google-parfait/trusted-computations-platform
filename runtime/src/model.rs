@@ -18,6 +18,7 @@ use alloc::vec::Vec;
 use core::fmt;
 use core::option::Option;
 use core::result::Result;
+use prost::bytes::Bytes;
 use slog::Logger;
 
 /// Enumerates actor induced errors. Note that all errors indicate that
@@ -67,7 +68,7 @@ pub trait ActorContext {
 
     /// Gets serialized configuration that stays immutable through the lifetime of
     /// the trusted application.
-    fn config(&self) -> Vec<u8>;
+    fn config(&self) -> Bytes;
 
     /// Checks if the underlying consensus module is currently executing under leader
     /// role.
@@ -77,16 +78,16 @@ pub trait ActorContext {
 // Represents an outcome of command processing.
 pub enum CommandOutcome {
     // Command has been processed immediately and resulted in serialized response.
-    Response(Vec<u8>),
+    Response(Bytes),
 
     // Command will be processed once the serialized event is committed and applied.
-    Event(Vec<u8>),
+    Event(Bytes),
 }
 
 // Represents an outcome of event application.
 pub enum EventOutcome {
     // Response to the send to the consumer after event has been applied to the actor.
-    Response(Vec<u8>),
+    Response(Bytes),
 
     // Nothing to send.
     None,
@@ -104,21 +105,21 @@ pub trait Actor {
 
     /// Handles creation of the actor state snapshot. If error is returned the actor
     /// is considered is unknown state and is destroyed.
-    fn on_save_snapshot(&mut self) -> Result<Vec<u8>, ActorError>;
+    fn on_save_snapshot(&mut self) -> Result<Bytes, ActorError>;
 
     /// Handles restoration of the actor state from snapshot. If error is returned the actor
     /// is considered is unknown state and is destroyed.
-    fn on_load_snapshot(&mut self, snapshot: &[u8]) -> Result<(), ActorError>;
+    fn on_load_snapshot(&mut self, snapshot: Bytes) -> Result<(), ActorError>;
 
     /// Handles processing of a command by the actor. Command represents an intent of a
     /// consumer (e.g. request to update actor state). The command processing logic may
     /// decide to immediately respond (e.g. the command validation failed and cannot be
     /// executed) or to propose an event for replication by the consensus module (e.g. the
     /// event to update actor state once replicated).
-    fn on_process_command(&mut self, command: &[u8]) -> Result<CommandOutcome, ActorError>;
+    fn on_process_command(&mut self, command: Bytes) -> Result<CommandOutcome, ActorError>;
 
     /// Handles committed events by applying them to the actor state. Event represents
     /// a state transition of the actor and may result in messages being sent to the
     /// consumer (e.g. response to the command that generated this event).
-    fn on_apply_event(&mut self, index: u64, event: &[u8]) -> Result<EventOutcome, ActorError>;
+    fn on_apply_event(&mut self, index: u64, event: Bytes) -> Result<EventOutcome, ActorError>;
 }

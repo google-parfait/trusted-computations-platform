@@ -20,5 +20,5 @@ env cargo test --all -- --nocapture
 
 # Run all tests with non-default features
 printf "\n// Running all tests with non-default features"
-printf "\n// cargo test --all --no-default-features --features std --features prost-codec -- --nocapture\n\n"
-env cargo test --all --no-default-features --features std --features prost-codec -- --nocapture
+printf "\n// cargo test --all --no-default-features --features std -- --nocapture\n\n"
+env cargo test --all --no-default-features --features std  -- --nocapture

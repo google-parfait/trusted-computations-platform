@@ -21,6 +21,7 @@ use consensus;
 use consensus::{Raft, RaftLightReady, RaftReady, Store};
 use model::{Actor, ActorContext, ActorError, CommandOutcome, EventOutcome};
 use platform::{Attestation, Host, PalError};
+use prost::bytes::Bytes;
 use raft::{
     eraftpb::ConfChange as RaftConfigChange, eraftpb::ConfState as RaftConfigState,
     eraftpb::Entry as RaftEntry, eraftpb::HardState as RaftHardState,
@@ -44,13 +45,13 @@ mock! {
 
         fn on_shutdown(&mut self);
 
-        fn on_save_snapshot(&mut self) -> Result<Vec<u8>, ActorError>;
+        fn on_save_snapshot(&mut self) -> Result<Bytes, ActorError>;
 
-        fn on_load_snapshot(&mut self, snapshot: &[u8]) -> Result<(), ActorError>;
+        fn on_load_snapshot(&mut self, snapshot: Bytes) -> Result<(), ActorError>;
 
-        fn on_process_command(&mut self, command: &[u8]) -> Result<CommandOutcome, ActorError>;
+        fn on_process_command(&mut self, command: Bytes) -> Result<CommandOutcome, ActorError>;
 
-        fn on_apply_event(&mut self, index: u64, event: &[u8]) -> Result<EventOutcome, ActorError>;
+        fn on_apply_event(&mut self, index: u64, event: Bytes) -> Result<EventOutcome, ActorError>;
     }
 }
 
@@ -104,7 +105,7 @@ mock! {
             &mut self,
             applied_index: u64,
             config_state: RaftConfigState,
-            snapshot_data: Vec<u8>,
+            snapshot_data: Bytes,
         ) -> Result<(), RaftError>;
     }
 }
@@ -156,11 +157,11 @@ mock! {
 
         fn mut_store(&mut self) -> &mut S;
 
-        fn init(&mut self, node_id: u64, config: &RaftConfig, snapshot: Vec<u8>, leader: bool, store: S, logger: &Logger) -> Result<(), RaftError>;
+        fn init(&mut self, node_id: u64, config: &RaftConfig, snapshot: Bytes, leader: bool, store: S, logger: &Logger) -> Result<(), RaftError>;
 
         fn make_step(&mut self, message: RaftMessage) -> Result<(), RaftError>;
 
-        fn make_proposal(&mut self, proposal: Vec<u8>) -> Result<(), RaftError>;
+        fn make_proposal(&mut self, proposal: Bytes) -> Result<(), RaftError>;
 
         fn make_config_change_proposal(
             &mut self,

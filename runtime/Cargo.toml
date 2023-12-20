@@ -4,10 +4,8 @@ version = "0.1.0"
 authors = ["people"]
 
 [features]
-default = ["prost-codec"]
+default = []
 std = ["slog-term", "slog/std"]
-prost-codec = ["raft/prost-codec", "raft-proto/prost-codec"]
-protobuf-codec = ["raft/protobuf-codec", "protobuf"]
 
 [dependencies]
 raft = { workspace = true }

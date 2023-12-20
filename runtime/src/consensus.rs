@@ -18,6 +18,7 @@ use alloc::boxed::Box;
 use alloc::vec;
 use alloc::vec::Vec;
 use hashbrown::HashMap;
+use prost::bytes::Bytes;
 use raft::{
     eraftpb::ConfChange as RaftConfigChange, eraftpb::ConfState as RaftConfigState,
     eraftpb::Entry as RaftEntry, eraftpb::HardState as RaftHardState,
@@ -61,7 +62,7 @@ pub trait Store {
         &mut self,
         applied_index: u64,
         config_state: RaftConfigState,
-        snapshot_data: Vec<u8>,
+        snapshot_data: Bytes,
     ) -> Result<(), RaftError>;
 }
 
@@ -133,8 +134,8 @@ impl RaftReady {
         self.hard_state.as_ref()
     }
 
-    pub fn snapshot(&self) -> &RaftSnapshot {
-        &self.snapshot
+    pub fn take_snapshot(&mut self) -> RaftSnapshot {
+        mem::take(&mut self.snapshot)
     }
 
     pub fn number(&self) -> u64 {
@@ -180,7 +181,7 @@ pub trait Raft {
         &mut self,
         replica_id: u64,
         config: &RaftConfig,
-        snapshot: Vec<u8>,
+        snapshot: Bytes,
         leader: bool,
         store: Self::S,
         logger: &Logger,
@@ -188,7 +189,7 @@ pub trait Raft {
 
     fn make_step(&mut self, message: RaftMessage) -> Result<(), RaftError>;
 
-    fn make_proposal(&mut self, proposal: Vec<u8>) -> Result<(), RaftError>;
+    fn make_proposal(&mut self, proposal: Bytes) -> Result<(), RaftError>;
 
     fn make_config_change_proposal(
         &mut self,
@@ -283,7 +284,7 @@ impl<S: Store + RaftStorage> Raft for RaftSimple<S> {
         &mut self,
         replica_id: u64,
         config: &RaftConfig,
-        snapshot: Vec<u8>,
+        snapshot: Bytes,
         leader: bool,
         mut store: S,
         logger: &Logger,
@@ -307,8 +308,8 @@ impl<S: Store + RaftStorage> Raft for RaftSimple<S> {
         self.mut_raft_node().step(message)
     }
 
-    fn make_proposal(&mut self, proposal: Vec<u8>) -> Result<(), RaftError> {
-        self.mut_raft_node().propose(vec![], proposal)
+    fn make_proposal(&mut self, proposal: Bytes) -> Result<(), RaftError> {
+        self.mut_raft_node().propose(vec![], proposal.into())
     }
 
     fn make_config_change_proposal(

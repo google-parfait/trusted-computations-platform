@@ -26,7 +26,7 @@ use alloc::collections::BTreeMap;
 use core::cell::RefCell;
 use core::mem;
 use hashbrown::HashMap;
-use prost::Message;
+use prost::{bytes::Bytes, Message};
 use slog::{info, Logger};
 use tcp_proto::examples::atomic_counter::{
     counter_request, counter_response, CounterCompareAndSwapRequest, CounterCompareAndSwapResponse,
@@ -40,7 +40,7 @@ use tcp_runtime::platform::{Application, Attestation, Host, PalError};
 use tcp_runtime::{consensus::RaftSimple, storage::MemoryStorage};
 
 struct FakeCluster {
-    app_config: Vec<u8>,
+    app_config: Bytes,
     advance_step: u64,
     platforms: HashMap<u64, FakePlatform>,
     leader_id: u64,
@@ -49,7 +49,7 @@ struct FakeCluster {
 }
 
 impl FakeCluster {
-    fn new(app_config: Vec<u8>) -> FakeCluster {
+    fn new(app_config: Bytes) -> FakeCluster {
         FakeCluster {
             app_config,
             advance_step: 100,
@@ -314,7 +314,7 @@ impl FakePlatform {
         }
     }
 
-    fn send_start_node(&mut self, app_config: Vec<u8>, is_leader: bool) {
+    fn send_start_node(&mut self, app_config: Bytes, is_leader: bool) {
         self.append_meessage_in(InMessage {
             msg: Some(in_message::Msg::StartReplica(StartReplicaRequest {
                 is_leader,
@@ -392,7 +392,7 @@ impl FakePlatform {
     fn send_counter_request(&mut self, counter_request: &CounterRequest) {
         self.append_meessage_in(InMessage {
             msg: Some(in_message::Msg::ExecuteProposal(ExecuteProposalRequest {
-                proposal_contents: counter_request.encode_to_vec(),
+                proposal_contents: counter_request.encode_to_vec().into(),
             })),
         });
     }
@@ -477,7 +477,7 @@ mod test {
             ]),
         };
 
-        let mut cluster = FakeCluster::new(config.encode_to_vec());
+        let mut cluster = FakeCluster::new(config.encode_to_vec().into());
 
         cluster.start_node(1, true);
         cluster.advance_until_elected_leader(None);

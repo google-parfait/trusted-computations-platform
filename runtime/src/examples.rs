@@ -19,7 +19,7 @@ use alloc::{
     vec::Vec,
 };
 use hashbrown::HashMap;
-use prost::Message;
+use prost::{bytes::Bytes, Message};
 use slog::{debug, warn};
 use tcp_proto::examples::atomic_counter::{
     counter_request, counter_response, CounterCompareAndSwapRequest, CounterCompareAndSwapResponse,
@@ -108,7 +108,7 @@ impl Actor for CounterActor {
 
     fn on_shutdown(&mut self) {}
 
-    fn on_save_snapshot(&mut self) -> Result<Vec<u8>, ActorError> {
+    fn on_save_snapshot(&mut self) -> Result<Bytes, ActorError> {
         debug!(self.get_context().logger(), "Saving snapshot");
 
         let mut snapshot = CounterSnapshot {
@@ -121,10 +121,10 @@ impl Actor for CounterActor {
                 .insert(counter_name.to_string(), *counter_value);
         }
 
-        Ok(snapshot.encode_to_vec())
+        Ok(snapshot.encode_to_vec().into())
     }
 
-    fn on_load_snapshot(&mut self, snapshot: &[u8]) -> Result<(), ActorError> {
+    fn on_load_snapshot(&mut self, snapshot: Bytes) -> Result<(), ActorError> {
         debug!(self.get_context().logger(), "Loading snapshot");
 
         let snapshot =
@@ -137,13 +137,13 @@ impl Actor for CounterActor {
         Ok(())
     }
 
-    fn on_process_command(&mut self, command: &[u8]) -> Result<CommandOutcome, ActorError> {
+    fn on_process_command(&mut self, command: Bytes) -> Result<CommandOutcome, ActorError> {
         let mut response = CounterResponse {
             ..Default::default()
         };
         let mut status = CounterStatus::Success;
 
-        match CounterRequest::decode(command) {
+        match CounterRequest::decode(command.clone()) {
             Ok(request) => {
                 debug!(
                     self.get_context().logger(),
@@ -170,7 +170,7 @@ impl Actor for CounterActor {
                 }
 
                 if let CounterStatus::Success = status {
-                    return Ok(CommandOutcome::Event(command.to_vec()));
+                    return Ok(CommandOutcome::Event(command));
                 }
             }
             Err(e) => {
@@ -180,10 +180,10 @@ impl Actor for CounterActor {
         }
 
         response.status = status.into();
-        Ok(CommandOutcome::Response(response.encode_to_vec()))
+        Ok(CommandOutcome::Response(response.encode_to_vec().into()))
     }
 
-    fn on_apply_event(&mut self, index: u64, event: &[u8]) -> Result<EventOutcome, ActorError> {
+    fn on_apply_event(&mut self, index: u64, event: Bytes) -> Result<EventOutcome, ActorError> {
         let request = CounterRequest::decode(event).map_err(|_| ActorError::Internal)?;
 
         let op = request.op.unwrap();
@@ -194,7 +194,7 @@ impl Actor for CounterActor {
         };
 
         if self.get_context().leader() {
-            return Ok(EventOutcome::Response(response.encode_to_vec()));
+            return Ok(EventOutcome::Response(response.encode_to_vec().into()));
         }
 
         Ok(EventOutcome::None)

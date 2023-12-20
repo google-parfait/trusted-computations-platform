@@ -25,6 +25,7 @@ use alloc::vec;
 use alloc::vec::Vec;
 use core::{cell::RefCell, cmp, result::Result};
 use hashbrown::HashMap;
+use prost::bytes::Bytes;
 use raft::{
     eraftpb::ConfState as RaftConfigState, eraftpb::Entry as RaftEntry,
     eraftpb::HardState as RaftHardState, eraftpb::Snapshot as RaftSnapshot, util::limit_size,
@@ -59,7 +60,7 @@ impl MemoryStorageCore {
             entries: Vec::new(),
             snapshot: create_raft_snapshot(
                 create_raft_snapshot_metadata(0, 0, create_raft_config_state(vec![])),
-                Vec::new(),
+                Bytes::new(),
             ),
             snapshot_peer_requests: HashMap::new(),
         }
@@ -178,7 +179,7 @@ impl MemoryStorageCore {
         &mut self,
         applied_index: u64,
         config_state: RaftConfigState,
-        snapshot_data: Vec<u8>,
+        snapshot_data: Bytes,
     ) -> Result<(), RaftError> {
         debug!(
             self.logger,
@@ -374,7 +375,7 @@ impl Store for MemoryStorage {
         &mut self,
         applied_index: u64,
         config_state: RaftConfigState,
-        snapshot_data: Vec<u8>,
+        snapshot_data: Bytes,
     ) -> Result<(), RaftError> {
         self.core
             .borrow_mut()
@@ -442,7 +443,7 @@ mod test {
                 snapshot_term,
                 create_raft_config_state(Vec::from(voters)),
             ),
-            Vec::new(),
+            Bytes::new(),
         )
     }
 
@@ -824,7 +825,7 @@ mod test {
         assert!(storage.should_snapshot(3, &config_state));
 
         storage
-            .create_snapshot(3, config_state, Vec::new())
+            .create_snapshot(3, config_state, Bytes::new())
             .unwrap();
 
         assert_eq!(Ok(create_snapshot(3, 3, &voters)), storage.snapshot(3, 1));

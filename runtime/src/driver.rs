@@ -28,7 +28,7 @@ use core::{
     cmp, mem,
 };
 use platform::{Application, Host, PalError};
-use prost::Message;
+use prost::{bytes::Bytes, Message};
 use raft::{
     eraftpb::ConfChangeType as RaftConfigChangeType, eraftpb::ConfState as RaftConfigState,
     eraftpb::Entry as RaftEntry, eraftpb::EntryType as RaftEntryType,
@@ -41,9 +41,9 @@ use tcp_proto::runtime::endpoint::*;
 struct DriverContextCore {
     id: u64,
     instant: u64,
-    config: Vec<u8>,
+    config: Bytes,
     leader: bool,
-    proposals: Vec<Vec<u8>>,
+    proposals: Vec<Bytes>,
     messages: Vec<out_message::Msg>,
 }
 
@@ -52,7 +52,7 @@ impl DriverContextCore {
         DriverContextCore {
             id: 0,
             instant: 0,
-            config: Vec::new(),
+            config: Bytes::new(),
             leader: false,
             proposals: Vec::new(),
             messages: Vec::new(),
@@ -64,7 +64,7 @@ impl DriverContextCore {
         self.leader = leader;
     }
 
-    fn set_immutable_state(&mut self, id: u64, config: Vec<u8>) {
+    fn set_immutable_state(&mut self, id: u64, config: Bytes) {
         self.id = id;
         self.config = config;
     }
@@ -81,15 +81,15 @@ impl DriverContextCore {
         self.leader
     }
 
-    fn config(&self) -> Vec<u8> {
+    fn config(&self) -> Bytes {
         self.config.clone()
     }
 
-    fn append_proposal(&mut self, proposal: Vec<u8>) {
+    fn append_proposal(&mut self, proposal: Bytes) {
         self.proposals.push(proposal);
     }
 
-    fn take_outputs(&mut self) -> (Vec<Vec<u8>>, Vec<out_message::Msg>) {
+    fn take_outputs(&mut self) -> (Vec<Bytes>, Vec<out_message::Msg>) {
         (
             mem::take(&mut self.proposals),
             mem::take(&mut self.messages),
@@ -121,7 +121,7 @@ impl ActorContext for DriverContext {
         self.core.borrow().instant()
     }
 
-    fn config(&self) -> Vec<u8> {
+    fn config(&self) -> Bytes {
         self.core.borrow().config()
     }
 
@@ -212,7 +212,7 @@ impl<R: Raft<S = S>, S: Store + RaftStorage, A: Actor> Driver<R, S, A> {
     fn initilize_raft_node(
         &mut self,
         raft_config: &Option<RaftConfig>,
-        snapshot: Vec<u8>,
+        snapshot: Bytes,
         leader: bool,
     ) -> Result<(), PalError> {
         let mut config = raft::Config {
@@ -263,7 +263,7 @@ impl<R: Raft<S = S>, S: Store + RaftStorage, A: Actor> Driver<R, S, A> {
         &mut self,
         sender_replica_id: u64,
         recipient_replica_id: u64,
-        message_contents: &Vec<u8>,
+        message_contents: Bytes,
     ) -> Result<(), PalError> {
         match deserialize_raft_message(message_contents) {
             Err(e) => {
@@ -305,7 +305,7 @@ impl<R: Raft<S = S>, S: Store + RaftStorage, A: Actor> Driver<R, S, A> {
         }
     }
 
-    fn make_raft_proposal(&mut self, proposal_contents: Vec<u8>) {
+    fn make_raft_proposal(&mut self, proposal_contents: Bytes) {
         debug!(self.logger, "Making Raft proposal");
 
         self.raft.make_proposal(proposal_contents).unwrap();
@@ -403,7 +403,7 @@ impl<R: Raft<S = S>, S: Store + RaftStorage, A: Actor> Driver<R, S, A> {
                 // Pass committed entry to the actor to make effective.
                 match self
                     .actor
-                    .on_apply_event(committed_entry.index, &entry.entry_contents.as_ref())
+                    .on_apply_event(committed_entry.index, entry.entry_contents.clone())
                     .map_err(|e| {
                         error!(
                             self.logger,
@@ -446,7 +446,7 @@ impl<R: Raft<S = S>, S: Store + RaftStorage, A: Actor> Driver<R, S, A> {
         Ok(())
     }
 
-    fn restore_raft_snapshot(&mut self, raft_snapshot: &RaftSnapshot) -> Result<(), PalError> {
+    fn restore_raft_snapshot(&mut self, raft_snapshot: &mut RaftSnapshot) -> Result<(), PalError> {
         if raft_snapshot.is_empty() {
             // Nothing to restore if the snapshot is empty.
             return Ok(());
@@ -472,13 +472,12 @@ impl<R: Raft<S = S>, S: Store + RaftStorage, A: Actor> Driver<R, S, A> {
         }
 
         // Pass snapshot to the actor to restore.
-        self.actor
-            .on_load_snapshot(raft_snapshot.get_data())
-            .map_err(|e| {
-                error!(self.logger, "Failed to load actor state snapshot: {}", e);
-                // Failure to load actor snapshot must lead to termination.
-                PalError::Actor
-            })?;
+        let snapshot = Bytes::from(raft_snapshot.take_data());
+        self.actor.on_load_snapshot(snapshot).map_err(|e| {
+            error!(self.logger, "Failed to load actor state snapshot: {}", e);
+            // Failure to load actor snapshot must lead to termination.
+            PalError::Actor
+        })?;
 
         // Applied index is reset to the snapshot index.
         self.raft_progress.applied_index = get_metadata(raft_snapshot).index;
@@ -535,7 +534,8 @@ impl<R: Raft<S = S>, S: Store + RaftStorage, A: Actor> Driver<R, S, A> {
 
         // If not empty persist snapshot to stable storage and apply it to the
         // actor.
-        self.restore_raft_snapshot(raft_ready.snapshot())?;
+        let mut snapshot = raft_ready.take_snapshot();
+        self.restore_raft_snapshot(&mut snapshot)?;
 
         // Apply committed entries to the actor state machine.
         self.apply_raft_committed_entries(raft_ready.take_committed_entries())?;
@@ -736,13 +736,13 @@ impl<R: Raft<S = S>, S: Store + RaftStorage, A: Actor> Driver<R, S, A> {
         self.make_raft_step(
             deliver_message.sender_replica_id,
             deliver_message.recipient_replica_id,
-            &deliver_message.message_contents,
+            deliver_message.message_contents.clone(),
         )
     }
 
     fn process_execute_proposal(
         &mut self,
-        execute_proposal_request: &ExecuteProposalRequest,
+        execute_proposal_request: &mut ExecuteProposalRequest,
     ) -> Result<(), PalError> {
         self.check_driver_started()?;
         // Generate unique entry id that will be used to correlate pending execute proposal
@@ -752,7 +752,7 @@ impl<R: Raft<S = S>, S: Store + RaftStorage, A: Actor> Driver<R, S, A> {
 
         match self
             .actor
-            .on_process_command(execute_proposal_request.proposal_contents.as_ref())
+            .on_process_command(execute_proposal_request.proposal_contents.clone())
             .map_err(|e| {
                 error!(self.logger, "Failed to process actor command: {}", e);
 
@@ -776,7 +776,8 @@ impl<R: Raft<S = S>, S: Store + RaftStorage, A: Actor> Driver<R, S, A> {
                 }));
 
                 let entry = create_entry(entry_id, event);
-                self.mut_core().append_proposal(entry.encode_to_vec())
+                self.mut_core()
+                    .append_proposal(entry.encode_to_vec().into())
             }
         }
 
@@ -875,7 +876,7 @@ impl<R: Raft<S = S>, S: Store + RaftStorage, A: Actor> Application for Driver<R,
                             // Ignore for now
                             Ok(())
                         }
-                        in_message::Msg::ExecuteProposal(ref execute_proposal_request) => {
+                        in_message::Msg::ExecuteProposal(ref mut execute_proposal_request) => {
                             self.process_execute_proposal(execute_proposal_request)
                         }
                     }?;
@@ -949,7 +950,7 @@ mod test {
         raft_config: RaftConfig,
         leader: bool,
         replica_id_hint: u64,
-        app_config: Vec<u8>,
+        app_config: Bytes,
     ) -> InMessage {
         let envelope = InMessage {
             msg: Some(in_message::Msg::StartReplica(StartReplicaRequest {
@@ -977,7 +978,7 @@ mod test {
         out_message::Msg::StopReplica(StopReplicaResponse {})
     }
 
-    fn create_execute_proposal_request(proposal_contents: Vec<u8>) -> InMessage {
+    fn create_execute_proposal_request(proposal_contents: Bytes) -> InMessage {
         let envelope = InMessage {
             msg: Some(in_message::Msg::ExecuteProposal(ExecuteProposalRequest {
                 proposal_contents,
@@ -988,7 +989,7 @@ mod test {
 
     fn create_execute_proposal_response(
         entry_id: Option<EntryId>,
-        result_contents: Vec<u8>,
+        result_contents: Bytes,
         status: ExecuteProposalStatus,
     ) -> out_message::Msg {
         out_message::Msg::ExecuteProposal(ExecuteProposalResponse {
@@ -1149,7 +1150,7 @@ mod test {
 
         fn expect_init(
             mut self,
-            handler: impl Fn(u64, &raft::Config, Vec<u8>, bool, MockStore, &Logger) -> Result<(), RaftError>
+            handler: impl Fn(u64, &raft::Config, Bytes, bool, MockStore, &Logger) -> Result<(), RaftError>
                 + 'static,
         ) -> RaftBuilder {
             self.mock_raft.expect_init().return_once_st(handler);
@@ -1193,16 +1194,12 @@ mod test {
             mut self,
             applied_index: u64,
             config_state: RaftConfigState,
-            snapshot_data: &[u8],
+            snapshot_data: Bytes,
             result: Result<(), RaftError>,
         ) -> RaftBuilder {
             self.mock_store
                 .expect_create_snapshot()
-                .with(
-                    eq(applied_index),
-                    eq(config_state),
-                    eq(snapshot_data.to_owned()),
-                )
+                .with(eq(applied_index), eq(config_state), eq(snapshot_data))
                 .return_once_st(|_, _, _| result);
             self
         }
@@ -1242,11 +1239,11 @@ mod test {
         fn expect_make_proposal(
             mut self,
             proposal: Entry,
-            handler: impl Fn(Vec<u8>) -> Result<(), RaftError> + 'static,
+            handler: impl Fn(Bytes) -> Result<(), RaftError> + 'static,
         ) -> RaftBuilder {
             self.mock_raft
                 .expect_make_proposal()
-                .with(eq(proposal.encode_to_vec()))
+                .with(eq(Bytes::from(proposal.encode_to_vec())))
                 .returning_st(handler);
 
             self
@@ -1348,7 +1345,7 @@ mod test {
 
         fn expect_on_process_command(
             &mut self,
-            command: Vec<u8>,
+            command: Bytes,
             result: Result<CommandOutcome, ActorError>,
         ) -> &mut DriverBuilder {
             self.mock_actor
@@ -1361,7 +1358,7 @@ mod test {
 
         fn expect_on_load_snapshot(
             &mut self,
-            snapshot: Vec<u8>,
+            snapshot: Bytes,
             result: Result<(), ActorError>,
         ) -> &mut DriverBuilder {
             self.mock_actor
@@ -1373,7 +1370,7 @@ mod test {
 
         fn expect_on_save_snapshot(
             &mut self,
-            result: Result<Vec<u8>, ActorError>,
+            result: Result<Bytes, ActorError>,
         ) -> &mut DriverBuilder {
             self.mock_actor
                 .expect_on_save_snapshot()
@@ -1384,7 +1381,7 @@ mod test {
         fn expect_on_apply_event(
             &mut self,
             index: u64,
-            data: Vec<u8>,
+            data: Bytes,
             result: Result<EventOutcome, ActorError>,
         ) -> &mut DriverBuilder {
             self.mock_actor
@@ -1411,7 +1408,7 @@ mod test {
     #[test]
     fn test_driver_start_node_request() {
         let (node_id, instant, raft_config) = create_default_parameters();
-        let init_snapshot = vec![2, 3, 4];
+        let init_snapshot = Bytes::from(vec![2, 3, 4]);
 
         let mut mock_host = MockHostBuilder::new()
             .expect_public_signing_key(vec![])
@@ -1453,7 +1450,7 @@ mod test {
                     raft_config.clone(),
                     true,
                     node_id,
-                    Vec::new()
+                    Bytes::new()
                 )),
             )
         );
@@ -1462,7 +1459,7 @@ mod test {
     #[test]
     fn test_driver_stop_node_request() {
         let (node_id, instant, raft_config) = create_default_parameters();
-        let init_snapshot = vec![2, 3, 4];
+        let init_snapshot = Bytes::from(vec![2, 3, 4]);
 
         let mut mock_host = MockHostBuilder::new()
             .expect_public_signing_key(vec![])
@@ -1493,7 +1490,7 @@ mod test {
                     raft_config.clone(),
                     true,
                     node_id,
-                    Vec::new()
+                    Bytes::new()
                 )),
             )
         );
@@ -1511,9 +1508,9 @@ mod test {
     #[test]
     fn test_driver_execute_proposal_request() {
         let (node_id, instant, raft_config) = create_default_parameters();
-        let init_snapshot = vec![2, 3, 4];
-        let proposal_contents_1 = vec![1, 2, 3];
-        let proposal_contents_2 = vec![4, 5, 6];
+        let init_snapshot = Bytes::from(vec![2, 3, 4]);
+        let proposal_contents_1 = Bytes::from(vec![1, 2, 3]);
+        let proposal_contents_2 = Bytes::from(vec![4, 5, 6]);
         let proposal_result_2 = vec![4, 4, 6];
         let entry_id_1 = create_entry_id(node_id, 1);
         let entry_id_2 = create_entry_id(node_id, 2);
@@ -1523,19 +1520,19 @@ mod test {
             .expect_send_messages(vec![create_start_replica_response(node_id)])
             .expect_send_messages(vec![create_execute_proposal_response(
                 Some(entry_id_1.clone()),
-                Vec::new(),
+                Bytes::new(),
                 ExecuteProposalStatus::ProposalStatusPending,
             )])
             .expect_send_messages(vec![create_execute_proposal_response(
                 Some(entry_id_2),
-                proposal_result_2.clone(),
+                proposal_result_2.clone().into(),
                 ExecuteProposalStatus::ProposalStatusCompleted,
             )])
             .take();
 
         let proposal_entry_1 = Entry {
             entry_id: Some(entry_id_1),
-            entry_contents: proposal_contents_1.clone(),
+            entry_contents: proposal_contents_1.clone().into(),
         };
 
         let raft_builder = RaftBuilder::new()
@@ -1553,11 +1550,11 @@ mod test {
             .expect_on_save_snapshot(Ok(init_snapshot.clone()))
             .expect_on_process_command(
                 proposal_contents_1.clone(),
-                Ok(CommandOutcome::Event(proposal_contents_1.clone())),
+                Ok(CommandOutcome::Event(proposal_contents_1.clone().into())),
             )
             .expect_on_process_command(
                 proposal_contents_2.clone(),
-                Ok(CommandOutcome::Response(proposal_result_2)),
+                Ok(CommandOutcome::Response(proposal_result_2.into())),
             )
             .take(raft_builder);
 
@@ -1570,7 +1567,7 @@ mod test {
                     raft_config.clone(),
                     true,
                     node_id,
-                    Vec::new()
+                    Bytes::new()
                 )),
             )
         );
@@ -1580,7 +1577,9 @@ mod test {
             driver.receive_message(
                 &mut mock_host,
                 instant + 10,
-                Some(create_execute_proposal_request(proposal_contents_1.clone())),
+                Some(create_execute_proposal_request(
+                    proposal_contents_1.clone().into()
+                )),
             )
         );
 
@@ -1589,7 +1588,9 @@ mod test {
             driver.receive_message(
                 &mut mock_host,
                 instant + 10,
-                Some(create_execute_proposal_request(proposal_contents_2.clone())),
+                Some(create_execute_proposal_request(
+                    proposal_contents_2.clone().into()
+                )),
             )
         );
     }
@@ -1597,7 +1598,7 @@ mod test {
     #[test]
     fn test_driver_actor_context() {
         let (node_id, instant, raft_config) = create_default_parameters();
-        let init_snapshot = vec![2, 3, 4];
+        let init_snapshot = Bytes::from(vec![2, 3, 4]);
         let self_config = vec![1, 2, 3];
 
         let proposal_response = vec![4, 5, 6];
@@ -1635,7 +1636,7 @@ mod test {
                     raft_config.clone(),
                     true,
                     node_id,
-                    self_config
+                    self_config.into()
                 )),
             )
         );
@@ -1644,7 +1645,7 @@ mod test {
     #[test]
     fn test_driver_change_cluster_request() {
         let (node_id, instant, raft_config) = create_default_parameters();
-        let init_snapshot = vec![2, 3, 4];
+        let init_snapshot = Bytes::from(vec![2, 3, 4]);
         let peer_id = 2;
 
         let mut mock_host = MockHostBuilder::new()
@@ -1681,7 +1682,7 @@ mod test {
                     raft_config.clone(),
                     true,
                     node_id,
-                    Vec::new()
+                    Bytes::new()
                 )),
             )
         );
@@ -1702,7 +1703,7 @@ mod test {
     #[test]
     fn test_driver_check_cluster_request() {
         let (node_id, instant, raft_config) = create_default_parameters();
-        let init_snapshot = vec![2, 3, 4];
+        let init_snapshot = Bytes::from(vec![2, 3, 4]);
         let peer_id = 2;
 
         let raft_state = create_default_raft_state(node_id);
@@ -1739,7 +1740,7 @@ mod test {
                     raft_config.clone(),
                     true,
                     node_id,
-                    Vec::new()
+                    Bytes::new()
                 )),
             )
         );
@@ -1757,7 +1758,7 @@ mod test {
     #[test]
     fn test_driver_raft_ready() {
         let (node_id, instant, raft_config) = create_default_parameters();
-        let init_snapshot = vec![2, 3, 4];
+        let init_snapshot = Bytes::from(vec![2, 3, 4]);
         let peer_id = 2;
 
         let raft_state = create_default_raft_state(node_id);
@@ -1772,9 +1773,13 @@ mod test {
 
         let proposal_result = vec![4, 5, 6];
         let entry_id = create_entry_id(node_id, 1);
-        let entry = create_entry(entry_id.clone(), proposal_result.clone());
-        let committed_normal_entry =
-            create_raft_entry(2, 2, RaftEntryType::EntryNormal, entry.encode_to_vec());
+        let entry = create_entry(entry_id.clone(), proposal_result.clone().into());
+        let committed_normal_entry = create_raft_entry(
+            2,
+            2,
+            RaftEntryType::EntryNormal,
+            entry.encode_to_vec().into(),
+        );
 
         let config_change = create_raft_config_change(peer_id, RaftConfigChangeType::AddNode);
         let config_state = create_raft_config_state(vec![node_id, peer_id]);
@@ -1791,7 +1796,7 @@ mod test {
 
         let snapshot = create_raft_snapshot(
             create_raft_snapshot_metadata(1, 1, create_raft_config_state(vec![node_id, peer_id])),
-            vec![1, 2, 3],
+            vec![1, 2, 3].into(),
         );
 
         let ready = RaftReady::new(
@@ -1814,7 +1819,7 @@ mod test {
                 create_deliver_message_response(&message_b),
                 create_execute_proposal_response(
                     Some(entry_id.clone()),
-                    proposal_result.clone(),
+                    proposal_result.clone().into(),
                     ExecuteProposalStatus::ProposalStatusCompleted,
                 ),
             ])
@@ -1837,11 +1842,11 @@ mod test {
         let mut driver = DriverBuilder::new()
             .expect_on_init(|_| Ok(()))
             .expect_on_save_snapshot(Ok(init_snapshot.clone()))
-            .expect_on_load_snapshot(snapshot.data.to_vec(), Ok(()))
+            .expect_on_load_snapshot(snapshot.data.into(), Ok(()))
             .expect_on_apply_event(
                 committed_normal_entry.index,
-                entry.entry_contents,
-                Ok(EventOutcome::Response(proposal_result)),
+                entry.entry_contents.into(),
+                Ok(EventOutcome::Response(proposal_result.into())),
             )
             .take(raft_builder);
 
@@ -1854,7 +1859,7 @@ mod test {
                     raft_config.clone(),
                     true,
                     node_id,
-                    Vec::new()
+                    Bytes::new()
                 )),
             )
         );
@@ -1868,7 +1873,7 @@ mod test {
     #[test]
     fn test_driver_raft_tick() {
         let (node_id, instant, raft_config) = create_default_parameters();
-        let init_snapshot = vec![2, 3, 4];
+        let init_snapshot = Bytes::from(vec![2, 3, 4]);
 
         let raft_state = create_default_raft_state(node_id);
 
@@ -1901,7 +1906,7 @@ mod test {
                     raft_config.clone(),
                     true,
                     node_id,
-                    Vec::new()
+                    Bytes::new()
                 )),
             )
         );
@@ -1915,7 +1920,7 @@ mod test {
     #[test]
     fn test_driver_raft_step() {
         let (node_id, instant, raft_config) = create_default_parameters();
-        let init_snapshot = vec![2, 3, 4];
+        let init_snapshot = Bytes::from(vec![2, 3, 4]);
         let peer_id = 2;
 
         let raft_state = create_default_raft_state(node_id);
@@ -1951,7 +1956,7 @@ mod test {
                     raft_config.clone(),
                     true,
                     node_id,
-                    Vec::new()
+                    Bytes::new()
                 )),
             )
         );
@@ -1969,27 +1974,31 @@ mod test {
     #[test]
     fn test_driver_trigger_snapshot() {
         let (node_id, instant, raft_config) = create_default_parameters();
-        let init_snapshot = vec![2, 3, 4];
+        let init_snapshot = Bytes::from(vec![2, 3, 4]);
 
         let raft_state = create_default_raft_state(node_id);
 
         let proposal_result = vec![4, 5, 6];
 
         let entry_id = create_entry_id(node_id, 1);
-        let entry = create_entry(entry_id.clone(), proposal_result.clone());
+        let entry = create_entry(entry_id.clone(), proposal_result.clone().into());
 
         let mut mock_host = MockHostBuilder::new()
             .expect_public_signing_key(vec![])
             .expect_send_messages(vec![create_start_replica_response(node_id)])
             .expect_send_messages(vec![create_execute_proposal_response(
                 Some(entry_id.clone()),
-                proposal_result.clone(),
+                proposal_result.clone().into(),
                 ExecuteProposalStatus::ProposalStatusCompleted,
             )])
             .take();
 
-        let committed_normal_entry =
-            create_raft_entry(2, 2, RaftEntryType::EntryNormal, entry.encode_to_vec());
+        let committed_normal_entry = create_raft_entry(
+            2,
+            2,
+            RaftEntryType::EntryNormal,
+            entry.encode_to_vec().into(),
+        );
 
         let ready = RaftReady::new(
             vec![],
@@ -2002,7 +2011,7 @@ mod test {
         );
         let light_ready = RaftLightReady::default();
 
-        let snapshot = vec![4, 5, 6];
+        let snapshot = Bytes::from(vec![4, 5, 6]);
 
         let raft_builder = RaftBuilder::new()
             .expect_leader(false)
@@ -2015,7 +2024,7 @@ mod test {
             .expect_create_snapshot(
                 committed_normal_entry.index,
                 create_raft_config_state(raft_state.committed_cluster_config.clone()),
-                &snapshot,
+                snapshot.clone(),
                 Ok(()),
             )
             .expect_state(&raft_state)
@@ -2028,7 +2037,7 @@ mod test {
             .expect_on_apply_event(
                 committed_normal_entry.index,
                 entry.entry_contents,
-                Ok(EventOutcome::Response(proposal_result)),
+                Ok(EventOutcome::Response(proposal_result.into())),
             )
             .expect_on_save_snapshot(Ok(snapshot.clone()))
             .take(raft_builder);
@@ -2042,7 +2051,7 @@ mod test {
                     raft_config.clone(),
                     true,
                     node_id,
-                    Vec::new()
+                    Bytes::new()
                 )),
             )
         );
