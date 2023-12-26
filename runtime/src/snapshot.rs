@@ -16,9 +16,9 @@ use crate::StdError;
 use alloc::boxed::Box;
 use alloc::vec::Vec;
 use core::convert::TryInto;
-use core::fmt;
 use core::option::Option;
-use hashbrown::HashMap;
+use core::{cmp, fmt};
+use hashbrown::{HashMap, HashSet};
 use prost::{
     bytes::{Buf, BufMut, Bytes, BytesMut},
     Message,
@@ -202,6 +202,8 @@ enum ReplicaState {
 }
 
 pub trait SnapshotSenderImpl: SnapshotSender {
+    fn init(&mut self, replica_id: u64);
+
     fn set_instant(&mut self, instant: u64);
 
     fn reset(&mut self) -> Vec<(u64, RaftSnapshotStatus)>;
@@ -240,6 +242,7 @@ impl SnapshotProcessor for DefaultSnapshotProcessor {
         assert_eq!(self.state, ReplicaState::Unknown);
 
         self.replica_id = replica_id;
+        self.sender.init(self.replica_id);
         // Always start as a follower.
         self.state = ReplicaState::Follower;
     }
@@ -314,41 +317,310 @@ impl SnapshotProcessor for DefaultSnapshotProcessor {
     }
 }
 
-#[derive(Default)]
+struct SnapshotSenderState {
+    logger: Logger,
+    snapshot_id: u32,
+    snapshot_metadata: RaftSnapshotMetadata,
+    snapshot_data: Bytes,
+    chunk_size: u64,
+    chunk_count: u64,
+    next_chunk_index: u32,
+    sent_chunk_count: u64,
+    pending_chunks: HashMap<u64, u32>,
+    status: Option<RaftSnapshotStatus>,
+}
+
+impl SnapshotSenderState {
+    fn new(
+        logger: Logger,
+        snapshot_id: u32,
+        snapshot: RaftSnapshot,
+        chunk_size: u64,
+    ) -> SnapshotSenderState {
+        let snapshot_metadata = snapshot.metadata.unwrap();
+        let snapshot_data: Bytes = snapshot.data.into();
+        let snapshot_size = snapshot_data.len() as u64;
+
+        SnapshotSenderState {
+            logger,
+            snapshot_id,
+            snapshot_metadata,
+            snapshot_data,
+            chunk_size,
+            chunk_count: (snapshot_size - 1) / chunk_size + 1,
+            next_chunk_index: 0,
+            sent_chunk_count: 0,
+            pending_chunks: HashMap::new(),
+            status: None,
+        }
+    }
+
+    fn progress(&self) -> f64 {
+        if self.status.is_some() {
+            // The snapshot transfer has reached terminal state,
+            // both success and failure are considered completion.
+            return 1.0;
+        }
+        (self.sent_chunk_count as f64 + self.pending_chunks.len() as f64) / self.chunk_count as f64
+    }
+
+    fn pending_chunks(&self) -> u32 {
+        self.pending_chunks.len() as u32
+    }
+
+    fn next_chunk(&mut self, delivery_id: u64) -> Option<Bytes> {
+        if self.status.is_some() {
+            // The snapshot transfer has reached terminal state,
+            // no new chunks will be sent.
+            return None;
+        }
+
+        // Register chunk as pending.
+        self.pending_chunks
+            .insert(delivery_id, self.next_chunk_index);
+
+        // Compute the next chunk contents.
+        let next_chunk_start = self.next_chunk_index as usize * self.chunk_size as usize;
+        let next_chunk_end = cmp::min(
+            self.snapshot_data.len(),
+            next_chunk_start + self.chunk_size as usize,
+        );
+        let next_chunk = self.snapshot_data.slice(next_chunk_start..next_chunk_end);
+
+        // Assemble request payload.
+        let mut payload = deliver_snapshot_request::Payload {
+            snapshot_id: self.snapshot_id,
+            ..Default::default()
+        };
+        if self.next_chunk_index == 0 {
+            // Send header for the new snapshot transfer.
+            payload.it = Some(deliver_snapshot_request::payload::It::Header(
+                deliver_snapshot_request::payload::Header {
+                    snapshot_size: self.snapshot_data.len() as u64,
+                    snapshot_metadata: self.snapshot_metadata.encode_to_vec().into(),
+                    chunk_contents: next_chunk,
+                },
+            ))
+        } else {
+            // Send next chunk of the existing snapshot transfer.
+            payload.it = Some(deliver_snapshot_request::payload::It::Chunk(
+                deliver_snapshot_request::payload::Chunk {
+                    chunk_index: self.next_chunk_index,
+                    chunk_contents: next_chunk,
+                },
+            ));
+        }
+
+        // Advance index of the next to be sent chunk.
+        self.next_chunk_index += 1;
+
+        Some(payload.encode_to_vec().into())
+    }
+
+    fn process_response(
+        &mut self,
+        delivery_id: u64,
+        response: Result<DeliverSnapshotResponse, SnapshotError>,
+    ) {
+        let success = match response {
+            Ok(response) => {
+                let payload_result =
+                    deliver_snapshot_response::Payload::decode(response.payload_contents);
+                if payload_result.is_err() {
+                    warn!(
+                        self.logger,
+                        "Rejecting delivery response: {}",
+                        payload_result.err().unwrap()
+                    );
+                    false
+                } else {
+                    let payload = payload_result.ok().unwrap();
+                    if self.snapshot_id != payload.snapshot_id {
+                        warn!(self.logger, "Rejecting delivery response: wrong snapshot");
+                        true
+                    } else if self.chunk_count <= payload.chunk_index.into()
+                        || self.pending_chunks.remove_entry(&delivery_id)
+                            != Some((delivery_id, payload.chunk_index))
+                    {
+                        warn!(self.logger, "Rejecting delivery response: out of bounds");
+                        false
+                    } else {
+                        if payload.status == DeliverSnapshotStatus::SnapshotStatusAccepted.into() {
+                            self.sent_chunk_count += 1;
+                            true
+                        } else {
+                            warn!(self.logger, "Receiver rejected delivery request");
+                            false
+                        }
+                    }
+                }
+            }
+            Err(error) => {
+                warn!(self.logger, "Rejecting delivery response: {}", error);
+                false
+            }
+        };
+
+        if !success {
+            // The snapshot delivery has failed and we need to abort
+            // snapshot transfer.
+            self.status = Some(RaftSnapshotStatus::Failure);
+        }
+    }
+
+    fn try_complete(&mut self) -> Option<RaftSnapshotStatus> {
+        if self.status.is_none() && self.sent_chunk_count == self.chunk_count {
+            self.complete_with(RaftSnapshotStatus::Finish);
+        }
+
+        self.status
+    }
+
+    fn complete_with(&mut self, status: RaftSnapshotStatus) {
+        self.status = Some(status);
+        // Free up the memory used by the snapshot.
+        self.snapshot_data = Bytes::new();
+    }
+}
+
+#[derive(Clone, Copy, Debug)]
+pub struct SnapshotSenderConfig {
+    chunk_size: u64,
+    max_pending_chunks: u32,
+}
+
 pub struct DefaultSnapshotSender {
+    logger: Logger,
+    config: SnapshotSenderConfig,
+    replica_id: u64,
     instant: u64,
+    next_snapshot_id: u32,
+    next_delivery_id: u64,
+    receivers: HashMap<u64, SnapshotSenderState>,
+}
+
+impl DefaultSnapshotSender {
+    pub fn new(logger: Logger, config: SnapshotSenderConfig) -> DefaultSnapshotSender {
+        DefaultSnapshotSender {
+            logger,
+            config,
+            replica_id: 0,
+            instant: 0,
+            next_snapshot_id: 1,
+            next_delivery_id: 1,
+            receivers: HashMap::new(),
+        }
+    }
 }
 
 impl SnapshotSenderImpl for DefaultSnapshotSender {
+    fn init(&mut self, replica_id: u64) {
+        self.replica_id = replica_id;
+    }
+
     fn set_instant(&mut self, instant: u64) {
         self.instant = instant;
     }
 
     fn reset(&mut self) -> Vec<(u64, RaftSnapshotStatus)> {
-        todo!()
+        // All uncompleted snapshot transfers are considered failed.
+        let mut cancellations: Vec<(u64, RaftSnapshotStatus)> =
+            Vec::with_capacity(self.receivers.len());
+        for receiver_id in self.receivers.keys() {
+            cancellations.push((*receiver_id, RaftSnapshotStatus::Failure));
+        }
+        self.receivers.clear();
+
+        // Note that snapshot id or deliver id are not reset as
+        // they are meant to be forward only counters.
+
+        cancellations
     }
 }
 
 impl SnapshotSender for DefaultSnapshotSender {
     fn start(&mut self, receiver_id: u64, snapshot: RaftSnapshot) {
-        todo!()
+        // Note that we rely on Raft protocol to initiate transfers.
+        // Hence we silently override any progress for the existing transfer.
+        self.receivers.insert(
+            receiver_id,
+            SnapshotSenderState::new(
+                self.logger.clone(),
+                self.next_snapshot_id,
+                snapshot,
+                self.config.chunk_size,
+            ),
+        );
+        self.next_snapshot_id += 1;
     }
 
     fn next_request(&mut self) -> Option<DeliverSnapshotRequest> {
-        todo!()
+        // Initiallly we will employ a very simple strategy of picking
+        // which chunk to send next. Specifically we will pick viable
+        // receiver that has made the least progress.
+        let mut selected_receiver_id = 0;
+        let mut min_progress = 1.0;
+        let mut pending_chunks = 0;
+        for (receiver_id, sender_state) in &self.receivers {
+            pending_chunks += sender_state.pending_chunks();
+            if min_progress > sender_state.progress() {
+                min_progress = sender_state.progress();
+                selected_receiver_id = *receiver_id;
+            }
+        }
+
+        // Check if we can send another chunk.
+        if pending_chunks >= self.config.max_pending_chunks || selected_receiver_id == 0 {
+            return None;
+        }
+
+        let next_delivery_id = self.next_delivery_id;
+        self.next_delivery_id += 1;
+
+        let next_chunk = self
+            .receivers
+            .get_mut(&selected_receiver_id)
+            .unwrap()
+            .next_chunk(next_delivery_id);
+
+        next_chunk.map(|payload_contents| DeliverSnapshotRequest {
+            recipient_replica_id: selected_receiver_id,
+            sender_replica_id: self.replica_id,
+            delivery_id: next_delivery_id,
+            payload_contents: payload_contents,
+        })
     }
 
     fn process_response(
         &mut self,
-        sender_id: u64,
+        receiver_id: u64,
         delivery_id: u64,
         response: Result<DeliverSnapshotResponse, SnapshotError>,
     ) {
-        todo!()
+        // Ignore responses from receivers that we do not know about.
+        // These responses may simply be delayed on the network while
+        // the sender state has been reset due to cluster or role
+        // changes.
+        if let Some(sender_state) = self.receivers.get_mut(&receiver_id) {
+            sender_state.process_response(delivery_id, response);
+        }
     }
 
     fn try_complete(&mut self) -> Option<(u64, RaftSnapshotStatus)> {
-        todo!()
+        let mut result: Option<(u64, RaftSnapshotStatus)> = None;
+        // Try to complete any snapshot transfer
+        for (receiver_id, sender_state) in &mut self.receivers {
+            if let Some(snapshot_status) = sender_state.try_complete() {
+                result = Some((*receiver_id, snapshot_status));
+                break;
+            }
+        }
+        // Remove completed snapshot transfer
+        if let Some((receiver_id, _)) = &result {
+            self.receivers.remove(receiver_id);
+        }
+
+        result
     }
 }
 
@@ -381,8 +653,8 @@ impl ReceiverState {
         }
     }
 
-    fn accept_chunk(&mut self, index: u64, contents: Bytes) -> bool {
-        let chunk_size: u64 = contents.len() as u64;
+    fn accept_chunk(&mut self, index: u64, chunk_contents: Bytes) -> bool {
+        let chunk_size: u64 = chunk_contents.len() as u64;
         if index >= self.chunk_count
             || (index < self.chunk_count - 1 && chunk_size != self.chunk_size)
             || (index == self.chunk_count - 1
@@ -390,7 +662,7 @@ impl ReceiverState {
         {
             return false;
         }
-        self.chunks.insert(index, contents);
+        self.chunks.insert(index, chunk_contents);
         true
     }
 
@@ -399,19 +671,19 @@ impl ReceiverState {
             return None;
         }
         // Decode snapshot metadata.
-        let metadata = RaftSnapshotMetadata::decode(self.snapshot_metadata.clone());
-        if metadata.is_err() {
+        let snapshot_metadata = RaftSnapshotMetadata::decode(self.snapshot_metadata.clone());
+        if snapshot_metadata.is_err() {
             return Some(Err(SnapshotError::Corrupted));
         }
         // Copy snapshot data. Will try to remove the copy once Raft switch to use Bytes.
-        let mut data = BytesMut::with_capacity(self.snapshot_size.try_into().unwrap());
+        let mut snapshot_data = BytesMut::with_capacity(self.snapshot_size.try_into().unwrap());
         for c in 0..self.chunk_count {
-            data.put(self.chunks.remove(&c).unwrap());
+            snapshot_data.put(self.chunks.remove(&c).unwrap());
         }
 
         let snapshot = RaftSnapshot {
-            data: data.into(),
-            metadata: Some(metadata.unwrap()),
+            data: snapshot_data.into(),
+            metadata: Some(snapshot_metadata.unwrap()),
         };
         Some(Ok(snapshot))
     }
@@ -466,25 +738,25 @@ impl SnapshotReceiver for DefaultSnapshotReceiver {
                     // Initiate new snapshot.
                     self.state = Some(ReceiverState::new(
                         payload.snapshot_id,
-                        header.size,
-                        header.metadata.clone(),
-                        header.contents,
+                        header.snapshot_size,
+                        header.snapshot_metadata.clone(),
+                        header.chunk_contents,
                     ));
                     // Respond to the snapshot sender.
                     response_payload.snapshot_id = payload.snapshot_id;
-                    response_payload.index = 0;
+                    response_payload.chunk_index = 0;
                     response_payload.status = DeliverSnapshotStatus::SnapshotStatusAccepted.into();
                 }
                 Some(deliver_snapshot_request::payload::It::Chunk(chunk)) => {
                     response_payload.snapshot_id = payload.snapshot_id;
-                    response_payload.index = chunk.index;
+                    response_payload.chunk_index = chunk.chunk_index;
 
                     // Ensure the snapshot has been initiated.
                     match self.state {
                         Some(ref mut state) => {
                             // Ensure incoming chunk belongs to the current snapshot and
                             // within range.
-                            if state.accept_chunk(chunk.index.into(), chunk.contents) {
+                            if state.accept_chunk(chunk.chunk_index.into(), chunk.chunk_contents) {
                                 // Respond with acceptance.
                                 response_payload.status =
                                     DeliverSnapshotStatus::SnapshotStatusAccepted.into();
@@ -535,7 +807,7 @@ mod test {
     use mock::{MockSnapshotReceiver, MockSnapshotSender};
 
     use crate::logger::log::create_logger;
-    use crate::util::raft::create_raft_snapshot_metadata;
+    use crate::util::raft::{create_raft_snapshot, create_raft_snapshot_metadata};
 
     use raft::eraftpb::ConfState as RaftConfigState;
 
@@ -554,6 +826,13 @@ mod test {
         let mut snapshot_processor = DefaultSnapshotProcessor::new(sender, receiver);
         snapshot_processor.init(replica_id);
         snapshot_processor
+    }
+
+    fn expect_sender_init(mock_sender: &mut MockSnapshotSender, replica_id: u64) {
+        mock_sender
+            .expect_init()
+            .with(eq(replica_id))
+            .return_const(());
     }
 
     fn expect_sender_set_instant(mock_sender: &mut MockSnapshotSender, instant: u64) {
@@ -586,6 +865,7 @@ mod test {
         let (instant, replica_id) = (10, REPLICA_1);
 
         let mut mock_sender = Box::new(MockSnapshotSender::new());
+        expect_sender_init(&mut mock_sender, replica_id);
 
         let mut mock_receiver = Box::new(MockSnapshotReceiver::new());
         expect_receiver_set_instant(&mut mock_receiver, instant);
@@ -604,6 +884,7 @@ mod test {
         let (instant, replica_id) = (10, REPLICA_1);
 
         let mut mock_sender = Box::new(MockSnapshotSender::new());
+        expect_sender_init(&mut mock_sender, replica_id);
 
         let mut mock_receiver = Box::new(MockSnapshotReceiver::new());
         expect_receiver_reset(&mut mock_receiver);
@@ -632,6 +913,7 @@ mod test {
         let (instant, replica_id) = (10, REPLICA_1);
 
         let mut mock_sender = Box::new(MockSnapshotSender::new());
+        expect_sender_init(&mut mock_sender, replica_id);
 
         let mut mock_receiver = Box::new(MockSnapshotReceiver::new());
         expect_receiver_reset(&mut mock_receiver);
@@ -660,6 +942,7 @@ mod test {
         let (instant, replica_id) = (10, REPLICA_1);
 
         let mut mock_sender = Box::new(MockSnapshotSender::new());
+        expect_sender_init(&mut mock_sender, replica_id);
         expect_sender_set_instant(&mut mock_sender, instant);
 
         let mut mock_receiver = Box::new(MockSnapshotReceiver::new());
@@ -686,6 +969,7 @@ mod test {
         let cancellations = vec![(1, RaftSnapshotStatus::Failure)];
 
         let mut mock_sender = Box::new(MockSnapshotSender::new());
+        expect_sender_init(&mut mock_sender, replica_id);
         expect_sender_reset(&mut mock_sender, cancellations.clone());
 
         let mut mock_receiver = Box::new(MockSnapshotReceiver::new());
@@ -725,6 +1009,7 @@ mod test {
         let cancellations = vec![(1, RaftSnapshotStatus::Failure)];
 
         let mut mock_sender = Box::new(MockSnapshotSender::new());
+        expect_sender_init(&mut mock_sender, replica_id);
         expect_sender_reset(&mut mock_sender, cancellations.clone());
         expect_sender_set_instant(&mut mock_sender, instant);
 
@@ -757,16 +1042,26 @@ mod test {
         ));
     }
 
+    fn default_snapshot_metadata() -> RaftSnapshotMetadata {
+        create_raft_snapshot_metadata(
+            1,
+            2,
+            RaftConfigState {
+                ..Default::default()
+            },
+        )
+    }
+
     fn create_deliver_snapshot_request_header(
         snapshot_id: u32,
-        size: u64,
-        metadata: Bytes,
-        contents: Bytes,
+        snapshot_size: u64,
+        snapshot_metadata: Bytes,
+        chunk_contents: Bytes,
     ) -> DeliverSnapshotRequest {
         let header = deliver_snapshot_request::payload::Header {
-            size,
-            metadata,
-            contents,
+            snapshot_size,
+            snapshot_metadata,
+            chunk_contents,
         };
 
         let payload = deliver_snapshot_request::Payload {
@@ -784,10 +1079,13 @@ mod test {
 
     fn create_deliver_snapshot_request_chunk(
         snapshot_id: u32,
-        index: u32,
-        contents: Bytes,
+        chunk_index: u32,
+        chunk_contents: Bytes,
     ) -> DeliverSnapshotRequest {
-        let chunk = deliver_snapshot_request::payload::Chunk { index, contents };
+        let chunk = deliver_snapshot_request::payload::Chunk {
+            chunk_index,
+            chunk_contents,
+        };
 
         let payload = deliver_snapshot_request::Payload {
             snapshot_id,
@@ -804,8 +1102,8 @@ mod test {
 
     fn assert_snapshot_success(
         complete_result: Option<Result<RaftSnapshot, SnapshotError>>,
-        data: Bytes,
-        metadata: RaftSnapshotMetadata,
+        snapshot_data: Bytes,
+        snapshot_metadata: RaftSnapshotMetadata,
     ) {
         assert!(complete_result.is_some());
 
@@ -813,14 +1111,14 @@ mod test {
         assert!(snapshot_result.is_ok());
 
         let snapshot = snapshot_result.unwrap();
-        assert_eq!(snapshot.data, data);
-        assert_eq!(snapshot.metadata, Some(metadata));
+        assert_eq!(snapshot.data, snapshot_data);
+        assert_eq!(snapshot.metadata, Some(snapshot_metadata));
     }
 
     fn assert_deliver_snapshot_accepted(
         response: DeliverSnapshotResponse,
         snapshot_id: u32,
-        index: u32,
+        chunk_index: u32,
     ) {
         let payload =
             deliver_snapshot_response::Payload::decode(response.payload_contents).unwrap();
@@ -828,7 +1126,7 @@ mod test {
             payload,
             deliver_snapshot_response::Payload {
                 snapshot_id,
-                index,
+                chunk_index,
                 status: DeliverSnapshotStatus::SnapshotStatusAccepted.into()
             }
         );
@@ -837,7 +1135,7 @@ mod test {
     fn assert_deliver_snapshot_rejected(
         response: DeliverSnapshotResponse,
         snapshot_id: u32,
-        index: u32,
+        chunk_index: u32,
     ) {
         let payload =
             deliver_snapshot_response::Payload::decode(response.payload_contents).unwrap();
@@ -845,37 +1143,31 @@ mod test {
             payload,
             deliver_snapshot_response::Payload {
                 snapshot_id,
-                index,
+                chunk_index,
                 status: DeliverSnapshotStatus::SnapshotStatusRejected.into()
             }
         );
     }
 
-    const SNAPSHOT_0: u32 = 0;
     const SNAPSHOT_1: u32 = 1;
+    const SNAPSHOT_2: u32 = 2;
 
     #[test]
     fn test_snapshot_receiver_single_chunk() {
         let mut receiver = DefaultSnapshotReceiver::new(create_logger(1));
 
-        let metadata = create_raft_snapshot_metadata(
-            1,
-            2,
-            RaftConfigState {
-                ..Default::default()
-            },
-        );
+        let metadata = default_snapshot_metadata();
 
         let data = Bytes::from(vec![1, 2, 3, 4, 5]);
 
         assert_deliver_snapshot_accepted(
             receiver.process_request(create_deliver_snapshot_request_header(
-                SNAPSHOT_0,
+                SNAPSHOT_1,
                 data.len() as u64,
                 metadata.encode_to_vec().into(),
                 data.clone(),
             )),
-            SNAPSHOT_0,
+            SNAPSHOT_1,
             0,
         );
 
@@ -886,24 +1178,18 @@ mod test {
     fn test_snapshot_receiver_multiple_chunks() {
         let mut receiver = DefaultSnapshotReceiver::new(create_logger(1));
 
-        let metadata = create_raft_snapshot_metadata(
-            1,
-            2,
-            RaftConfigState {
-                ..Default::default()
-            },
-        );
+        let metadata = default_snapshot_metadata();
 
         let data = Bytes::from(vec![1, 2, 3, 4, 5]);
 
         assert_deliver_snapshot_accepted(
             receiver.process_request(create_deliver_snapshot_request_header(
-                SNAPSHOT_0,
+                SNAPSHOT_1,
                 data.len() as u64,
                 metadata.encode_to_vec().into(),
                 data.slice(0..3),
             )),
-            SNAPSHOT_0,
+            SNAPSHOT_1,
             0,
         );
 
@@ -913,11 +1199,11 @@ mod test {
 
         assert_deliver_snapshot_accepted(
             receiver.process_request(create_deliver_snapshot_request_chunk(
-                SNAPSHOT_0,
+                SNAPSHOT_1,
                 1,
                 data.slice(3..5),
             )),
-            SNAPSHOT_0,
+            SNAPSHOT_1,
             1,
         );
 
@@ -928,24 +1214,18 @@ mod test {
     fn test_snapshot_receiver_reset_new_snapshot() {
         let mut receiver = DefaultSnapshotReceiver::new(create_logger(1));
 
-        let metadata = create_raft_snapshot_metadata(
-            1,
-            2,
-            RaftConfigState {
-                ..Default::default()
-            },
-        );
+        let metadata = default_snapshot_metadata();
 
-        let data_0 = Bytes::from(vec![1, 2, 3, 4, 5]);
+        let data_1 = Bytes::from(vec![1, 2, 3, 4, 5]);
 
         assert_deliver_snapshot_accepted(
             receiver.process_request(create_deliver_snapshot_request_header(
-                SNAPSHOT_0,
-                data_0.len() as u64,
+                SNAPSHOT_1,
+                data_1.len() as u64,
                 metadata.encode_to_vec().into(),
-                data_0.slice(0..3),
+                data_1.slice(0..3),
             )),
-            SNAPSHOT_0,
+            SNAPSHOT_1,
             0,
         );
 
@@ -953,117 +1233,105 @@ mod test {
 
         assert!(complete_result.is_none());
 
-        let data_1 = Bytes::from(vec![6, 7, 8, 9, 10]);
+        let data_2 = Bytes::from(vec![6, 7, 8, 9, 10]);
 
         assert_deliver_snapshot_accepted(
             receiver.process_request(create_deliver_snapshot_request_header(
-                SNAPSHOT_1,
-                data_1.len() as u64,
+                SNAPSHOT_2,
+                data_2.len() as u64,
                 metadata.encode_to_vec().into(),
-                data_1.slice(0..4),
+                data_2.slice(0..4),
             )),
-            SNAPSHOT_1,
+            SNAPSHOT_2,
             0,
         );
 
         assert_deliver_snapshot_accepted(
             receiver.process_request(create_deliver_snapshot_request_chunk(
-                SNAPSHOT_1,
+                SNAPSHOT_2,
                 1,
-                data_1.slice(4..5),
+                data_2.slice(4..5),
             )),
-            SNAPSHOT_1,
+            SNAPSHOT_2,
             1,
         );
 
-        assert_snapshot_success(receiver.try_complete(), data_1, metadata);
+        assert_snapshot_success(receiver.try_complete(), data_2, metadata);
     }
 
     #[test]
     fn test_snapshot_receiver_consequitive_snapshots() {
         let mut receiver = DefaultSnapshotReceiver::new(create_logger(1));
 
-        let metadata = create_raft_snapshot_metadata(
-            1,
-            2,
-            RaftConfigState {
-                ..Default::default()
-            },
-        );
+        let metadata = default_snapshot_metadata();
 
-        let data_0 = Bytes::from(vec![1, 2, 3, 4, 5]);
-
-        assert_deliver_snapshot_accepted(
-            receiver.process_request(create_deliver_snapshot_request_header(
-                SNAPSHOT_0,
-                data_0.len() as u64,
-                metadata.encode_to_vec().into(),
-                data_0.clone(),
-            )),
-            SNAPSHOT_0,
-            0,
-        );
-
-        assert_snapshot_success(receiver.try_complete(), data_0, metadata.clone());
-
-        let data_1 = Bytes::from(vec![6, 7, 8, 9, 10]);
+        let data_1 = Bytes::from(vec![1, 2, 3, 4, 5]);
 
         assert_deliver_snapshot_accepted(
             receiver.process_request(create_deliver_snapshot_request_header(
                 SNAPSHOT_1,
                 data_1.len() as u64,
                 metadata.encode_to_vec().into(),
-                data_1.slice(0..4),
+                data_1.clone(),
             )),
             SNAPSHOT_1,
             0,
         );
 
+        assert_snapshot_success(receiver.try_complete(), data_1, metadata.clone());
+
+        let data_2 = Bytes::from(vec![6, 7, 8, 9, 10]);
+
+        assert_deliver_snapshot_accepted(
+            receiver.process_request(create_deliver_snapshot_request_header(
+                SNAPSHOT_2,
+                data_2.len() as u64,
+                metadata.encode_to_vec().into(),
+                data_2.slice(0..4),
+            )),
+            SNAPSHOT_2,
+            0,
+        );
+
         assert_deliver_snapshot_accepted(
             receiver.process_request(create_deliver_snapshot_request_chunk(
-                SNAPSHOT_1,
+                SNAPSHOT_2,
                 1,
-                data_1.slice(4..5),
+                data_2.slice(4..5),
             )),
-            SNAPSHOT_1,
+            SNAPSHOT_2,
             1,
         );
 
-        assert_snapshot_success(receiver.try_complete(), data_1, metadata);
+        assert_snapshot_success(receiver.try_complete(), data_2, metadata);
     }
 
     #[test]
     fn test_snapshot_receiver_rejected_wrong_snapshot() {
         let mut receiver = DefaultSnapshotReceiver::new(create_logger(1));
 
-        let metadata = create_raft_snapshot_metadata(
-            1,
-            2,
-            RaftConfigState {
-                ..Default::default()
-            },
-        );
+        let metadata = default_snapshot_metadata();
 
-        let data_0 = Bytes::from(vec![1, 2, 3, 4, 5]);
+        let data_1 = Bytes::from(vec![1, 2, 3, 4, 5]);
 
         assert_deliver_snapshot_accepted(
             receiver.process_request(create_deliver_snapshot_request_header(
-                SNAPSHOT_0,
-                data_0.len() as u64,
+                SNAPSHOT_1,
+                data_1.len() as u64,
                 metadata.encode_to_vec().into(),
-                data_0.slice(0..3),
+                data_1.slice(0..3),
             )),
-            SNAPSHOT_0,
+            SNAPSHOT_1,
             0,
         );
 
         assert_deliver_snapshot_rejected(
             receiver.process_request(create_deliver_snapshot_request_chunk(
-                SNAPSHOT_1,
+                SNAPSHOT_2,
                 1,
-                data_0.slice(4..5),
+                data_1.slice(4..5),
             )),
-            SNAPSHOT_1,
+            SNAPSHOT_2,
             1,
         );
     }
@@ -1072,34 +1340,28 @@ mod test {
     fn test_snapshot_receiver_rejected_out_of_bounds() {
         let mut receiver = DefaultSnapshotReceiver::new(create_logger(1));
 
-        let metadata = create_raft_snapshot_metadata(
-            1,
-            2,
-            RaftConfigState {
-                ..Default::default()
-            },
-        );
+        let metadata = default_snapshot_metadata();
 
-        let data_0 = Bytes::from(vec![1, 2, 3, 4, 5]);
+        let data_1 = Bytes::from(vec![1, 2, 3, 4, 5]);
 
         assert_deliver_snapshot_accepted(
             receiver.process_request(create_deliver_snapshot_request_header(
-                SNAPSHOT_0,
-                data_0.len() as u64,
+                SNAPSHOT_1,
+                data_1.len() as u64,
                 metadata.encode_to_vec().into(),
-                data_0.slice(0..3),
+                data_1.slice(0..3),
             )),
-            SNAPSHOT_0,
+            SNAPSHOT_1,
             0,
         );
 
         assert_deliver_snapshot_rejected(
             receiver.process_request(create_deliver_snapshot_request_chunk(
-                SNAPSHOT_0,
+                SNAPSHOT_1,
                 1,
-                data_0.slice(2..5),
+                data_1.slice(2..5),
             )),
-            SNAPSHOT_0,
+            SNAPSHOT_1,
             1,
         );
     }
@@ -1108,24 +1370,533 @@ mod test {
     fn test_snapshot_receiver_rejected_no_header() {
         let mut receiver = DefaultSnapshotReceiver::new(create_logger(1));
 
-        let metadata = create_raft_snapshot_metadata(
-            1,
-            2,
-            RaftConfigState {
-                ..Default::default()
-            },
-        );
+        let metadata = default_snapshot_metadata();
 
-        let data_0 = Bytes::from(vec![1, 2, 3, 4, 5]);
+        let data_1 = Bytes::from(vec![1, 2, 3, 4, 5]);
 
         assert_deliver_snapshot_rejected(
             receiver.process_request(create_deliver_snapshot_request_chunk(
-                SNAPSHOT_0,
+                SNAPSHOT_1,
                 1,
-                data_0.slice(2..5),
+                data_1.slice(2..5),
             )),
-            SNAPSHOT_0,
+            SNAPSHOT_1,
             1,
         );
+    }
+
+    const DELIVERY_1: u64 = 1;
+    const DELIVERY_2: u64 = 2;
+
+    const CHUNK_0: u32 = 0;
+    const CHUNK_1: u32 = 1;
+    const CHUNK_2: u32 = 2;
+
+    fn configure_deliver_snapshot_request(
+        mut request: DeliverSnapshotRequest,
+        sender_replica_id: u64,
+        recipient_replica_id: u64,
+        delivery_id: u64,
+    ) -> DeliverSnapshotRequest {
+        request.sender_replica_id = sender_replica_id;
+        request.recipient_replica_id = recipient_replica_id;
+        request.delivery_id = delivery_id;
+
+        request
+    }
+
+    fn create_deliver_snapshot_response(
+        sender_replica_id: u64,
+        recipient_replica_id: u64,
+        snapshot_id: u32,
+        chunk_index: u32,
+        status: DeliverSnapshotStatus,
+    ) -> DeliverSnapshotResponse {
+        let payload = deliver_snapshot_response::Payload {
+            snapshot_id,
+            chunk_index,
+            status: status.into(),
+        };
+
+        DeliverSnapshotResponse {
+            recipient_replica_id,
+            sender_replica_id,
+            payload_contents: payload.encode_to_vec().into(),
+        }
+    }
+
+    fn default_sender_config() -> SnapshotSenderConfig {
+        SnapshotSenderConfig {
+            chunk_size: 3,
+            max_pending_chunks: 1,
+        }
+    }
+
+    fn create_sender(config: SnapshotSenderConfig) -> DefaultSnapshotSender {
+        let config = default_sender_config();
+
+        let mut sender = DefaultSnapshotSender::new(create_logger(1), config);
+        sender.init(REPLICA_0);
+
+        sender
+    }
+
+    #[test]
+    fn test_snapshot_sender_reset_cancellations() {
+        let mut sender = create_sender(default_sender_config());
+
+        let metadata = default_snapshot_metadata();
+
+        let data_1 = Bytes::from(vec![1, 2, 3]);
+
+        sender.start(
+            REPLICA_1,
+            create_raft_snapshot(metadata.clone(), data_1.clone()),
+        );
+
+        assert_eq!(
+            sender.reset(),
+            vec![(REPLICA_1, RaftSnapshotStatus::Failure)]
+        );
+    }
+
+    #[test]
+    fn test_snapshot_sender_complete_nothing() {
+        let mut sender = create_sender(default_sender_config());
+
+        assert_eq!(sender.try_complete(), None);
+    }
+
+    #[test]
+    fn test_snapshot_sender_next_request_nothing() {
+        let mut sender = create_sender(default_sender_config());
+
+        assert_eq!(sender.next_request(), None);
+    }
+
+    #[test]
+    fn test_snapshot_sender_single_chunk_success() {
+        let mut sender = create_sender(default_sender_config());
+
+        let metadata = default_snapshot_metadata();
+
+        let data_1 = Bytes::from(vec![1, 2, 3]);
+
+        sender.start(
+            REPLICA_1,
+            create_raft_snapshot(metadata.clone(), data_1.clone()),
+        );
+
+        assert_eq!(sender.try_complete(), None);
+
+        assert_eq!(
+            sender.next_request(),
+            Some(configure_deliver_snapshot_request(
+                create_deliver_snapshot_request_header(
+                    SNAPSHOT_1,
+                    data_1.len() as u64,
+                    metadata.encode_to_vec().into(),
+                    data_1.clone(),
+                ),
+                REPLICA_0,
+                REPLICA_1,
+                DELIVERY_1
+            ))
+        );
+
+        sender.process_response(
+            REPLICA_1,
+            DELIVERY_1,
+            Ok(create_deliver_snapshot_response(
+                REPLICA_0,
+                REPLICA_1,
+                SNAPSHOT_1,
+                CHUNK_0,
+                DeliverSnapshotStatus::SnapshotStatusAccepted,
+            )),
+        );
+
+        assert_eq!(
+            sender.try_complete(),
+            Some((REPLICA_1, RaftSnapshotStatus::Finish))
+        );
+    }
+
+    #[test]
+    fn test_snapshot_sender_multiple_chunks_success() {
+        let config = default_sender_config();
+        let mut sender = create_sender(config.clone());
+
+        let metadata = default_snapshot_metadata();
+
+        let data_1 = Bytes::from(vec![1, 2, 3, 4, 5]);
+
+        sender.start(
+            REPLICA_1,
+            create_raft_snapshot(metadata.clone(), data_1.clone()),
+        );
+
+        assert_eq!(sender.try_complete(), None);
+
+        assert_eq!(
+            sender.next_request(),
+            Some(configure_deliver_snapshot_request(
+                create_deliver_snapshot_request_header(
+                    SNAPSHOT_1,
+                    data_1.len() as u64,
+                    metadata.encode_to_vec().into(),
+                    data_1.slice(0..config.chunk_size as usize),
+                ),
+                REPLICA_0,
+                REPLICA_1,
+                DELIVERY_1
+            ))
+        );
+
+        assert_eq!(sender.next_request(), None);
+
+        sender.process_response(
+            REPLICA_1,
+            DELIVERY_1,
+            Ok(create_deliver_snapshot_response(
+                REPLICA_0,
+                REPLICA_1,
+                SNAPSHOT_1,
+                CHUNK_0,
+                DeliverSnapshotStatus::SnapshotStatusAccepted,
+            )),
+        );
+
+        assert_eq!(
+            sender.next_request(),
+            Some(configure_deliver_snapshot_request(
+                create_deliver_snapshot_request_chunk(
+                    SNAPSHOT_1,
+                    CHUNK_1,
+                    data_1.slice(config.chunk_size as usize..),
+                ),
+                REPLICA_0,
+                REPLICA_1,
+                DELIVERY_2
+            ))
+        );
+
+        sender.process_response(
+            REPLICA_1,
+            DELIVERY_2,
+            Ok(create_deliver_snapshot_response(
+                REPLICA_0,
+                REPLICA_1,
+                SNAPSHOT_1,
+                CHUNK_1,
+                DeliverSnapshotStatus::SnapshotStatusAccepted,
+            )),
+        );
+
+        assert_eq!(
+            sender.try_complete(),
+            Some((REPLICA_1, RaftSnapshotStatus::Finish))
+        );
+    }
+
+    #[test]
+    fn test_snapshot_sender_response_rejection() {
+        let mut sender = create_sender(default_sender_config());
+
+        let metadata = default_snapshot_metadata();
+
+        let data_1 = Bytes::from(vec![1, 2, 3]);
+
+        sender.start(
+            REPLICA_1,
+            create_raft_snapshot(metadata.clone(), data_1.clone()),
+        );
+
+        assert_eq!(sender.try_complete(), None);
+
+        assert_eq!(
+            sender.next_request(),
+            Some(configure_deliver_snapshot_request(
+                create_deliver_snapshot_request_header(
+                    SNAPSHOT_1,
+                    data_1.len() as u64,
+                    metadata.encode_to_vec().into(),
+                    data_1.clone(),
+                ),
+                REPLICA_0,
+                REPLICA_1,
+                DELIVERY_1
+            ))
+        );
+
+        sender.process_response(
+            REPLICA_1,
+            DELIVERY_1,
+            Ok(create_deliver_snapshot_response(
+                REPLICA_0,
+                REPLICA_1,
+                SNAPSHOT_1,
+                CHUNK_0,
+                DeliverSnapshotStatus::SnapshotStatusRejected,
+            )),
+        );
+
+        assert_eq!(
+            sender.try_complete(),
+            Some((REPLICA_1, RaftSnapshotStatus::Failure))
+        );
+    }
+
+    #[test]
+    fn test_snapshot_sender_response_failure() {
+        let mut sender = create_sender(default_sender_config());
+
+        let metadata = default_snapshot_metadata();
+
+        let data_1 = Bytes::from(vec![1, 2, 3]);
+
+        sender.start(
+            REPLICA_1,
+            create_raft_snapshot(metadata.clone(), data_1.clone()),
+        );
+
+        assert_eq!(sender.try_complete(), None);
+
+        assert_eq!(
+            sender.next_request(),
+            Some(configure_deliver_snapshot_request(
+                create_deliver_snapshot_request_header(
+                    SNAPSHOT_1,
+                    data_1.len() as u64,
+                    metadata.encode_to_vec().into(),
+                    data_1.clone(),
+                ),
+                REPLICA_0,
+                REPLICA_1,
+                DELIVERY_1
+            ))
+        );
+
+        sender.process_response(REPLICA_1, DELIVERY_1, Err(SnapshotError::FailedDelivery));
+
+        assert_eq!(
+            sender.try_complete(),
+            Some((REPLICA_1, RaftSnapshotStatus::Failure))
+        );
+    }
+
+    #[test]
+    fn test_snapshot_sender_response_wrong_snapshot() {
+        let config = default_sender_config();
+        let mut sender = create_sender(config.clone());
+
+        let metadata = default_snapshot_metadata();
+
+        let data_1 = Bytes::from(vec![1, 2, 3, 4, 5]);
+
+        sender.start(
+            REPLICA_1,
+            create_raft_snapshot(metadata.clone(), data_1.clone()),
+        );
+
+        assert_eq!(
+            sender.next_request(),
+            Some(configure_deliver_snapshot_request(
+                create_deliver_snapshot_request_header(
+                    SNAPSHOT_1,
+                    data_1.len() as u64,
+                    metadata.encode_to_vec().into(),
+                    data_1.slice(0..config.chunk_size as usize),
+                ),
+                REPLICA_0,
+                REPLICA_1,
+                DELIVERY_1
+            ))
+        );
+
+        sender.process_response(
+            REPLICA_1,
+            DELIVERY_1,
+            Ok(create_deliver_snapshot_response(
+                REPLICA_0,
+                REPLICA_1,
+                SNAPSHOT_2,
+                CHUNK_0,
+                DeliverSnapshotStatus::SnapshotStatusRejected,
+            )),
+        );
+
+        assert_eq!(sender.try_complete(), None);
+    }
+
+    #[test]
+    fn test_snapshot_sender_response_wrong_chunk_index() {
+        let config = default_sender_config();
+        let mut sender = create_sender(config.clone());
+
+        let metadata = default_snapshot_metadata();
+
+        let data_1 = Bytes::from(vec![1, 2, 3, 4, 5]);
+
+        sender.start(
+            REPLICA_1,
+            create_raft_snapshot(metadata.clone(), data_1.clone()),
+        );
+
+        assert_eq!(
+            sender.next_request(),
+            Some(configure_deliver_snapshot_request(
+                create_deliver_snapshot_request_header(
+                    SNAPSHOT_1,
+                    data_1.len() as u64,
+                    metadata.encode_to_vec().into(),
+                    data_1.slice(0..config.chunk_size as usize),
+                ),
+                REPLICA_0,
+                REPLICA_1,
+                DELIVERY_1
+            ))
+        );
+
+        sender.process_response(
+            REPLICA_1,
+            DELIVERY_1,
+            Ok(create_deliver_snapshot_response(
+                REPLICA_0,
+                REPLICA_1,
+                SNAPSHOT_1,
+                CHUNK_1,
+                DeliverSnapshotStatus::SnapshotStatusRejected,
+            )),
+        );
+
+        assert_eq!(
+            sender.try_complete(),
+            Some((REPLICA_1, RaftSnapshotStatus::Failure))
+        );
+    }
+
+    #[test]
+    fn test_snapshot_sender_response_out_of_bounds_chunk_index() {
+        let config = default_sender_config();
+        let mut sender = create_sender(config.clone());
+
+        let metadata = default_snapshot_metadata();
+
+        let data_1 = Bytes::from(vec![1, 2, 3, 4, 5]);
+
+        sender.start(
+            REPLICA_1,
+            create_raft_snapshot(metadata.clone(), data_1.clone()),
+        );
+
+        assert_eq!(
+            sender.next_request(),
+            Some(configure_deliver_snapshot_request(
+                create_deliver_snapshot_request_header(
+                    SNAPSHOT_1,
+                    data_1.len() as u64,
+                    metadata.encode_to_vec().into(),
+                    data_1.slice(0..config.chunk_size as usize),
+                ),
+                REPLICA_0,
+                REPLICA_1,
+                DELIVERY_1
+            ))
+        );
+
+        sender.process_response(
+            REPLICA_1,
+            DELIVERY_1,
+            Ok(create_deliver_snapshot_response(
+                REPLICA_0,
+                REPLICA_1,
+                SNAPSHOT_1,
+                CHUNK_2,
+                DeliverSnapshotStatus::SnapshotStatusRejected,
+            )),
+        );
+
+        assert_eq!(
+            sender.try_complete(),
+            Some((REPLICA_1, RaftSnapshotStatus::Failure))
+        );
+    }
+
+    #[test]
+    fn test_snapshot_sender_receiver_end_to_end() {
+        let data = Bytes::from(vec![1, 2, 3, 4, 5, 6, 7, 8, 9]);
+        let metadata = default_snapshot_metadata();
+
+        for chunk_size in 1..data.len() {
+            for max_pending_chunks in 1..data.len() {
+                let config = SnapshotSenderConfig {
+                    chunk_size: chunk_size as u64,
+                    max_pending_chunks: max_pending_chunks as u32,
+                };
+                let mut sender = create_sender(config.clone());
+                sender.init(REPLICA_0);
+
+                let mut receivers: HashMap<u64, DefaultSnapshotReceiver> = HashMap::new();
+                for replica_id in vec![REPLICA_1, REPLICA_2] {
+                    receivers.insert(
+                        replica_id,
+                        DefaultSnapshotReceiver::new(create_logger(replica_id)),
+                    );
+                    sender.start(
+                        replica_id,
+                        create_raft_snapshot(metadata.clone(), data.clone()),
+                    );
+                }
+
+                let mut sender_completed: HashSet<u64> = HashSet::new();
+                let mut receiver_completed: HashSet<u64> = HashSet::new();
+
+                while sender_completed.len() < 2 && receiver_completed.len() < 2 {
+                    let mut requests: Vec<DeliverSnapshotRequest> = Vec::new();
+                    loop {
+                        let request = sender.next_request();
+                        if request.is_none() {
+                            break;
+                        }
+                        requests.push(request.unwrap());
+                    }
+
+                    let mut responses: Vec<(u64, DeliverSnapshotResponse)> = Vec::new();
+                    for request in requests {
+                        if let Some(receiver) = receivers.get_mut(&request.recipient_replica_id) {
+                            responses
+                                .push((request.delivery_id, receiver.process_request(request)));
+                        }
+                    }
+
+                    for (delivery_id, response) in responses {
+                        let sender_replica_id = response.sender_replica_id;
+                        sender.process_response(sender_replica_id, delivery_id, Ok(response));
+                    }
+
+                    loop {
+                        let result = sender.try_complete();
+                        if result.is_none() {
+                            break;
+                        }
+                        let (replica_id, status) = result.unwrap();
+                        sender_completed.insert(replica_id);
+                        assert_eq!(status, RaftSnapshotStatus::Finish);
+                    }
+
+                    for (replica_id, receiver) in &mut receivers {
+                        if let Some(Ok(snapshot)) = receiver.try_complete() {
+                            receiver_completed.insert(*replica_id);
+                            assert_eq!(data, snapshot.data);
+                            assert_eq!(Some(metadata.clone()), snapshot.metadata);
+                        }
+                    }
+                }
+
+                assert!(sender_completed.contains(&REPLICA_1));
+                assert!(sender_completed.contains(&REPLICA_2));
+            }
+        }
     }
 }

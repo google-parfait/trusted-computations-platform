@@ -206,6 +206,8 @@ mock! {
     }
 
     impl SnapshotSenderImpl for SnapshotSender {
+        fn init(&mut self, replica_id: u64);
+
         fn set_instant(&mut self, instant: u64);
 
         fn reset(&mut self) -> Vec<(u64, RaftSnapshotStatus)>;

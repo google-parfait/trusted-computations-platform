@@ -262,13 +262,13 @@ message DeliverSnapshotRequest {
     // header the receiver must reset the state and start transfer anew.
     message Header {
       // The total size of the snapshot.
-      uint64 size = 1;
+      uint64 snapshot_size = 1;
       // The snapshot metadata.
-      bytes metadata = 3;
+      bytes snapshot_metadata = 3;
       // The contents of the first snapshot chunk. Identified by index of zero
       // in the response. All chunks but the last will be of the same size equal
       // to the size this first chunk.
-      bytes contents = 4;
+      bytes chunk_contents = 4;
     }
 
     // Continues incremental snapshot transfer. The sender
@@ -277,9 +277,9 @@ message DeliverSnapshotRequest {
     message Chunk {
       // The index of the chunk of the snapshot. Must be positive as the
       // very first chunk with index zero is sent with the header.
-      uint32 index = 1;
+      uint32 chunk_index = 1;
       // The contents of the chunk.
-      bytes contents = 2;
+      bytes chunk_contents = 2;
     }
   }
 }
@@ -297,7 +297,7 @@ message DeliverSnapshotResponse {
     // The id of the snapshot being received.
     uint32 snapshot_id = 1;
     // The index of the chunk of the snapshot. Zero for the header.
-    uint32 index = 2;
+    uint32 chunk_index = 2;
     // The status of the snapshot chunk status.
     DeliverSnapshotStatus status = 3;
   }
