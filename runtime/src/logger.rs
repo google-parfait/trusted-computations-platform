@@ -133,7 +133,7 @@ pub mod log {
         }
     }
 
-    pub fn create_remote_logger(node_id: u64) -> (Logger, Box<dyn DrainOutput>) {
+    pub fn create_remote_logger() -> (Logger, Box<dyn DrainOutput>) {
         let term_drain =
             slog_term::FullFormat::new(slog_term::PlainDecorator::new(std::io::stdout())).build();
 
@@ -142,20 +142,14 @@ pub mod log {
 
         let drain = Duplicate::new(remote_drain, term_drain).fuse();
         (
-            Logger::root(
-                Mutex::new(drain).fuse(),
-                o!("type" => format!("raft #{}", node_id)),
-            ),
+            Logger::root(Mutex::new(drain).fuse(), o!()),
             Box::new(remote_drain_core),
         )
     }
 
-    pub fn create_logger(node_id: u64) -> Logger {
+    pub fn create_logger() -> Logger {
         let plain = slog_term::PlainSyncDecorator::new(std::io::stdout());
-        Logger::root(
-            slog_term::FullFormat::new(plain).build().fuse(),
-            o!("raft_id" => format!("{}", node_id)),
-        )
+        Logger::root(slog_term::FullFormat::new(plain).build().fuse(), o!())
     }
 }
 
@@ -220,20 +214,17 @@ pub mod log {
         }
     }
 
-    pub fn create_remote_logger(node_id: u64) -> (Logger, Box<dyn DrainOutput>) {
+    pub fn create_remote_logger() -> (Logger, Box<dyn DrainOutput>) {
         let remote_drain_core = RemoteDrainCore::new();
         let remote_drain = RemoteDrain::new(remote_drain_core.clone());
 
         (
-            Logger::root(
-                Fuse(remote_drain),
-                o!("type" => format!("raft #{}", node_id)),
-            ),
+            Logger::root(Fuse(remote_drain), o!()),
             Box::new(remote_drain_core),
         )
     }
 
-    pub fn create_logger(_node_id: u64) -> Logger {
+    pub fn create_logger() -> Logger {
         Logger::root(Discard, o!())
     }
 }

@@ -14,8 +14,10 @@
 
 #![allow(clippy::useless_conversion)]
 use crate::consensus::{Raft, RaftState, Store};
-use crate::logger::{log::create_remote_logger, DrainOutput};
+use crate::logger::log::create_remote_logger;
+use crate::logger::DrainOutput;
 use crate::model::{Actor, ActorContext, CommandOutcome, EventOutcome};
+use crate::snapshot::{SnapshotProcessor, SnapshotReceiver, SnapshotSender};
 use crate::util::raft::{
     create_entry, create_entry_id, create_raft_config_change, deserialize_config_change,
     deserialize_raft_message, get_config_state, get_metadata, serialize_raft_message,
@@ -162,7 +164,7 @@ impl RaftProgress {
     }
 }
 
-pub struct Driver<R: Raft, S: Store, A: Actor> {
+pub struct Driver<R: Raft, S: Store, P: SnapshotProcessor, A: Actor> {
     core: Rc<RefCell<DriverContextCore>>,
     driver_config: DriverConfig,
     driver_state: DriverState,
@@ -174,15 +176,16 @@ pub struct Driver<R: Raft, S: Store, A: Actor> {
     logger_output: Box<dyn DrainOutput>,
     raft: R,
     store: Box<dyn FnMut(Logger, u64) -> S>,
+    snapshot: P,
     actor: A,
     raft_state: RaftState,
     prev_raft_state: RaftState,
     raft_progress: RaftProgress,
 }
 
-impl<R: Raft<S = S>, S: Store + RaftStorage, A: Actor> Driver<R, S, A> {
-    pub fn new(raft: R, store: Box<dyn FnMut(Logger, u64) -> S>, actor: A) -> Self {
-        let (logger, logger_output) = create_remote_logger(0);
+impl<R: Raft<S = S>, S: Store + RaftStorage, P: SnapshotProcessor, A: Actor> Driver<R, S, P, A> {
+    pub fn new(raft: R, store: Box<dyn FnMut(Logger, u64) -> S>, snapshot: P, actor: A) -> Self {
+        let (logger, logger_output) = create_remote_logger();
         Driver {
             core: Rc::new(RefCell::new(DriverContextCore::new())),
             driver_config: DriverConfig {
@@ -198,6 +201,7 @@ impl<R: Raft<S = S>, S: Store + RaftStorage, A: Actor> Driver<R, S, A> {
             logger_output,
             raft,
             store,
+            snapshot,
             actor,
             raft_state: RaftState::new(),
             prev_raft_state: RaftState::new(),
@@ -238,7 +242,10 @@ impl<R: Raft<S = S>, S: Store + RaftStorage, A: Actor> Driver<R, S, A> {
                 &config,
                 snapshot,
                 leader,
-                (self.store)(self.logger.clone(), self.driver_config.snapshot_count),
+                (self.store)(
+                    self.logger.new(o!("type" => "store")),
+                    self.driver_config.snapshot_count,
+                ),
                 &self.logger,
             )
             .map_err(|e| {
@@ -617,7 +624,7 @@ impl<R: Raft<S = S>, S: Store + RaftStorage, A: Actor> Driver<R, S, A> {
 
     fn initialize_driver(&mut self, _app_signing_key: Vec<u8>, replica_id_hint: u64) {
         self.id = replica_id_hint;
-        (self.logger, self.logger_output) = create_remote_logger(self.id);
+        self.logger = self.logger.new(o!("raft_id" => self.id));
     }
 
     fn process_start_node(
@@ -651,6 +658,10 @@ impl<R: Raft<S = S>, S: Store + RaftStorage, A: Actor> Driver<R, S, A> {
             // Failure to save actor snapshot must lead to termination.
             PalError::Actor
         })?;
+
+        // Initialize snapshot processor.
+        self.snapshot
+            .init(self.logger.new(o!("type" => "snapshot")), self.id);
 
         self.initilize_raft_node(
             &start_replica_request.raft_config,
@@ -825,7 +836,9 @@ impl<R: Raft<S = S>, S: Store + RaftStorage, A: Actor> Driver<R, S, A> {
     }
 }
 
-impl<R: Raft<S = S>, S: Store + RaftStorage, A: Actor> Application for Driver<R, S, A> {
+impl<R: Raft<S = S>, S: Store + RaftStorage, P: SnapshotProcessor, A: Actor> Application
+    for Driver<R, S, P, A>
+{
     /// Handles messages received from the trusted host.
     fn receive_message(
         &mut self,
@@ -904,6 +917,8 @@ mod test {
 
     use crate::{
         consensus::{RaftLightReady, RaftReady},
+        mock::{MockSnapshotReceiver, MockSnapshotSender},
+        snapshot::DefaultSnapshotProcessor,
         util::raft::{
             create_empty_raft_entry, create_raft_config_state, create_raft_entry,
             create_raft_message, create_raft_snapshot, create_raft_snapshot_metadata,
@@ -911,7 +926,7 @@ mod test {
         },
     };
 
-    use self::mockall::predicate::eq;
+    use self::mockall::predicate::{always, eq};
     use super::*;
     use mock::{MockActor, MockAttestation, MockHost, MockRaft, MockStore};
     use model::ActorError;
@@ -1310,6 +1325,41 @@ mod test {
         }
     }
 
+    struct SnapshotBuilder {
+        mock_snapshot_sender: MockSnapshotSender,
+        mock_snapshot_receiver: MockSnapshotReceiver,
+    }
+
+    impl SnapshotBuilder {
+        fn new() -> SnapshotBuilder {
+            SnapshotBuilder {
+                mock_snapshot_sender: MockSnapshotSender::new(),
+                mock_snapshot_receiver: MockSnapshotReceiver::new(),
+            }
+        }
+
+        fn expect_init(mut self, replica_id: u64) -> SnapshotBuilder {
+            self.mock_snapshot_sender
+                .expect_init()
+                .with(always(), eq(replica_id))
+                .return_const(());
+
+            self.mock_snapshot_receiver
+                .expect_init()
+                .with(always(), eq(replica_id))
+                .return_const(());
+
+            self
+        }
+
+        fn take(mut self) -> (MockSnapshotSender, MockSnapshotReceiver) {
+            (
+                mem::take(&mut self.mock_snapshot_sender),
+                mem::take(&mut self.mock_snapshot_receiver),
+            )
+        }
+    }
+
     struct DriverBuilder {
         mock_actor: MockActor,
     }
@@ -1395,13 +1445,23 @@ mod test {
         fn take(
             &mut self,
             mut raft_builder: RaftBuilder,
-        ) -> Driver<MockRaft<MockStore>, MockStore, MockActor> {
+            mut snapshot_builder: SnapshotBuilder,
+        ) -> Driver<MockRaft<MockStore>, MockStore, DefaultSnapshotProcessor, MockActor> {
             let (mock_store, mut mock_raft) = raft_builder.take();
             let mock_actor = mem::take(&mut self.mock_actor);
+            let (mock_snapshot_sender, mock_snapshot_receiver) = snapshot_builder.take();
 
             mock_raft.expect_mut_store().return_var(mock_store);
 
-            Driver::new(mock_raft, Box::new(|_, _| MockStore::new()), mock_actor)
+            Driver::new(
+                mock_raft,
+                Box::new(|_, _| MockStore::new()),
+                DefaultSnapshotProcessor::new(
+                    Box::new(mock_snapshot_sender),
+                    Box::new(mock_snapshot_receiver),
+                ),
+                mock_actor,
+            )
         }
     }
 
@@ -1436,10 +1496,12 @@ mod test {
             .expect_should_snapshot(false)
             .expect_state(&create_default_raft_state(node_id));
 
+        let snapshot_builder = SnapshotBuilder::new().expect_init(node_id);
+
         let mut driver = DriverBuilder::new()
             .expect_on_init(|_| Ok(()))
             .expect_on_save_snapshot(Ok(init_snapshot.clone()))
-            .take(raft_builder);
+            .take(raft_builder, snapshot_builder);
 
         assert_eq!(
             Ok(()),
@@ -1475,11 +1537,13 @@ mod test {
             .expect_should_snapshot(false)
             .expect_state(&create_default_raft_state(node_id));
 
+        let snapshot_builder = SnapshotBuilder::new().expect_init(node_id);
+
         let mut driver = DriverBuilder::new()
             .expect_on_init(|_| Ok(()))
             .expect_on_save_snapshot(Ok(init_snapshot.clone()))
             .expect_on_shutdown(|| ())
-            .take(raft_builder);
+            .take(raft_builder, snapshot_builder);
 
         assert_eq!(
             Ok(()),
@@ -1545,6 +1609,8 @@ mod test {
             .expect_should_snapshot(false)
             .expect_state(&create_default_raft_state(node_id));
 
+        let snapshot_builder = SnapshotBuilder::new().expect_init(node_id);
+
         let mut driver = DriverBuilder::new()
             .expect_on_init(|_| Ok(()))
             .expect_on_save_snapshot(Ok(init_snapshot.clone()))
@@ -1556,7 +1622,7 @@ mod test {
                 proposal_contents_2.clone(),
                 Ok(CommandOutcome::Response(proposal_result_2.into())),
             )
-            .take(raft_builder);
+            .take(raft_builder, snapshot_builder);
 
         assert_eq!(
             Ok(()),
@@ -1614,6 +1680,8 @@ mod test {
             .expect_should_snapshot(false)
             .expect_state(&create_default_raft_state(node_id));
 
+        let snapshot_builder = SnapshotBuilder::new().expect_init(node_id);
+
         let exp_self_config = self_config.clone();
         let mut driver = DriverBuilder::new()
             .expect_on_init(move |mut actor_context| {
@@ -1625,7 +1693,7 @@ mod test {
                 Ok(())
             })
             .expect_on_save_snapshot(Ok(init_snapshot.clone()))
-            .take(raft_builder);
+            .take(raft_builder, snapshot_builder);
 
         assert_eq!(
             Ok(()),
@@ -1668,10 +1736,12 @@ mod test {
                 |_| Ok(()),
             );
 
+        let snapshot_builder = SnapshotBuilder::new().expect_init(node_id);
+
         let mut driver = DriverBuilder::new()
             .expect_on_init(|_| Ok(()))
             .expect_on_save_snapshot(Ok(init_snapshot.clone()))
-            .take(raft_builder);
+            .take(raft_builder, snapshot_builder);
 
         assert_eq!(
             Ok(()),
@@ -1726,10 +1796,12 @@ mod test {
                 |_| Ok(()),
             );
 
+        let snapshot_builder = SnapshotBuilder::new().expect_init(node_id);
+
         let mut driver = DriverBuilder::new()
             .expect_on_init(|_| Ok(()))
             .expect_on_save_snapshot(Ok(init_snapshot.clone()))
-            .take(raft_builder);
+            .take(raft_builder, snapshot_builder);
 
         assert_eq!(
             Ok(()),
@@ -1839,6 +1911,8 @@ mod test {
             .expect_append_entries(entries, |_| Ok(()))
             .expect_apply_config_change(&config_change, Ok(config_state.clone()));
 
+        let snapshot_builder = SnapshotBuilder::new().expect_init(node_id);
+
         let mut driver = DriverBuilder::new()
             .expect_on_init(|_| Ok(()))
             .expect_on_save_snapshot(Ok(init_snapshot.clone()))
@@ -1848,7 +1922,7 @@ mod test {
                 entry.entry_contents.into(),
                 Ok(EventOutcome::Response(proposal_result.into())),
             )
-            .take(raft_builder);
+            .take(raft_builder, snapshot_builder);
 
         assert_eq!(
             Ok(()),
@@ -1892,10 +1966,12 @@ mod test {
             .expect_state(&raft_state)
             .expect_make_tick();
 
+        let snapshot_builder = SnapshotBuilder::new().expect_init(node_id);
+
         let mut driver = DriverBuilder::new()
             .expect_on_init(|_| Ok(()))
             .expect_on_save_snapshot(Ok(init_snapshot.clone()))
-            .take(raft_builder);
+            .take(raft_builder, snapshot_builder);
 
         assert_eq!(
             Ok(()),
@@ -1942,10 +2018,12 @@ mod test {
             .expect_state(&raft_state)
             .expect_make_step(&message_a, Ok(()));
 
+        let snapshot_builder = SnapshotBuilder::new().expect_init(node_id);
+
         let mut driver = DriverBuilder::new()
             .expect_on_init(|_| Ok(()))
             .expect_on_save_snapshot(Ok(init_snapshot.clone()))
-            .take(raft_builder);
+            .take(raft_builder, snapshot_builder);
 
         assert_eq!(
             Ok(()),
@@ -2031,6 +2109,8 @@ mod test {
             .expect_advance_ready(ready.number(), light_ready)
             .expect_advance_apply();
 
+        let snapshot_builder = SnapshotBuilder::new().expect_init(node_id);
+
         let mut driver = DriverBuilder::new()
             .expect_on_init(|_| Ok(()))
             .expect_on_save_snapshot(Ok(init_snapshot.clone()))
@@ -2040,7 +2120,7 @@ mod test {
                 Ok(EventOutcome::Response(proposal_result.into())),
             )
             .expect_on_save_snapshot(Ok(snapshot.clone()))
-            .take(raft_builder);
+            .take(raft_builder, snapshot_builder);
 
         assert_eq!(
             Ok(()),

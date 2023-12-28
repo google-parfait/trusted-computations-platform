@@ -12,6 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
+use crate::logger::log::create_logger;
 use crate::StdError;
 use alloc::boxed::Box;
 use alloc::vec::Vec;
@@ -68,7 +69,7 @@ pub trait SnapshotProcessor {
     /// id is used to determine the role of the processor whenever the cluster
     /// state changes. For example, when replica is a follower it plays the receiver
     /// role, whereas then replica is a leader it plays the sender role.
-    fn init(&mut self, replica_id: u64);
+    fn init(&mut self, logger: Logger, replica_id: u64);
 
     /// Processes change in the cluster state.
     ///
@@ -202,7 +203,7 @@ enum ReplicaState {
 }
 
 pub trait SnapshotSenderImpl: SnapshotSender {
-    fn init(&mut self, replica_id: u64);
+    fn init(&mut self, logger: Logger, replica_id: u64);
 
     fn set_instant(&mut self, instant: u64);
 
@@ -210,6 +211,8 @@ pub trait SnapshotSenderImpl: SnapshotSender {
 }
 
 pub trait SnapshotReceiverImpl: SnapshotReceiver {
+    fn init(&mut self, logger: Logger, replica_id: u64);
+
     fn set_instant(&mut self, instant: u64);
 
     fn reset(&mut self);
@@ -225,7 +228,10 @@ pub struct DefaultSnapshotProcessor {
 }
 
 impl DefaultSnapshotProcessor {
-    fn new(sender: Box<dyn SnapshotSenderImpl>, receiver: Box<dyn SnapshotReceiverImpl>) -> Self {
+    pub fn new(
+        sender: Box<dyn SnapshotSenderImpl>,
+        receiver: Box<dyn SnapshotReceiverImpl>,
+    ) -> Self {
         Self {
             replica_id: 0,
             leader_id: 0,
@@ -238,11 +244,12 @@ impl DefaultSnapshotProcessor {
 }
 
 impl SnapshotProcessor for DefaultSnapshotProcessor {
-    fn init(&mut self, replica_id: u64) {
+    fn init(&mut self, logger: Logger, replica_id: u64) {
         assert_eq!(self.state, ReplicaState::Unknown);
 
         self.replica_id = replica_id;
-        self.sender.init(self.replica_id);
+        self.sender.init(logger.clone(), self.replica_id);
+        self.receiver.init(logger.clone(), self.replica_id);
         // Always start as a follower.
         self.state = ReplicaState::Follower;
     }
@@ -485,8 +492,8 @@ impl SnapshotSenderState {
 
 #[derive(Clone, Copy, Debug)]
 pub struct SnapshotSenderConfig {
-    chunk_size: u64,
-    max_pending_chunks: u32,
+    pub chunk_size: u64,
+    pub max_pending_chunks: u32,
 }
 
 pub struct DefaultSnapshotSender {
@@ -500,9 +507,9 @@ pub struct DefaultSnapshotSender {
 }
 
 impl DefaultSnapshotSender {
-    pub fn new(logger: Logger, config: SnapshotSenderConfig) -> DefaultSnapshotSender {
+    pub fn new(config: SnapshotSenderConfig) -> DefaultSnapshotSender {
         DefaultSnapshotSender {
-            logger,
+            logger: create_logger(),
             config,
             replica_id: 0,
             instant: 0,
@@ -514,7 +521,8 @@ impl DefaultSnapshotSender {
 }
 
 impl SnapshotSenderImpl for DefaultSnapshotSender {
-    fn init(&mut self, replica_id: u64) {
+    fn init(&mut self, logger: Logger, replica_id: u64) {
+        self.logger = logger;
         self.replica_id = replica_id;
     }
 
@@ -691,14 +699,16 @@ impl ReceiverState {
 
 pub struct DefaultSnapshotReceiver {
     logger: Logger,
+    replica_id: u64,
     instant: u64,
     state: Option<ReceiverState>,
 }
 
 impl DefaultSnapshotReceiver {
-    pub fn new(logger: Logger) -> DefaultSnapshotReceiver {
+    pub fn new() -> DefaultSnapshotReceiver {
         DefaultSnapshotReceiver {
-            logger,
+            logger: create_logger(),
+            replica_id: 0,
             instant: 0,
             state: None,
         }
@@ -706,6 +716,11 @@ impl DefaultSnapshotReceiver {
 }
 
 impl SnapshotReceiverImpl for DefaultSnapshotReceiver {
+    fn init(&mut self, logger: Logger, replica_id: u64) {
+        self.logger = logger;
+        self.replica_id = replica_id;
+    }
+
     fn set_instant(&mut self, instant: u64) {
         self.instant = instant;
     }
@@ -800,7 +815,7 @@ impl SnapshotReceiver for DefaultSnapshotReceiver {
 mod test {
     extern crate mockall;
 
-    use self::mockall::predicate::eq;
+    use self::mockall::predicate::{always, eq};
     use super::*;
     use alloc::vec;
     use core::matches;
@@ -810,6 +825,7 @@ mod test {
     use crate::util::raft::{create_raft_snapshot, create_raft_snapshot_metadata};
 
     use raft::eraftpb::ConfState as RaftConfigState;
+    use slog::o;
 
     const REPLICA_0: u64 = 0;
     const REPLICA_1: u64 = 1;
@@ -824,14 +840,21 @@ mod test {
         receiver: Box<dyn SnapshotReceiverImpl>,
     ) -> DefaultSnapshotProcessor {
         let mut snapshot_processor = DefaultSnapshotProcessor::new(sender, receiver);
-        snapshot_processor.init(replica_id);
+        snapshot_processor.init(create_logger(), replica_id);
         snapshot_processor
     }
 
     fn expect_sender_init(mock_sender: &mut MockSnapshotSender, replica_id: u64) {
         mock_sender
             .expect_init()
-            .with(eq(replica_id))
+            .with(always(), eq(replica_id))
+            .return_const(());
+    }
+
+    fn expect_receiver_init(mock_receiver: &mut MockSnapshotReceiver, replica_id: u64) {
+        mock_receiver
+            .expect_init()
+            .with(always(), eq(replica_id))
             .return_const(());
     }
 
@@ -868,6 +891,7 @@ mod test {
         expect_sender_init(&mut mock_sender, replica_id);
 
         let mut mock_receiver = Box::new(MockSnapshotReceiver::new());
+        expect_receiver_init(&mut mock_receiver, replica_id);
         expect_receiver_set_instant(&mut mock_receiver, instant);
 
         let mut snapshot_processor =
@@ -887,6 +911,7 @@ mod test {
         expect_sender_init(&mut mock_sender, replica_id);
 
         let mut mock_receiver = Box::new(MockSnapshotReceiver::new());
+        expect_receiver_init(&mut mock_receiver, replica_id);
         expect_receiver_reset(&mut mock_receiver);
         expect_receiver_set_instant(&mut mock_receiver, instant);
 
@@ -916,6 +941,7 @@ mod test {
         expect_sender_init(&mut mock_sender, replica_id);
 
         let mut mock_receiver = Box::new(MockSnapshotReceiver::new());
+        expect_receiver_init(&mut mock_receiver, replica_id);
         expect_receiver_reset(&mut mock_receiver);
         expect_receiver_set_instant(&mut mock_receiver, instant);
 
@@ -946,6 +972,7 @@ mod test {
         expect_sender_set_instant(&mut mock_sender, instant);
 
         let mut mock_receiver = Box::new(MockSnapshotReceiver::new());
+        expect_receiver_init(&mut mock_receiver, replica_id);
         expect_receiver_reset(&mut mock_receiver);
 
         let mut snapshot_processor =
@@ -973,6 +1000,7 @@ mod test {
         expect_sender_reset(&mut mock_sender, cancellations.clone());
 
         let mut mock_receiver = Box::new(MockSnapshotReceiver::new());
+        expect_receiver_init(&mut mock_receiver, replica_id);
         expect_receiver_reset(&mut mock_receiver);
         expect_receiver_set_instant(&mut mock_receiver, instant);
 
@@ -1014,6 +1042,7 @@ mod test {
         expect_sender_set_instant(&mut mock_sender, instant);
 
         let mut mock_receiver = Box::new(MockSnapshotReceiver::new());
+        expect_receiver_init(&mut mock_receiver, replica_id);
         expect_receiver_reset(&mut mock_receiver);
 
         let mut snapshot_processor =
@@ -1154,7 +1183,7 @@ mod test {
 
     #[test]
     fn test_snapshot_receiver_single_chunk() {
-        let mut receiver = DefaultSnapshotReceiver::new(create_logger(1));
+        let mut receiver = DefaultSnapshotReceiver::new();
 
         let metadata = default_snapshot_metadata();
 
@@ -1176,7 +1205,7 @@ mod test {
 
     #[test]
     fn test_snapshot_receiver_multiple_chunks() {
-        let mut receiver = DefaultSnapshotReceiver::new(create_logger(1));
+        let mut receiver = DefaultSnapshotReceiver::new();
 
         let metadata = default_snapshot_metadata();
 
@@ -1212,7 +1241,7 @@ mod test {
 
     #[test]
     fn test_snapshot_receiver_reset_new_snapshot() {
-        let mut receiver = DefaultSnapshotReceiver::new(create_logger(1));
+        let mut receiver = DefaultSnapshotReceiver::new();
 
         let metadata = default_snapshot_metadata();
 
@@ -1261,7 +1290,7 @@ mod test {
 
     #[test]
     fn test_snapshot_receiver_consequitive_snapshots() {
-        let mut receiver = DefaultSnapshotReceiver::new(create_logger(1));
+        let mut receiver = DefaultSnapshotReceiver::new();
 
         let metadata = default_snapshot_metadata();
 
@@ -1308,7 +1337,7 @@ mod test {
 
     #[test]
     fn test_snapshot_receiver_rejected_wrong_snapshot() {
-        let mut receiver = DefaultSnapshotReceiver::new(create_logger(1));
+        let mut receiver = DefaultSnapshotReceiver::new();
 
         let metadata = default_snapshot_metadata();
 
@@ -1338,7 +1367,7 @@ mod test {
 
     #[test]
     fn test_snapshot_receiver_rejected_out_of_bounds() {
-        let mut receiver = DefaultSnapshotReceiver::new(create_logger(1));
+        let mut receiver = DefaultSnapshotReceiver::new();
 
         let metadata = default_snapshot_metadata();
 
@@ -1368,7 +1397,7 @@ mod test {
 
     #[test]
     fn test_snapshot_receiver_rejected_no_header() {
-        let mut receiver = DefaultSnapshotReceiver::new(create_logger(1));
+        let mut receiver = DefaultSnapshotReceiver::new();
 
         let metadata = default_snapshot_metadata();
 
@@ -1435,8 +1464,8 @@ mod test {
     fn create_sender(config: SnapshotSenderConfig) -> DefaultSnapshotSender {
         let config = default_sender_config();
 
-        let mut sender = DefaultSnapshotSender::new(create_logger(1), config);
-        sender.init(REPLICA_0);
+        let mut sender = DefaultSnapshotSender::new(config);
+        sender.init(create_logger(), REPLICA_0);
 
         sender
     }
@@ -1835,14 +1864,11 @@ mod test {
                     max_pending_chunks: max_pending_chunks as u32,
                 };
                 let mut sender = create_sender(config.clone());
-                sender.init(REPLICA_0);
+                sender.init(create_logger(), REPLICA_0);
 
                 let mut receivers: HashMap<u64, DefaultSnapshotReceiver> = HashMap::new();
                 for replica_id in vec![REPLICA_1, REPLICA_2] {
-                    receivers.insert(
-                        replica_id,
-                        DefaultSnapshotReceiver::new(create_logger(replica_id)),
-                    );
+                    receivers.insert(replica_id, DefaultSnapshotReceiver::new());
                     sender.start(
                         replica_id,
                         create_raft_snapshot(metadata.clone(), data.clone()),

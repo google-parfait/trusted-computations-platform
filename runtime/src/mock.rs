@@ -189,6 +189,8 @@ mock! {
     }
 
     impl SnapshotReceiverImpl for SnapshotReceiver {
+        fn init(&mut self, logger: Logger, replica_id: u64);
+
         fn set_instant(&mut self, instant: u64);
 
         fn reset(&mut self);
@@ -206,7 +208,7 @@ mock! {
     }
 
     impl SnapshotSenderImpl for SnapshotSender {
-        fn init(&mut self, replica_id: u64);
+        fn init(&mut self, logger: Logger, replica_id: u64);
 
         fn set_instant(&mut self, instant: u64);
 

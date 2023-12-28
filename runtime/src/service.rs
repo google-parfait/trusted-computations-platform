@@ -17,9 +17,14 @@ extern crate micro_rpc;
 extern crate prost;
 extern crate tcp_proto;
 
+use crate::logger::log::create_logger;
 use crate::model::Actor;
 use crate::platform::{Application, Attestation, Host, PalError};
-use crate::{consensus::RaftSimple, driver::Driver, storage::MemoryStorage};
+use crate::snapshot::{DefaultSnapshotReceiver, DefaultSnapshotSender, SnapshotSenderConfig};
+use crate::{
+    consensus::RaftSimple, driver::Driver, snapshot::DefaultSnapshotProcessor,
+    storage::MemoryStorage,
+};
 use alloc::boxed::Box;
 use alloc::vec::Vec;
 use core::mem;
@@ -83,13 +88,24 @@ impl Attestation for ApplicationAttestation {
 }
 
 pub struct ApplicationService<A: Actor> {
-    driver: Driver<RaftSimple<MemoryStorage>, MemoryStorage, A>,
+    driver: Driver<RaftSimple<MemoryStorage>, MemoryStorage, DefaultSnapshotProcessor, A>,
 }
 
 impl<A: Actor> ApplicationService<A> {
     pub fn new(actor: A) -> ApplicationService<A> {
         ApplicationService {
-            driver: Driver::new(RaftSimple::new(), Box::new(MemoryStorage::new), actor),
+            driver: Driver::new(
+                RaftSimple::new(),
+                Box::new(MemoryStorage::new),
+                DefaultSnapshotProcessor::new(
+                    Box::new(DefaultSnapshotSender::new(SnapshotSenderConfig {
+                        chunk_size: 1024 * 1024,
+                        max_pending_chunks: 2,
+                    })),
+                    Box::new(DefaultSnapshotReceiver::new()),
+                ),
+                actor,
+            ),
         }
     }
 }

@@ -37,6 +37,9 @@ use tcp_runtime::driver::Driver;
 use tcp_runtime::examples::CounterActor;
 use tcp_runtime::logger::log::create_logger;
 use tcp_runtime::platform::{Application, Attestation, Host, PalError};
+use tcp_runtime::snapshot::{
+    DefaultSnapshotProcessor, DefaultSnapshotReceiver, DefaultSnapshotSender, SnapshotSenderConfig,
+};
 use tcp_runtime::{consensus::RaftSimple, storage::MemoryStorage};
 
 struct FakeCluster {
@@ -56,7 +59,7 @@ impl FakeCluster {
             platforms: HashMap::new(),
             leader_id: 0,
             pull_messages: Vec::new(),
-            logger: create_logger(0),
+            logger: create_logger(),
         }
     }
 
@@ -295,7 +298,9 @@ struct FakePlatform {
     id: u64,
     messages_in: Vec<InMessage>,
     instant: u64,
-    driver: RefCell<Driver<RaftSimple<MemoryStorage>, MemoryStorage, CounterActor>>,
+    driver: RefCell<
+        Driver<RaftSimple<MemoryStorage>, MemoryStorage, DefaultSnapshotProcessor, CounterActor>,
+    >,
     host: RefCell<FakeHost>,
 }
 
@@ -308,6 +313,13 @@ impl FakePlatform {
             driver: RefCell::new(Driver::new(
                 RaftSimple::new(),
                 Box::new(MemoryStorage::new),
+                DefaultSnapshotProcessor::new(
+                    Box::new(DefaultSnapshotSender::new(SnapshotSenderConfig {
+                        chunk_size: 1024,
+                        max_pending_chunks: 2,
+                    })),
+                    Box::new(DefaultSnapshotReceiver::new()),
+                ),
                 CounterActor::new(),
             )),
             host: RefCell::new(FakeHost::new()),
