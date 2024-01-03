@@ -152,22 +152,40 @@ impl FakeCluster {
     }
 
     fn advance(&mut self) {
-        let mut messages_in: Vec<DeliverMessage> = Vec::new();
+        let mut messages_in: Vec<(u64, in_message::Msg)> = Vec::new();
         for (_, platform) in &mut self.platforms {
             let messages_out = platform.take_messages_out();
             for message_out in messages_out {
-                if let Some(out_message::Msg::DeliverMessage(deliver_message)) = message_out.msg {
-                    messages_in.push(deliver_message);
-                } else {
-                    self.pull_messages.push(message_out);
+                match message_out.msg {
+                    Some(out_message::Msg::DeliverMessage(deliver_message)) => {
+                        messages_in.push((
+                            deliver_message.recipient_replica_id,
+                            in_message::Msg::DeliverMessage(deliver_message),
+                        ));
+                    }
+                    Some(out_message::Msg::DeliverSnapshotRequest(deliver_snapshot_request)) => {
+                        messages_in.push((
+                            deliver_snapshot_request.recipient_replica_id,
+                            in_message::Msg::DeliverSnapshotRequest(deliver_snapshot_request),
+                        ));
+                    }
+                    Some(out_message::Msg::DeliverSnapshotResponse(deliver_snapshot_response)) => {
+                        messages_in.push((
+                            deliver_snapshot_response.recipient_replica_id,
+                            in_message::Msg::DeliverSnapshotResponse(deliver_snapshot_response),
+                        ));
+                    }
+                    _ => {
+                        self.pull_messages.push(message_out);
+                    }
                 }
             }
         }
 
-        for message_in in messages_in {
-            if let Some(platform) = self.platforms.get_mut(&message_in.recipient_replica_id) {
+        for (recipient_replica_id, message_in) in messages_in {
+            if let Some(platform) = self.platforms.get_mut(&recipient_replica_id) {
                 platform.append_meessage_in(InMessage {
-                    msg: Some(in_message::Msg::DeliverMessage(message_in)),
+                    msg: Some(message_in),
                 });
             }
         }
@@ -315,7 +333,7 @@ impl FakePlatform {
                 Box::new(MemoryStorage::new),
                 DefaultSnapshotProcessor::new(
                     Box::new(DefaultSnapshotSender::new(SnapshotSenderConfig {
-                        chunk_size: 1024,
+                        chunk_size: 20,
                         max_pending_chunks: 2,
                     })),
                     Box::new(DefaultSnapshotReceiver::new()),

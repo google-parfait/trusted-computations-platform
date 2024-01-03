@@ -199,7 +199,7 @@ mock! {
     impl SnapshotReceiver for SnapshotReceiver {
         fn process_request(&mut self, request: DeliverSnapshotRequest) -> DeliverSnapshotResponse;
 
-        fn try_complete(&mut self) -> Option<Result<RaftSnapshot, SnapshotError>>;
+        fn try_complete(&mut self) -> Option<Result<(u64, RaftSnapshot), SnapshotError>>;
     }
 }
 
@@ -226,6 +226,8 @@ mock! {
             delivery_id: u64,
             response: Result<DeliverSnapshotResponse, SnapshotError>,
         );
+
+        fn process_unexpected_request(&mut self, request: DeliverSnapshotRequest) -> DeliverSnapshotResponse;
 
         fn try_complete(&mut self) -> Option<(u64, RaftSnapshotStatus)>;
     }

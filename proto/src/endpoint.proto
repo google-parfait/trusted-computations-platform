@@ -238,7 +238,7 @@ message DeliverSnapshotRequest {
   // The replica id of the sender.
   uint64 sender_replica_id = 2;
   // The unique id that is used to correlate attempt to deliver part of the
-  // snapshot and failure.
+  // snapshot and failure or response.
   uint64 delivery_id = 3;
   // The serialized payload message, potentially encrypted.
   bytes payload_contents = 4;
@@ -290,6 +290,9 @@ message DeliverSnapshotResponse {
   uint64 recipient_replica_id = 1;
   // The replica id of the sender.
   uint64 sender_replica_id = 2;
+  // The unique id that is used to correlate attempt to deliver part of the
+  // snapshot and failure or response.
+  uint64 delivery_id = 3;
   // The serialized payload message, potentially encrypted.
   bytes payload_contents = 4;
 
@@ -316,6 +319,8 @@ enum DeliverSnapshotStatus {
 
 // Indicates that snapshot delivery has failed.
 message DeliverSnapshotFailure {
+  // The replica id of the sender.
+  uint64 sender_replica_id = 2;
   // Contains the failed delivery id.
   uint64 delivery_id = 1;
 }

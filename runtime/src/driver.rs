@@ -17,10 +17,13 @@ use crate::consensus::{Raft, RaftState, Store};
 use crate::logger::log::create_remote_logger;
 use crate::logger::DrainOutput;
 use crate::model::{Actor, ActorContext, CommandOutcome, EventOutcome};
-use crate::snapshot::{SnapshotProcessor, SnapshotReceiver, SnapshotSender};
+use crate::snapshot::{
+    SnapshotError, SnapshotProcessor, SnapshotProcessorRole, SnapshotReceiver, SnapshotSender,
+};
 use crate::util::raft::{
-    create_entry, create_entry_id, create_raft_config_change, deserialize_config_change,
-    deserialize_raft_message, get_config_state, get_metadata, serialize_raft_message,
+    create_entry, create_entry_id, create_raft_config_change, create_raft_message,
+    deserialize_config_change, deserialize_raft_message, get_config_state, get_metadata,
+    serialize_raft_message,
 };
 use alloc::boxed::Box;
 use alloc::rc::Rc;
@@ -34,7 +37,8 @@ use prost::{bytes::Bytes, Message};
 use raft::{
     eraftpb::ConfChangeType as RaftConfigChangeType, eraftpb::ConfState as RaftConfigState,
     eraftpb::Entry as RaftEntry, eraftpb::EntryType as RaftEntryType,
-    eraftpb::Message as RaftMessage, eraftpb::Snapshot as RaftSnapshot, Error as RaftError,
+    eraftpb::Message as RaftMessage, eraftpb::MessageType as RaftMessageType,
+    eraftpb::Snapshot as RaftSnapshot, Error as RaftError, SnapshotStatus as RaftSnapshotStatus,
     Storage as RaftStorage,
 };
 use slog::{debug, error, info, o, warn, Logger};
@@ -169,6 +173,7 @@ pub struct Driver<R: Raft, S: Store, P: SnapshotProcessor, A: Actor> {
     driver_config: DriverConfig,
     driver_state: DriverState,
     messages: Vec<OutMessage>,
+    snapshots: Vec<RaftMessage>,
     id: u64,
     instant: u64,
     tick_instant: u64,
@@ -194,6 +199,7 @@ impl<R: Raft<S = S>, S: Store + RaftStorage, P: SnapshotProcessor, A: Actor> Dri
             },
             driver_state: DriverState::Created,
             messages: Vec::new(),
+            snapshots: Vec::new(),
             id: 0,
             instant: 0,
             tick_instant: 0,
@@ -442,6 +448,12 @@ impl<R: Raft<S = S>, S: Store + RaftStorage, P: SnapshotProcessor, A: Actor> Dri
 
     fn send_raft_messages(&mut self, raft_messages: Vec<RaftMessage>) -> Result<(), PalError> {
         for raft_message in raft_messages {
+            // Stash messages that contain snapshot to be sent out by the snapshot processor.
+            if raft_message.msg_type == RaftMessageType::MsgSnapshot.into() {
+                self.stash_snapsho(raft_message);
+                continue;
+            }
+
             // Buffer message to be sent out.
             self.stash_message(out_message::Msg::DeliverMessage(DeliverMessage {
                 recipient_replica_id: raft_message.to,
@@ -594,6 +606,10 @@ impl<R: Raft<S = S>, S: Store + RaftStorage, P: SnapshotProcessor, A: Actor> Dri
 
         self.prev_raft_state = self.raft_state.clone();
 
+        // Update snapshot processor with the latest raft cluster state.
+        self.update_snapshot_cluster_change();
+
+        // Sent out cluster check message with the update.
         self.stash_message(out_message::Msg::CheckCluster(CheckClusterResponse {
             leader_replica_id: self.raft_state.leader_replica_id,
             leader_term: self.raft_state.leader_term,
@@ -751,6 +767,159 @@ impl<R: Raft<S = S>, S: Store + RaftStorage, P: SnapshotProcessor, A: Actor> Dri
         )
     }
 
+    fn update_snapshot_cluster_change(&mut self) {
+        if self.driver_state != DriverState::Started {
+            return;
+        }
+
+        // Notify snapshot processor of the latest state of the cluster.
+        let snapshot_updates = self.snapshot.process_cluster_change(
+            self.raft_state.leader_replica_id,
+            self.raft_state.leader_term,
+            &self.raft_state.committed_cluster_config,
+        );
+
+        // Notify raft if any of the snapshot transfers has been cancelled.
+        for (replica_id, snapshot_status) in snapshot_updates {
+            self.raft.report_snapshot(replica_id, snapshot_status);
+        }
+    }
+
+    fn process_deliver_snapshot_request(
+        &mut self,
+        deliver_snapshot_request: DeliverSnapshotRequest,
+    ) -> Result<(), PalError> {
+        let deliver_snapshot_response = match self.snapshot.mut_processor(self.instant) {
+            SnapshotProcessorRole::Sender(sender) => {
+                warn!(
+                    self.logger,
+                    "Node is in snapshot sending mode, unexpected deliver snapshot request"
+                );
+                sender.process_unexpected_request(deliver_snapshot_request)
+            }
+            SnapshotProcessorRole::Receiver(receiver) => {
+                receiver.process_request(deliver_snapshot_request)
+            }
+        };
+        self.stash_message(out_message::Msg::DeliverSnapshotResponse(
+            deliver_snapshot_response,
+        ));
+
+        Ok(())
+    }
+
+    fn process_deliver_snapshot_response(
+        &mut self,
+        deliver_snapshot_response: DeliverSnapshotResponse,
+    ) -> Result<(), PalError> {
+        match self.snapshot.mut_processor(self.instant) {
+            SnapshotProcessorRole::Sender(sender) => sender.process_response(
+                deliver_snapshot_response.sender_replica_id,
+                deliver_snapshot_response.delivery_id,
+                Ok(deliver_snapshot_response),
+            ),
+            SnapshotProcessorRole::Receiver(receiver) => {
+                warn!(
+                    self.logger,
+                    "Node is snapshot receiving mode, unexpected deliver snapshot response"
+                );
+            }
+        }
+
+        Ok(())
+    }
+
+    fn process_deliver_snapshot_failure(
+        &mut self,
+        deliver_snapshot_failure: DeliverSnapshotFailure,
+    ) -> Result<(), PalError> {
+        match self.snapshot.mut_processor(self.instant) {
+            SnapshotProcessorRole::Sender(sender) => sender.process_response(
+                deliver_snapshot_failure.sender_replica_id,
+                deliver_snapshot_failure.delivery_id,
+                Err(SnapshotError::FailedDelivery),
+            ),
+            SnapshotProcessorRole::Receiver(receiver) => {
+                warn!(
+                    self.logger,
+                    "Node is snapshot receiving mode, unexpected deliver snapshot failure"
+                );
+            }
+        }
+
+        Ok(())
+    }
+
+    fn process_snapshot_progress(&mut self) {
+        if self.driver_state != DriverState::Started {
+            return;
+        }
+
+        match self.snapshot.mut_processor(self.instant) {
+            SnapshotProcessorRole::Sender(sender) => {
+                if let Some((replica_id, snapshot_status)) = sender.try_complete() {
+                    self.raft.report_snapshot(replica_id, snapshot_status);
+                }
+            }
+            SnapshotProcessorRole::Receiver(receiver) => {
+                if let Some(snapshot_result) = receiver.try_complete() {
+                    match snapshot_result {
+                        Ok((sender_replica_id, snapshot)) => {
+                            let mut snapshot_message = create_raft_message(
+                                sender_replica_id,
+                                self.id,
+                                RaftMessageType::MsgSnapshot,
+                            );
+                            snapshot_message.set_snapshot(snapshot);
+                            if let Err(e) = self.raft.make_step(snapshot_message) {
+                                error!(self.logger, "Raft experienced unrecoverable error: {}", e);
+                            }
+                        }
+                        Err(e) => {
+                            warn!(
+                                self.logger,
+                                "Snapshot has been received but failed validation"
+                            );
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    fn process_snapshot_sending(&mut self) {
+        let snapshot_messages = mem::take(&mut self.snapshots);
+
+        let mut out_messages: Vec<out_message::Msg> = Vec::new();
+        match self.snapshot.mut_processor(self.instant) {
+            SnapshotProcessorRole::Sender(sender) => {
+                for snapshot_message in snapshot_messages {
+                    sender.start(snapshot_message.to, snapshot_message.snapshot.unwrap());
+                }
+
+                while let Some(request) = sender.next_request() {
+                    out_messages.push(out_message::Msg::DeliverSnapshotRequest(request));
+                }
+            }
+            SnapshotProcessorRole::Receiver(receiver) => {
+                if !snapshot_messages.is_empty() {
+                    warn!(
+                        self.logger,
+                        "Unexpected snapshot sending while playing receiver role"
+                    );
+                    for snapshot_message in snapshot_messages {
+                        self.raft
+                            .report_snapshot(snapshot_message.to, RaftSnapshotStatus::Failure);
+                    }
+                }
+            }
+        }
+
+        for out_message in out_messages {
+            self.stash_message(out_message);
+        }
+    }
+
     fn process_execute_proposal(
         &mut self,
         execute_proposal_request: &mut ExecuteProposalRequest,
@@ -807,7 +976,7 @@ impl<R: Raft<S = S>, S: Store + RaftStorage, P: SnapshotProcessor, A: Actor> Dri
         }
     }
 
-    fn process_state_machine(&mut self) -> Result<Vec<OutMessage>, PalError> {
+    fn process_state_machine(&mut self) -> Result<(), PalError> {
         if self.raft.initialized() {
             // Advance Raft internal state.
             self.advance_raft()?;
@@ -821,8 +990,12 @@ impl<R: Raft<S = S>, S: Store + RaftStorage, P: SnapshotProcessor, A: Actor> Dri
 
         self.stash_log_entries();
 
+        Ok(())
+    }
+
+    fn take_out_messages(&mut self) -> Vec<OutMessage> {
         // Take messages to be sent out.
-        Ok(mem::take(&mut self.messages))
+        mem::take(&mut self.messages)
     }
 
     fn stash_log_entries(&mut self) {
@@ -833,6 +1006,10 @@ impl<R: Raft<S = S>, S: Store + RaftStorage, P: SnapshotProcessor, A: Actor> Dri
 
     fn stash_message(&mut self, message: out_message::Msg) {
         self.messages.push(OutMessage { msg: Some(message) });
+    }
+
+    fn stash_snapsho(&mut self, snapshot_message: RaftMessage) {
+        self.snapshots.push(snapshot_message);
     }
 }
 
@@ -877,17 +1054,14 @@ impl<R: Raft<S = S>, S: Store + RaftStorage, P: SnapshotProcessor, A: Actor> App
                         in_message::Msg::DeliverMessage(ref deliver_message) => {
                             self.process_deliver_message(deliver_message)
                         }
-                        in_message::Msg::DeliverSnapshotRequest(ref _deliver_snapshot_request) => {
-                            // Ignore for now
-                            Ok(())
+                        in_message::Msg::DeliverSnapshotRequest(deliver_snapshot_request) => {
+                            self.process_deliver_snapshot_request(deliver_snapshot_request)
                         }
-                        in_message::Msg::DeliverSnapshotResponse(ref _deliver_snapshot_request) => {
-                            // Ignore for now
-                            Ok(())
+                        in_message::Msg::DeliverSnapshotResponse(deliver_snapshot_response) => {
+                            self.process_deliver_snapshot_response(deliver_snapshot_response)
                         }
-                        in_message::Msg::DeliverSnapshotFailure(ref _deliver_snapshot_failure) => {
-                            // Ignore for now
-                            Ok(())
+                        in_message::Msg::DeliverSnapshotFailure(deliver_snapshot_failure) => {
+                            self.process_deliver_snapshot_failure(deliver_snapshot_failure)
                         }
                         in_message::Msg::ExecuteProposal(ref mut execute_proposal_request) => {
                             self.process_execute_proposal(execute_proposal_request)
@@ -897,14 +1071,20 @@ impl<R: Raft<S = S>, S: Store + RaftStorage, P: SnapshotProcessor, A: Actor> App
             };
         }
 
+        // Process snapshot transfer completion or failures.
+        self.process_snapshot_progress();
+
         // Collect outpus like messages, log entries and proposals from the actor.
         self.process_actor_output();
 
         // Advance the Raft and collect results messages.
-        let out_messages = self.process_state_machine()?;
+        self.process_state_machine()?;
+
+        // Initiate if needed snapshot sending.
+        self.process_snapshot_sending();
 
         // Send messages to Raft peers and consumers through the trusted host.
-        host.send_messages(out_messages);
+        host.send_messages(self.take_out_messages());
 
         Ok(())
     }
@@ -937,8 +1117,13 @@ mod test {
     fn create_actor_config() -> Vec<u8> {
         Vec::new()
     }
+
+    const REPLICA_1: u64 = 1;
+    const REPLICA_2: u64 = 2;
+    const REPLICA_3: u64 = 3;
+
     fn create_default_parameters() -> (u64, u64, RaftConfig) {
-        let node_id = 1;
+        let node_id = REPLICA_1;
         let instant = 100;
 
         let raft_config = RaftConfig {
@@ -957,6 +1142,15 @@ mod test {
             leader_replica_id: node_id,
             leader_term: 1,
             committed_cluster_config: vec![node_id],
+            has_pending_change: false,
+        }
+    }
+
+    fn create_raft_state(leader_replica_id: u64, committed_cluster_config: Vec<u64>) -> RaftState {
+        RaftState {
+            leader_replica_id,
+            leader_term: 1,
+            committed_cluster_config,
             has_pending_change: false,
         }
     }
@@ -1084,6 +1278,68 @@ mod test {
             expected.iter().all(|e| actual.contains(e)) && expected.len() == actual.len()
         }
     }
+
+    fn wrap_deliver_snapshot_request_out(request: DeliverSnapshotRequest) -> out_message::Msg {
+        out_message::Msg::DeliverSnapshotRequest(request)
+    }
+
+    fn wrap_deliver_snapshot_request_in(request: DeliverSnapshotRequest) -> InMessage {
+        InMessage {
+            msg: Some(in_message::Msg::DeliverSnapshotRequest(request)),
+        }
+    }
+
+    fn create_deliver_snapshot_request(
+        recipient_id: u64,
+        sender_id: u64,
+        delivery_id: u64,
+    ) -> DeliverSnapshotRequest {
+        DeliverSnapshotRequest {
+            recipient_replica_id: recipient_id,
+            sender_replica_id: sender_id,
+            delivery_id,
+            payload_contents: vec![4, 5, 6, 7, 8, 9].into(),
+        }
+    }
+
+    fn wrap_deliver_snapshot_response_out(response: DeliverSnapshotResponse) -> out_message::Msg {
+        out_message::Msg::DeliverSnapshotResponse(response)
+    }
+
+    fn wrap_deliver_snapshot_response_in(response: DeliverSnapshotResponse) -> InMessage {
+        InMessage {
+            msg: Some(in_message::Msg::DeliverSnapshotResponse(response)),
+        }
+    }
+
+    fn create_deliver_snapshot_response(
+        recipient_id: u64,
+        sender_id: u64,
+        delivery_id: u64,
+    ) -> DeliverSnapshotResponse {
+        DeliverSnapshotResponse {
+            recipient_replica_id: recipient_id,
+            sender_replica_id: sender_id,
+            delivery_id,
+            payload_contents: vec![6, 7, 8, 9].into(),
+        }
+    }
+
+    fn wrap_deliver_snapshot_failure_in(failure: DeliverSnapshotFailure) -> InMessage {
+        InMessage {
+            msg: Some(in_message::Msg::DeliverSnapshotFailure(failure)),
+        }
+    }
+
+    fn create_deliver_snapshot_failure(sender_id: u64, delivery_id: u64) -> DeliverSnapshotFailure {
+        DeliverSnapshotFailure {
+            sender_replica_id: sender_id,
+            delivery_id,
+        }
+    }
+
+    const DELIVERY_1: u64 = 1;
+    const DELIVERY_2: u64 = 2;
 
     struct MockHostBuilder {
         mock_attestation: MockAttestation,
@@ -1251,6 +1507,14 @@ mod test {
             self
         }
 
+        fn expect_state_once(mut self, raft_state: &RaftState) -> RaftBuilder {
+            self.mock_raft
+                .expect_state()
+                .once()
+                .return_const(raft_state.clone());
+            self
+        }
+
         fn expect_make_proposal(
             mut self,
             proposal: Entry,
@@ -1317,6 +1581,19 @@ mod test {
             self
         }
 
+        fn expect_report_snapshot(
+            mut self,
+            replica_id: u64,
+            status: RaftSnapshotStatus,
+        ) -> RaftBuilder {
+            self.mock_raft
+                .expect_report_snapshot()
+                .with(eq(replica_id), eq(status))
+                .once()
+                .return_const(());
+            self
+        }
+
         fn take(&mut self) -> (MockStore, MockRaft<MockStore>) {
             (
                 mem::take(&mut self.mock_store),
@@ -1347,6 +1624,106 @@ mod test {
             self.mock_snapshot_receiver
                 .expect_init()
                 .with(always(), eq(replica_id))
+                .return_const(());
+
+            self
+        }
+
+        fn expect_receiver_set_instant(mut self) -> SnapshotBuilder {
+            self.mock_snapshot_receiver
+                .expect_set_instant()
+                .return_const(());
+
+            self
+        }
+
+        fn expect_receiver_try_complete(
+            mut self,
+            result: Option<Result<(u64, RaftSnapshot), SnapshotError>>,
+        ) -> SnapshotBuilder {
+            self.mock_snapshot_receiver
+                .expect_try_complete()
+                .once()
+                .return_once(|| result);
+
+            self
+        }
+
+        fn expect_receiver_process_request(
+            mut self,
+            request: DeliverSnapshotRequest,
+            response: DeliverSnapshotResponse,
+        ) -> SnapshotBuilder {
+            self.mock_snapshot_receiver
+                .expect_process_request()
+                .with(eq(request))
+                .once()
+                .return_const(response);
+
+            self
+        }
+
+        fn expect_receiver_reset(mut self) -> SnapshotBuilder {
+            self.mock_snapshot_receiver.expect_reset().return_const(());
+
+            self
+        }
+
+        fn expect_sender_set_instant(mut self) -> SnapshotBuilder {
+            self.mock_snapshot_sender
+                .expect_set_instant()
+                .return_const(());
+
+            self
+        }
+
+        fn expect_sender_process_response(
+            mut self,
+            sender_id: u64,
+            delivery_id: u64,
+            response: Result<DeliverSnapshotResponse, SnapshotError>,
+        ) -> SnapshotBuilder {
+            self.mock_snapshot_sender
+                .expect_process_response()
+                .with(eq(sender_id), eq(delivery_id), eq(response))
+                .once()
+                .return_const(());
+            self
+        }
+
+        fn expect_sender_next_request(
+            mut self,
+            request: Option<DeliverSnapshotRequest>,
+        ) -> SnapshotBuilder {
+            self.mock_snapshot_sender
+                .expect_next_request()
+                .once()
+                .return_once(|| request);
+
+            self
+        }
+
+        fn expect_sender_try_complete(
+            mut self,
+            result: Option<(u64, RaftSnapshotStatus)>,
+        ) -> SnapshotBuilder {
+            self.mock_snapshot_sender
+                .expect_try_complete()
+                .once()
+                .return_once(move || result);
+
+            self
+        }
+
+        fn expect_sender_start(
+            mut self,
+            recipient_id: u64,
+            snapshot: RaftSnapshot,
+        ) -> SnapshotBuilder {
+            self.mock_snapshot_sender
+                .expect_start()
+                .with(eq(recipient_id), eq(snapshot))
+                .once()
                 .return_const(());
 
             self
@@ -1496,7 +1873,10 @@ mod test {
             .expect_should_snapshot(false)
             .expect_state(&create_default_raft_state(node_id));
 
-        let snapshot_builder = SnapshotBuilder::new().expect_init(node_id);
+        let snapshot_builder = SnapshotBuilder::new()
+            .expect_init(node_id)
+            .expect_receiver_set_instant()
+            .expect_receiver_try_complete(None);
 
         let mut driver = DriverBuilder::new()
             .expect_on_init(|_| Ok(()))
@@ -1537,7 +1917,10 @@ mod test {
             .expect_should_snapshot(false)
             .expect_state(&create_default_raft_state(node_id));
 
-        let snapshot_builder = SnapshotBuilder::new().expect_init(node_id);
+        let snapshot_builder = SnapshotBuilder::new()
+            .expect_init(node_id)
+            .expect_receiver_set_instant()
+            .expect_receiver_try_complete(None);
 
         let mut driver = DriverBuilder::new()
             .expect_on_init(|_| Ok(()))
@@ -1609,7 +1992,12 @@ mod test {
             .expect_should_snapshot(false)
             .expect_state(&create_default_raft_state(node_id));
 
-        let snapshot_builder = SnapshotBuilder::new().expect_init(node_id);
+        let snapshot_builder = SnapshotBuilder::new()
+            .expect_init(node_id)
+            .expect_receiver_set_instant()
+            .expect_receiver_try_complete(None)
+            .expect_receiver_try_complete(None)
+            .expect_receiver_try_complete(None);
 
         let mut driver = DriverBuilder::new()
             .expect_on_init(|_| Ok(()))
@@ -1680,7 +2068,10 @@ mod test {
             .expect_should_snapshot(false)
             .expect_state(&create_default_raft_state(node_id));
 
-        let snapshot_builder = SnapshotBuilder::new().expect_init(node_id);
+        let snapshot_builder = SnapshotBuilder::new()
+            .expect_init(node_id)
+            .expect_receiver_set_instant()
+            .expect_receiver_try_complete(None);
 
         let exp_self_config = self_config.clone();
         let mut driver = DriverBuilder::new()
@@ -1736,7 +2127,11 @@ mod test {
                 |_| Ok(()),
             );
 
-        let snapshot_builder = SnapshotBuilder::new().expect_init(node_id);
+        let snapshot_builder = SnapshotBuilder::new()
+            .expect_init(node_id)
+            .expect_receiver_set_instant()
+            .expect_receiver_try_complete(None)
+            .expect_receiver_try_complete(None);
 
         let mut driver = DriverBuilder::new()
             .expect_on_init(|_| Ok(()))
@@ -1796,7 +2191,14 @@ mod test {
                 |_| Ok(()),
             );
 
-        let snapshot_builder = SnapshotBuilder::new().expect_init(node_id);
+        let snapshot_builder = SnapshotBuilder::new()
+            .expect_init(node_id)
+            .expect_receiver_set_instant()
+            .expect_receiver_try_complete(None)
+            .expect_receiver_try_complete(None)
+            .expect_receiver_reset()
+            .expect_sender_set_instant()
+            .expect_sender_next_request(None);
 
         let mut driver = DriverBuilder::new()
             .expect_on_init(|_| Ok(()))
@@ -1911,7 +2313,11 @@ mod test {
             .expect_append_entries(entries, |_| Ok(()))
             .expect_apply_config_change(&config_change, Ok(config_state.clone()));
 
-        let snapshot_builder = SnapshotBuilder::new().expect_init(node_id);
+        let snapshot_builder = SnapshotBuilder::new()
+            .expect_init(node_id)
+            .expect_receiver_set_instant()
+            .expect_receiver_try_complete(None)
+            .expect_receiver_try_complete(None);
 
         let mut driver = DriverBuilder::new()
             .expect_on_init(|_| Ok(()))
@@ -1966,7 +2372,11 @@ mod test {
             .expect_state(&raft_state)
             .expect_make_tick();
 
-        let snapshot_builder = SnapshotBuilder::new().expect_init(node_id);
+        let snapshot_builder = SnapshotBuilder::new()
+            .expect_init(node_id)
+            .expect_receiver_set_instant()
+            .expect_receiver_try_complete(None)
+            .expect_receiver_try_complete(None);
 
         let mut driver = DriverBuilder::new()
             .expect_on_init(|_| Ok(()))
@@ -2018,7 +2428,11 @@ mod test {
             .expect_state(&raft_state)
             .expect_make_step(&message_a, Ok(()));
 
-        let snapshot_builder = SnapshotBuilder::new().expect_init(node_id);
+        let snapshot_builder = SnapshotBuilder::new()
+            .expect_init(node_id)
+            .expect_receiver_set_instant()
+            .expect_receiver_try_complete(None)
+            .expect_receiver_try_complete(None);
 
         let mut driver = DriverBuilder::new()
             .expect_on_init(|_| Ok(()))
@@ -2109,7 +2523,11 @@ mod test {
             .expect_advance_ready(ready.number(), light_ready)
             .expect_advance_apply();
 
-        let snapshot_builder = SnapshotBuilder::new().expect_init(node_id);
+        let snapshot_builder = SnapshotBuilder::new()
+            .expect_init(node_id)
+            .expect_receiver_set_instant()
+            .expect_receiver_try_complete(None)
+            .expect_receiver_try_complete(None);
 
         let mut driver = DriverBuilder::new()
             .expect_on_init(|_| Ok(()))
@@ -2139,6 +2557,213 @@ mod test {
         assert_eq!(
             Ok(()),
             driver.receive_message(&mut mock_host, instant + 10, None)
+        );
+    }
+
+    #[test]
+    fn test_driver_snapshot_processor_receiver() {
+        let (node_id, instant, raft_config) = create_default_parameters();
+        let init_snapshot = Bytes::from(vec![2, 3, 4]);
+        let self_config = vec![1, 2, 3];
+
+        let deliver_snapshot_request =
+            create_deliver_snapshot_request(node_id, REPLICA_2, DELIVERY_1);
+        let deliver_snapshot_response =
+            create_deliver_snapshot_response(REPLICA_2, node_id, DELIVERY_1);
+
+        let snapshot = create_raft_snapshot(
+            create_raft_snapshot_metadata(1, 1, create_raft_config_state(vec![node_id, REPLICA_2])),
+            vec![1, 2, 3].into(),
+        );
+
+        let mut snapshot_message =
+            create_raft_message(REPLICA_2, node_id, RaftMessageType::MsgSnapshot);
+        snapshot_message.snapshot = Some(snapshot.clone());
+
+        let mut mock_host = MockHostBuilder::new()
+            .expect_public_signing_key(vec![])
+            .expect_send_messages(vec![create_start_replica_response(node_id)])
+            .expect_send_messages(vec![wrap_deliver_snapshot_response_out(
+                deliver_snapshot_response.clone(),
+            )])
+            .take();
+
+        let raft_builder = RaftBuilder::new()
+            .expect_leader(false)
+            .expect_init(|_, _, _, _, _, _| Ok(()))
+            .expect_has_ready(false)
+            .expect_has_ready(false)
+            .expect_should_snapshot(false)
+            .expect_state(&create_default_raft_state(node_id))
+            .expect_make_step(&snapshot_message, Ok(()));
+
+        let snapshot_builder = SnapshotBuilder::new()
+            .expect_init(node_id)
+            .expect_receiver_set_instant()
+            .expect_receiver_try_complete(None)
+            .expect_receiver_try_complete(Some(Ok((REPLICA_2, snapshot.clone()))))
+            .expect_receiver_process_request(
+                deliver_snapshot_request.clone(),
+                deliver_snapshot_response.clone(),
+            );
+
+        let exp_self_config = self_config.clone();
+        let mut driver = DriverBuilder::new()
+            .expect_on_init(|_| Ok(()))
+            .expect_on_save_snapshot(Ok(init_snapshot.clone()))
+            .take(raft_builder, snapshot_builder);
+
+        assert_eq!(
+            Ok(()),
+            driver.receive_message(
+                &mut mock_host,
+                instant,
+                Some(create_start_replica_request(
+                    raft_config.clone(),
+                    true,
+                    node_id,
+                    self_config.into()
+                )),
+            )
+        );
+
+        assert_eq!(
+            Ok(()),
+            driver.receive_message(
+                &mut mock_host,
+                instant,
+                Some(wrap_deliver_snapshot_request_in(deliver_snapshot_request)),
+            )
+        );
+    }
+
+    #[test]
+    fn test_driver_snapshot_processor_sender() {
+        let (node_id, instant, raft_config) = create_default_parameters();
+        let init_snapshot = Bytes::from(vec![2, 3, 4]);
+        let self_config = vec![1, 2, 3];
+
+        let follower_raft_state = create_raft_state(0, vec![node_id]);
+        let leader_raft_state = create_raft_state(node_id, vec![node_id]);
+
+        let snapshot = create_raft_snapshot(
+            create_raft_snapshot_metadata(1, 1, create_raft_config_state(vec![node_id, REPLICA_2])),
+            vec![1, 2, 3].into(),
+        );
+
+        let mut snapshot_message =
+            create_raft_message(node_id, REPLICA_2, RaftMessageType::MsgSnapshot);
+        snapshot_message.snapshot = Some(snapshot.clone());
+
+        let ready = RaftReady::new(
+            vec![snapshot_message.clone()],
+            Vec::new(),
+            Vec::new(),
+            Vec::new(),
+            None,
+            RaftSnapshot {
+                ..Default::default()
+            },
+            1,
+        );
+
+        let light_ready = RaftLightReady::default();
+
+        let deliver_snapshot_request =
+            create_deliver_snapshot_request(REPLICA_2, node_id, DELIVERY_1);
+
+        let deliver_snapshot_response =
+            create_deliver_snapshot_response(node_id, REPLICA_2, DELIVERY_1);
+
+        let deliver_snapshot_failure = create_deliver_snapshot_failure(REPLICA_3, DELIVERY_2);
+
+        let mut mock_host = MockHostBuilder::new()
+            .expect_public_signing_key(vec![])
+            .expect_send_messages(vec![
+                create_start_replica_response(node_id),
+                create_check_cluster_response(&leader_raft_state),
+                wrap_deliver_snapshot_request_out(deliver_snapshot_request.clone()),
+            ])
+            .expect_send_messages(vec![])
+            .take();
+
+        let raft_builder = RaftBuilder::new()
+            .expect_leader(true)
+            .expect_init(|_, _, _, _, _, _| Ok(()))
+            .expect_has_ready(true)
+            .expect_has_ready(false)
+            .expect_has_ready(false)
+            .expect_ready(&ready)
+            .expect_advance_ready(ready.number(), light_ready)
+            .expect_advance_apply()
+            .expect_should_snapshot(false)
+            .expect_should_snapshot(false)
+            .expect_state_once(&follower_raft_state)
+            .expect_state_once(&leader_raft_state)
+            .expect_state_once(&leader_raft_state)
+            .expect_state_once(&leader_raft_state)
+            .expect_report_snapshot(REPLICA_2, RaftSnapshotStatus::Finish);
+
+        let snapshot_builder = SnapshotBuilder::new()
+            .expect_init(node_id)
+            .expect_receiver_set_instant()
+            .expect_receiver_try_complete(None)
+            .expect_receiver_reset()
+            .expect_sender_set_instant()
+            .expect_sender_next_request(Some(deliver_snapshot_request.clone()))
+            .expect_sender_next_request(None)
+            .expect_sender_next_request(None)
+            .expect_sender_next_request(None)
+            .expect_sender_start(REPLICA_2, snapshot)
+            .expect_sender_process_response(
+                REPLICA_2,
+                DELIVERY_1,
+                Ok(deliver_snapshot_response.clone()),
+            )
+            .expect_sender_try_complete(Some((REPLICA_2, RaftSnapshotStatus::Finish)))
+            .expect_sender_process_response(
+                REPLICA_3,
+                DELIVERY_2,
+                Err(SnapshotError::FailedDelivery),
+            )
+            .expect_sender_try_complete(None);
+
+        let exp_self_config = self_config.clone();
+        let mut driver = DriverBuilder::new()
+            .expect_on_init(|_| Ok(()))
+            .expect_on_save_snapshot(Ok(init_snapshot.clone()))
+            .take(raft_builder, snapshot_builder);
+
+        assert_eq!(
+            Ok(()),
+            driver.receive_message(
+                &mut mock_host,
+                instant,
+                Some(create_start_replica_request(
+                    raft_config.clone(),
+                    true,
+                    node_id,
+                    self_config.into()
+                )),
+            )
+        );
+
+        assert_eq!(
+            Ok(()),
+            driver.receive_message(
+                &mut mock_host,
+                instant,
+                Some(wrap_deliver_snapshot_response_in(deliver_snapshot_response))
+            )
+        );
+
+        assert_eq!(
+            Ok(()),
+            driver.receive_message(
+                &mut mock_host,
+                instant,
+                Some(wrap_deliver_snapshot_failure_in(deliver_snapshot_failure))
+            )
         );
     }
 }

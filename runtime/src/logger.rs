@@ -61,7 +61,7 @@ fn create_log_message(record: &slog::Record, values: &slog::OwnedKVList) -> LogM
     };
 
     let message = format!(
-        "{:?} {} @ {} : {} / {} / {}",
+        "{:?} {} @ {} : {} / {} // {}",
         record.level(),
         file,
         record.line(),
@@ -135,7 +135,7 @@ pub mod log {
 
     pub fn create_remote_logger() -> (Logger, Box<dyn DrainOutput>) {
         let term_drain =
-            slog_term::FullFormat::new(slog_term::PlainDecorator::new(std::io::stdout())).build();
+            slog_term::FullFormat::new(slog_term::TermDecorator::new().build()).build();
 
         let remote_drain_core = RemoteDrainCore::new();
         let remote_drain = RemoteDrain::new(remote_drain_core.clone());
