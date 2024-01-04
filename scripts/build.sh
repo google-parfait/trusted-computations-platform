@@ -22,7 +22,7 @@ docker run "${DOCKER_RUN_FLAGS[@]}" "${DOCKER_IMAGE_ID}" nix develop --command b
 if [ "$1" == "release" ] || [ "$1" == "debug" ]; then
   mode=$([ "$1" == "release" ] && echo "--$1" || echo "")
   docker run "${DOCKER_RUN_FLAGS[@]}" "${DOCKER_IMAGE_ID}" \
-      cargo build $mode \
+      nix develop --command env cargo build $mode \
           -p tcp_atomic_counter_enclave_app
 
   # KOKORO_ARTIFACTS_DIR may be unset if this script is run manually; it'll
