@@ -27,6 +27,10 @@ message CounterRequest {
   oneof op {
     CounterCompareAndSwapRequest compare_and_swap = 3;
   }
+  // Arbitrary extra context to include with the request.
+  bytes context = 4;
+  // Arbitrary payload to store with the counter if the operation succeeds.
+  bytes payload = 5;
 }
 
 // Represents a request to execute compare and swap operation.

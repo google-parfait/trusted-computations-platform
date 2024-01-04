@@ -252,6 +252,7 @@ impl FakeCluster {
                         new_value,
                     },
                 )),
+                ..Default::default()
             },
         )
     }
