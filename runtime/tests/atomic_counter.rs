@@ -39,7 +39,7 @@ use tcp_runtime::examples::CounterActor;
 use tcp_runtime::logger::log::create_logger;
 use tcp_runtime::platform::{Application, Attestation, Host, PalError};
 use tcp_runtime::snapshot::{
-    DefaultSnapshotProcessor, DefaultSnapshotReceiver, DefaultSnapshotSender, SnapshotSenderConfig,
+    DefaultSnapshotProcessor, DefaultSnapshotReceiver, DefaultSnapshotSender,
 };
 use tcp_runtime::{consensus::RaftSimple, storage::MemoryStorage};
 
@@ -334,10 +334,7 @@ impl FakePlatform {
                 RaftSimple::new(),
                 Box::new(MemoryStorage::new),
                 DefaultSnapshotProcessor::new(
-                    Box::new(DefaultSnapshotSender::new(SnapshotSenderConfig {
-                        chunk_size: 20,
-                        max_pending_chunks: 2,
-                    })),
+                    Box::new(DefaultSnapshotSender::new()),
                     Box::new(DefaultSnapshotReceiver::new()),
                 ),
                 CounterActor::new(),

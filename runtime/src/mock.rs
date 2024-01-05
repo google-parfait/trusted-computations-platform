@@ -34,7 +34,9 @@ use snapshot::{
     SnapshotError, SnapshotProcessor, SnapshotProcessorRole, SnapshotReceiver,
     SnapshotReceiverImpl, SnapshotSender, SnapshotSenderImpl,
 };
-use tcp_proto::runtime::endpoint::{DeliverSnapshotRequest, DeliverSnapshotResponse, OutMessage};
+use tcp_proto::runtime::endpoint::{
+    raft_config::SnapshotConfig, DeliverSnapshotRequest, DeliverSnapshotResponse, OutMessage,
+};
 
 mock! {
     pub Actor {
@@ -208,7 +210,7 @@ mock! {
     }
 
     impl SnapshotSenderImpl for SnapshotSender {
-        fn init(&mut self, logger: Logger, replica_id: u64);
+        fn init(&mut self, logger: Logger, replica_id: u64, snapshot_config: &Option<SnapshotConfig>);
 
         fn set_instant(&mut self, instant: u64);
 

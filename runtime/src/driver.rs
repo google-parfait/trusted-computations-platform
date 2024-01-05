@@ -17,9 +17,7 @@ use crate::consensus::{Raft, RaftState, Store};
 use crate::logger::log::create_remote_logger;
 use crate::logger::DrainOutput;
 use crate::model::{Actor, ActorContext, CommandOutcome, EventOutcome};
-use crate::snapshot::{
-    SnapshotError, SnapshotProcessor, SnapshotProcessorRole, SnapshotReceiver, SnapshotSender,
-};
+use crate::snapshot::{SnapshotError, SnapshotProcessor, SnapshotProcessorRole};
 use crate::util::raft::{
     create_entry, create_entry_id, create_raft_config_change, create_raft_message,
     deserialize_config_change, deserialize_raft_message, get_config_state, get_metadata,
@@ -42,7 +40,6 @@ use raft::{
     Storage as RaftStorage,
 };
 use slog::{debug, error, info, o, warn, Logger};
-use tcp_proto::runtime::endpoint::raft_config::SnapshotConfig;
 use tcp_proto::runtime::endpoint::*;
 
 struct DriverContextCore {
@@ -679,8 +676,15 @@ impl<R: Raft<S = S>, S: Store + RaftStorage, P: SnapshotProcessor, A: Actor> Dri
         })?;
 
         // Initialize snapshot processor.
-        self.snapshot
-            .init(self.logger.new(o!("type" => "snapshot")), self.id);
+        let snapshot_config = match &start_replica_request.raft_config {
+            Some(raft_config) => &raft_config.snapshot_config,
+            None => &None,
+        };
+        self.snapshot.init(
+            self.logger.new(o!("type" => "snapshot")),
+            self.id,
+            snapshot_config,
+        );
 
         self.initilize_raft_node(
             &start_replica_request.raft_config,
@@ -1116,6 +1120,7 @@ mod test {
     use raft::eraftpb::{
         ConfChange as RaftConfigChange, EntryType as RaftEntryType, MessageType as RaftMessageType,
     };
+    use tcp_proto::runtime::endpoint::raft_config::SnapshotConfig;
 
     fn create_actor_config() -> Vec<u8> {
         Vec::new()
@@ -1623,9 +1628,10 @@ mod test {
         }
 
         fn expect_init(mut self, replica_id: u64) -> SnapshotBuilder {
+            let (_, _, raft_config) = create_default_parameters();
             self.mock_snapshot_sender
                 .expect_init()
-                .with(always(), eq(replica_id))
+                .with(always(), eq(replica_id), eq(raft_config.snapshot_config))
                 .return_const(());
 
             self.mock_snapshot_receiver

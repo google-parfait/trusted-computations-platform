@@ -25,8 +25,8 @@ use prost::{
     Message,
 };
 use tcp_proto::runtime::endpoint::{
-    deliver_snapshot_request, deliver_snapshot_response, DeliverSnapshotRequest,
-    DeliverSnapshotResponse, DeliverSnapshotStatus,
+    deliver_snapshot_request, deliver_snapshot_response, raft_config::SnapshotConfig,
+    DeliverSnapshotRequest, DeliverSnapshotResponse, DeliverSnapshotStatus,
 };
 
 use raft::{
@@ -69,7 +69,7 @@ pub trait SnapshotProcessor {
     /// id is used to determine the role of the processor whenever the cluster
     /// state changes. For example, when replica is a follower it plays the receiver
     /// role, whereas then replica is a leader it plays the sender role.
-    fn init(&mut self, logger: Logger, replica_id: u64);
+    fn init(&mut self, logger: Logger, replica_id: u64, snapshot_config: &Option<SnapshotConfig>);
 
     /// Processes change in the cluster state.
     ///
@@ -213,7 +213,7 @@ enum ReplicaState {
 }
 
 pub trait SnapshotSenderImpl: SnapshotSender {
-    fn init(&mut self, logger: Logger, replica_id: u64);
+    fn init(&mut self, logger: Logger, replica_id: u64, snapshot_config: &Option<SnapshotConfig>);
 
     fn set_instant(&mut self, instant: u64);
 
@@ -254,11 +254,12 @@ impl DefaultSnapshotProcessor {
 }
 
 impl SnapshotProcessor for DefaultSnapshotProcessor {
-    fn init(&mut self, logger: Logger, replica_id: u64) {
+    fn init(&mut self, logger: Logger, replica_id: u64, snapshot_config: &Option<SnapshotConfig>) {
         assert_eq!(self.state, ReplicaState::Unknown);
 
         self.replica_id = replica_id;
-        self.sender.init(logger.clone(), self.replica_id);
+        self.sender
+            .init(logger.clone(), self.replica_id, snapshot_config);
         self.receiver.init(logger.clone(), self.replica_id);
         // Always start as a follower.
         self.state = ReplicaState::Follower;
@@ -526,10 +527,14 @@ pub struct DefaultSnapshotSender {
 }
 
 impl DefaultSnapshotSender {
-    pub fn new(config: SnapshotSenderConfig) -> DefaultSnapshotSender {
+    pub fn new() -> DefaultSnapshotSender {
         DefaultSnapshotSender {
             logger: create_logger(),
-            config,
+            config: SnapshotSenderConfig {
+                // System defaults.
+                chunk_size: 1024 * 1024,
+                max_pending_chunks: 2,
+            },
             replica_id: 0,
             instant: 0,
             next_snapshot_id: 1,
@@ -540,9 +545,13 @@ impl DefaultSnapshotSender {
 }
 
 impl SnapshotSenderImpl for DefaultSnapshotSender {
-    fn init(&mut self, logger: Logger, replica_id: u64) {
+    fn init(&mut self, logger: Logger, replica_id: u64, snapshot_config: &Option<SnapshotConfig>) {
         self.logger = logger;
         self.replica_id = replica_id;
+        if let Some(snapshot_config) = snapshot_config {
+            self.config.chunk_size = snapshot_config.chunk_size;
+            self.config.max_pending_chunks = snapshot_config.max_pending_chunks
+        }
     }
 
     fn set_instant(&mut self, instant: u64) {
@@ -945,14 +954,16 @@ mod test {
         receiver: Box<dyn SnapshotReceiverImpl>,
     ) -> DefaultSnapshotProcessor {
         let mut snapshot_processor = DefaultSnapshotProcessor::new(sender, receiver);
-        snapshot_processor.init(create_logger(), replica_id);
+        let snapshot_config = default_snapshot_config();
+        snapshot_processor.init(create_logger(), replica_id, &Some(snapshot_config));
         snapshot_processor
     }
 
     fn expect_sender_init(mock_sender: &mut MockSnapshotSender, replica_id: u64) {
+        let snapshot_config = default_snapshot_config();
         mock_sender
             .expect_init()
-            .with(always(), eq(replica_id))
+            .with(always(), eq(replica_id), eq(Some(snapshot_config)))
             .return_const(());
     }
 
@@ -1608,25 +1619,25 @@ mod test {
         }
     }
 
-    fn default_sender_config() -> SnapshotSenderConfig {
-        SnapshotSenderConfig {
+    fn default_snapshot_config() -> SnapshotConfig {
+        SnapshotConfig {
+            snapshot_count: 1000,
             chunk_size: 3,
             max_pending_chunks: 1,
         }
     }
 
-    fn create_sender(config: SnapshotSenderConfig) -> DefaultSnapshotSender {
-        let config = default_sender_config();
-
-        let mut sender = DefaultSnapshotSender::new(config);
-        sender.init(create_logger(), REPLICA_0);
+    fn create_sender() -> DefaultSnapshotSender {
+        let mut sender = DefaultSnapshotSender::new();
+        let snapshot_config = default_snapshot_config();
+        sender.init(create_logger(), REPLICA_0, &Some(snapshot_config));
 
         sender
     }
 
     #[test]
     fn test_snapshot_sender_reset_cancellations() {
-        let mut sender = create_sender(default_sender_config());
+        let mut sender = create_sender();
 
         let metadata = default_snapshot_metadata();
 
@@ -1645,21 +1656,21 @@ mod test {
 
     #[test]
     fn test_snapshot_sender_complete_nothing() {
-        let mut sender = create_sender(default_sender_config());
+        let mut sender = create_sender();
 
         assert_eq!(sender.try_complete(), None);
     }
 
     #[test]
     fn test_snapshot_sender_next_request_nothing() {
-        let mut sender = create_sender(default_sender_config());
+        let mut sender = create_sender();
 
         assert_eq!(sender.next_request(), None);
     }
 
     #[test]
     fn test_snapshot_sender_single_chunk_success() {
-        let mut sender = create_sender(default_sender_config());
+        let mut sender = create_sender();
 
         let metadata = default_snapshot_metadata();
 
@@ -1707,9 +1718,9 @@ mod test {
 
     #[test]
     fn test_snapshot_sender_multiple_chunks_success() {
-        let config = default_sender_config();
-        let mut sender = create_sender(config.clone());
+        let mut sender = create_sender();
 
+        let chunk_size = default_snapshot_config().chunk_size;
         let metadata = default_snapshot_metadata();
 
         let data_1 = Bytes::from(vec![1, 2, 3, 4, 5]);
@@ -1730,7 +1741,7 @@ mod test {
                     DELIVERY_1,
                     data_1.len() as u64,
                     metadata.encode_to_vec().into(),
-                    data_1.slice(0..config.chunk_size as usize),
+                    data_1.slice(0..chunk_size as usize),
                 ),
                 REPLICA_1,
             ))
@@ -1758,7 +1769,7 @@ mod test {
                     SNAPSHOT_1,
                     DELIVERY_2,
                     CHUNK_1,
-                    data_1.slice(config.chunk_size as usize..),
+                    data_1.slice(chunk_size as usize..),
                 ),
                 REPLICA_1,
             ))
@@ -1784,7 +1795,7 @@ mod test {
 
     #[test]
     fn test_snapshot_sender_response_rejection() {
-        let mut sender = create_sender(default_sender_config());
+        let mut sender = create_sender();
 
         let metadata = default_snapshot_metadata();
 
@@ -1832,7 +1843,7 @@ mod test {
 
     #[test]
     fn test_snapshot_sender_response_failure() {
-        let mut sender = create_sender(default_sender_config());
+        let mut sender = create_sender();
 
         let metadata = default_snapshot_metadata();
 
@@ -1870,9 +1881,9 @@ mod test {
 
     #[test]
     fn test_snapshot_sender_response_wrong_snapshot() {
-        let config = default_sender_config();
-        let mut sender = create_sender(config.clone());
+        let mut sender = create_sender();
 
+        let chunk_size = default_snapshot_config().chunk_size;
         let metadata = default_snapshot_metadata();
 
         let data_1 = Bytes::from(vec![1, 2, 3, 4, 5]);
@@ -1891,7 +1902,7 @@ mod test {
                     DELIVERY_1,
                     data_1.len() as u64,
                     metadata.encode_to_vec().into(),
-                    data_1.slice(0..config.chunk_size as usize),
+                    data_1.slice(0..chunk_size as usize),
                 ),
                 REPLICA_1,
             ))
@@ -1914,9 +1925,9 @@ mod test {
 
     #[test]
     fn test_snapshot_sender_response_wrong_chunk_index() {
-        let config = default_sender_config();
-        let mut sender = create_sender(config.clone());
+        let mut sender = create_sender();
 
+        let chunk_size = default_snapshot_config().chunk_size;
         let metadata = default_snapshot_metadata();
 
         let data_1 = Bytes::from(vec![1, 2, 3, 4, 5]);
@@ -1935,7 +1946,7 @@ mod test {
                     DELIVERY_1,
                     data_1.len() as u64,
                     metadata.encode_to_vec().into(),
-                    data_1.slice(0..config.chunk_size as usize),
+                    data_1.slice(0..chunk_size as usize),
                 ),
                 REPLICA_1,
             ))
@@ -1961,9 +1972,9 @@ mod test {
 
     #[test]
     fn test_snapshot_sender_response_out_of_bounds_chunk_index() {
-        let config = default_sender_config();
-        let mut sender = create_sender(config.clone());
+        let mut sender = create_sender();
 
+        let chunk_size = default_snapshot_config().chunk_size;
         let metadata = default_snapshot_metadata();
 
         let data_1 = Bytes::from(vec![1, 2, 3, 4, 5]);
@@ -1982,7 +1993,7 @@ mod test {
                     DELIVERY_1,
                     data_1.len() as u64,
                     metadata.encode_to_vec().into(),
-                    data_1.slice(0..config.chunk_size as usize),
+                    data_1.slice(0..chunk_size as usize),
                 ),
                 REPLICA_1,
             ))
@@ -2013,12 +2024,13 @@ mod test {
 
         for chunk_size in 1..data.len() {
             for max_pending_chunks in 1..data.len() {
-                let config = SnapshotSenderConfig {
+                let config = Some(SnapshotConfig {
+                    snapshot_count: 1000,
                     chunk_size: chunk_size as u64,
                     max_pending_chunks: max_pending_chunks as u32,
-                };
-                let mut sender = create_sender(config.clone());
-                sender.init(create_logger(), REPLICA_0);
+                });
+                let mut sender = create_sender();
+                sender.init(create_logger(), REPLICA_0, &config);
 
                 let mut receivers: HashMap<u64, DefaultSnapshotReceiver> = HashMap::new();
                 for replica_id in vec![REPLICA_1, REPLICA_2] {
