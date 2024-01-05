@@ -32,6 +32,7 @@ use tcp_proto::examples::atomic_counter::{
     counter_request, counter_response, CounterCompareAndSwapRequest, CounterCompareAndSwapResponse,
     CounterConfig, CounterRequest, CounterResponse, CounterStatus,
 };
+use tcp_proto::runtime::endpoint::raft_config::SnapshotConfig;
 use tcp_proto::runtime::endpoint::*;
 use tcp_runtime::driver::Driver;
 use tcp_runtime::examples::CounterActor;
@@ -355,7 +356,11 @@ impl FakePlatform {
                     election_tick: 20,
                     heartbeat_tick: 2,
                     max_size_per_msg: 0,
-                    snapshot_count: 1000,
+                    snapshot_config: Some(SnapshotConfig {
+                        snapshot_count: 1000,
+                        chunk_size: 20,
+                        max_pending_chunks: 2,
+                    }),
                 }),
                 app_config: app_config,
             })),

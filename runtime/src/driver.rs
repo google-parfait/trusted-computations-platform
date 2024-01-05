@@ -42,6 +42,7 @@ use raft::{
     Storage as RaftStorage,
 };
 use slog::{debug, error, info, o, warn, Logger};
+use tcp_proto::runtime::endpoint::raft_config::SnapshotConfig;
 use tcp_proto::runtime::endpoint::*;
 
 struct DriverContextCore {
@@ -233,7 +234,9 @@ impl<R: Raft<S = S>, S: Store + RaftStorage, P: SnapshotProcessor, A: Actor> Dri
         if let Some(raft_config) = raft_config {
             // Store driver relavant parts of the config.
             self.driver_config.tick_period = raft_config.tick_period;
-            self.driver_config.snapshot_count = raft_config.snapshot_count;
+            if let Some(snapshot_config) = &raft_config.snapshot_config {
+                self.driver_config.snapshot_count = snapshot_config.snapshot_count;
+            }
 
             // Update Raft native configuration.
             config.election_tick = raft_config.election_tick as usize;
@@ -1131,7 +1134,11 @@ mod test {
             election_tick: 20,
             heartbeat_tick: 2,
             max_size_per_msg: 0,
-            snapshot_count: 10,
+            snapshot_config: Some(SnapshotConfig {
+                snapshot_count: 10,
+                chunk_size: 20,
+                max_pending_chunks: 2,
+            }),
         };
 
         (node_id, instant, raft_config)

@@ -135,9 +135,21 @@ message RaftConfig {
   // operation). On the other side, it might affect the throughput during normal
   // replication.
   uint64 max_size_per_msg = 4;
-  // The maximum number of entries to accumulate in the log before creating
-  // a snapshot.
-  uint64 snapshot_count = 5;
+
+  // Configuration for a Raft snapshot.
+  SnapshotConfig snapshot_config = 5;
+
+  message SnapshotConfig {
+    // The maximum number of entries to accumulate in the log before creating
+    // a snapshot.
+    uint64 snapshot_count = 1;
+    // Size of each snapshot chunk.
+    uint64 chunk_size = 2;
+    // Maximum number of pending chunks in flight i.e. for which the leader has
+    // not received a response. This creates a back pressure mechanism to control
+    // the number of in flight snapshot chunks.
+    uint32 max_pending_chunks = 3;
+  }
 }
 
 // Instructs the trusted application to stop the corresponding raft replica.
