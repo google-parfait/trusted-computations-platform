@@ -27,6 +27,8 @@ fn main() -> Result<()> {
                 ".runtime.endpoint.ExecuteProposalRequest".to_string(),
                 ".runtime.endpoint.ExecuteProposalResponse".to_string(),
                 ".runtime.endpoint.Entry".to_string(),
+                ".examples.atomic_counter.CounterSnapshotValue".to_string(),
+                ".examples.atomic_counter.CounterRequest".to_string(),
             ],
             ..Default::default()
         },
