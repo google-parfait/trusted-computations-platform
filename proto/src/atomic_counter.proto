@@ -83,8 +83,15 @@ message CounterConfig {
   map<string, int64> initial_values = 1;
 }
 
+message CounterSnapshotValue {
+  // Counter value.
+  int64 value = 1;
+  // Arbitrary payload associated with the counter value.
+  bytes payload = 2;
+}
+
 // Represents snapshot of the atomic counter.
 message CounterSnapshot {
   // Holds the values at the time of the snapshot.
-  map<string, int64> values = 1;
+  map<string, CounterSnapshotValue> values = 1;
 }

@@ -23,14 +23,20 @@ use prost::{bytes::Bytes, Message};
 use slog::{debug, warn};
 use tcp_proto::examples::atomic_counter::{
     counter_request, counter_response, CounterCompareAndSwapRequest, CounterCompareAndSwapResponse,
-    CounterConfig, CounterRequest, CounterResponse, CounterSnapshot, CounterStatus,
+    CounterConfig, CounterRequest, CounterResponse, CounterSnapshot, CounterSnapshotValue,
+    CounterStatus,
 };
 
 use crate::model::{Actor, ActorContext, ActorError, CommandOutcome, EventOutcome};
 
+pub struct CounterValue {
+    value: i64,
+    payload: Bytes,
+}
+
 pub struct CounterActor {
     context: Option<Box<dyn ActorContext>>,
-    values: HashMap<String, i64>,
+    values: HashMap<String, CounterValue>,
 }
 
 impl CounterActor {
@@ -54,6 +60,7 @@ impl CounterActor {
         id: u64,
         counter_name: &String,
         compare_and_swap_request: &CounterCompareAndSwapRequest,
+        payload: Bytes,
     ) -> CounterResponse {
         debug!(
             self.get_context().logger(),
@@ -73,10 +80,14 @@ impl CounterActor {
         };
 
         let existing_value_ref = self.values.entry_ref(counter_name);
-        let existing_value = existing_value_ref.or_insert(0);
-        compare_and_swap_response.old_value = *existing_value;
-        if *existing_value == compare_and_swap_request.expected_value {
-            *existing_value = compare_and_swap_request.new_value;
+        let existing_value = existing_value_ref.or_insert_with(|| CounterValue {
+            value: 0,
+            payload: Bytes::new(),
+        });
+        compare_and_swap_response.old_value = existing_value.value;
+        if existing_value.value == compare_and_swap_request.expected_value {
+            existing_value.value = compare_and_swap_request.new_value;
+            existing_value.payload = payload;
 
             response.status = CounterStatus::Success.into();
             compare_and_swap_response.new_value = compare_and_swap_request.new_value;
@@ -99,8 +110,14 @@ impl Actor for CounterActor {
         let config = CounterConfig::decode(self.get_context().config().as_ref())
             .map_err(|_| ActorError::ConfigLoading)?;
 
-        for (counter_name, counter_value) in config.initial_values {
-            self.values.insert(counter_name, counter_value);
+        for (counter_name, value) in config.initial_values {
+            self.values.insert(
+                counter_name,
+                CounterValue {
+                    value,
+                    payload: Bytes::new(),
+                },
+            );
         }
 
         Ok(())
@@ -115,10 +132,14 @@ impl Actor for CounterActor {
             values: BTreeMap::new(),
         };
 
-        for (counter_name, counter_value) in &self.values {
-            snapshot
-                .values
-                .insert(counter_name.to_string(), *counter_value);
+        for (name, value) in &self.values {
+            snapshot.values.insert(
+                name.to_string(),
+                CounterSnapshotValue {
+                    value: value.value,
+                    payload: value.payload.clone(),
+                },
+            );
         }
 
         Ok(snapshot.encode_to_vec().into())
@@ -130,8 +151,14 @@ impl Actor for CounterActor {
         let snapshot =
             CounterSnapshot::decode(snapshot).map_err(|_| ActorError::SnapshotLoading)?;
 
-        for (counter_name, counter_value) in snapshot.values {
-            self.values.insert(counter_name, counter_value);
+        for (name, value) in snapshot.values {
+            self.values.insert(
+                name,
+                CounterValue {
+                    value: value.value,
+                    payload: value.payload,
+                },
+            );
         }
 
         Ok(())
@@ -190,7 +217,13 @@ impl Actor for CounterActor {
 
         let response = match op {
             counter_request::Op::CompareAndSwap(ref compare_and_swap_request) => self
-                .apply_compare_and_swap(index, request.id, &request.name, compare_and_swap_request),
+                .apply_compare_and_swap(
+                    index,
+                    request.id,
+                    &request.name,
+                    compare_and_swap_request,
+                    request.payload,
+                ),
         };
 
         if self.get_context().leader() {
