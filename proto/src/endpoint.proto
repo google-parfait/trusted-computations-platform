@@ -48,6 +48,8 @@ message InMessage {
     // action or a query. Note that it is up to the application to interpret and
     // execute that proposal.
     ExecuteProposalRequest execute_proposal = 6;
+    // Requests the Trusted Host to report the current state of this replica.
+    GetReplicaStateRequest get_replica_state = 10;
   }
 }
 
@@ -91,6 +93,8 @@ message OutMessage {
     // that the replica that has accepted the proposal and the replica that has
     // responded to the proposal are not the same replica due failures.
     ExecuteProposalResponse execute_proposal = 7;
+    // Responds to the Untrusted Launcher with the current state of this replica.
+    GetReplicaStateResponse get_replica_state = 10;
   }
 }
 
@@ -377,6 +381,16 @@ enum ExecuteProposalStatus {
   PROPOSAL_STATUS_PENDING = 1;
   // Indicates that the proposal execution has completed.
   PROPOSAL_STATUS_COMPLETED = 2;
+}
+
+// Request to get the current state of this replica.
+message GetReplicaStateRequest {}
+
+// Response to GetReplicaStateRequest.
+message GetReplicaStateResponse {
+  // Index of the last committed entry that has been applied to the actor on
+  // this replica.
+  uint64 applied_index = 1;
 }
 
 service EndpointService {

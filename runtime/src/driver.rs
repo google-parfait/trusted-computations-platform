@@ -971,6 +971,19 @@ impl<R: Raft<S = S>, S: Store + RaftStorage, P: SnapshotProcessor, A: Actor> Dri
         Ok(())
     }
 
+    fn process_get_replica_state(
+        &mut self,
+        _get_replica_state_request: &GetReplicaStateRequest,
+    ) -> Result<(), PalError> {
+        self.check_driver_started()?;
+
+        self.stash_message(out_message::Msg::GetReplicaState(GetReplicaStateResponse {
+            applied_index: self.raft_progress.applied_index,
+        }));
+
+        Ok(())
+    }
+
     fn process_actor_output(&mut self) {
         let (proposals, messages) = self.mut_core().take_outputs();
 
@@ -1072,6 +1085,9 @@ impl<R: Raft<S = S>, S: Store + RaftStorage, P: SnapshotProcessor, A: Actor> App
                         }
                         in_message::Msg::ExecuteProposal(ref mut execute_proposal_request) => {
                             self.process_execute_proposal(execute_proposal_request)
+                        }
+                        in_message::Msg::GetReplicaState(ref get_replica_state_request) => {
+                            self.process_get_replica_state(get_replica_state_request)
                         }
                     }?;
                 }
@@ -1252,6 +1268,17 @@ mod test {
             cluster_replica_ids: raft_state.committed_cluster_config.clone(),
             has_pending_changes: raft_state.has_pending_change,
         })
+    }
+
+    fn create_get_replica_state_request() -> InMessage {
+        let envelope = InMessage {
+            msg: Some(in_message::Msg::GetReplicaState(GetReplicaStateRequest {})),
+        };
+        envelope
+    }
+
+    fn create_get_replica_state_response(applied_index: u64) -> out_message::Msg {
+        out_message::Msg::GetReplicaState(GetReplicaStateResponse { applied_index })
     }
 
     fn create_deliver_message_request(raft_message: &RaftMessage) -> InMessage {
@@ -2488,6 +2515,13 @@ mod test {
         let entry_id = create_entry_id(node_id, 1);
         let entry = create_entry(entry_id.clone(), proposal_result.clone().into());
 
+        let committed_normal_entry = create_raft_entry(
+            2,
+            2,
+            RaftEntryType::EntryNormal,
+            entry.encode_to_vec().into(),
+        );
+
         let mut mock_host = MockHostBuilder::new()
             .expect_public_signing_key(vec![])
             .expect_send_messages(vec![create_start_replica_response(node_id)])
@@ -2496,14 +2530,10 @@ mod test {
                 proposal_result.clone().into(),
                 ExecuteProposalStatus::ProposalStatusCompleted,
             )])
+            .expect_send_messages(vec![create_get_replica_state_response(
+                committed_normal_entry.index,
+            )])
             .take();
-
-        let committed_normal_entry = create_raft_entry(
-            2,
-            2,
-            RaftEntryType::EntryNormal,
-            entry.encode_to_vec().into(),
-        );
 
         let ready = RaftReady::new(
             vec![],
@@ -2523,6 +2553,7 @@ mod test {
             .expect_init(|_, _, _, _, _, _| Ok(()))
             .expect_has_ready(false)
             .expect_has_ready(true)
+            .expect_has_ready(false)
             .expect_ready(&ready)
             .expect_should_snapshot(false)
             .expect_should_snapshot(true)
@@ -2539,6 +2570,7 @@ mod test {
         let snapshot_builder = SnapshotBuilder::new()
             .expect_init(node_id)
             .expect_receiver_set_instant()
+            .expect_receiver_try_complete(None)
             .expect_receiver_try_complete(None)
             .expect_receiver_try_complete(None);
 
@@ -2570,6 +2602,15 @@ mod test {
         assert_eq!(
             Ok(()),
             driver.receive_message(&mut mock_host, instant + 10, None)
+        );
+
+        assert_eq!(
+            Ok(()),
+            driver.receive_message(
+                &mut mock_host,
+                instant + 20,
+                Some(create_get_replica_state_request())
+            )
         );
     }
 
