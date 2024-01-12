@@ -360,8 +360,10 @@ impl<R: Raft<S = S>, S: Store + RaftStorage, P: SnapshotProcessor, A: Actor> Dri
 
     fn apply_raft_committed_entries(
         &mut self,
-        committed_entries: Vec<RaftEntry>,
+        mut committed_entries: Vec<RaftEntry>,
     ) -> Result<(), PalError> {
+        // Sort committed entries by entry index to make sure they are applied in order.
+        committed_entries.sort_by(|a, b| a.index.cmp(&b.index));
         for committed_entry in committed_entries {
             // Remember progress of applying committed entries.
             self.raft_progress.applied_index = committed_entry.index;
@@ -761,16 +763,13 @@ impl<R: Raft<S = S>, S: Store + RaftStorage, P: SnapshotProcessor, A: Actor> Dri
         Ok(())
     }
 
-    fn process_deliver_message(
-        &mut self,
-        deliver_message: &DeliverMessage,
-    ) -> Result<(), PalError> {
+    fn process_deliver_message(&mut self, deliver_message: DeliverMessage) -> Result<(), PalError> {
         self.check_driver_started()?;
 
         self.make_raft_step(
             deliver_message.sender_replica_id,
             deliver_message.recipient_replica_id,
-            deliver_message.message_contents.clone(),
+            deliver_message.message_contents,
         )
     }
 
@@ -1071,7 +1070,7 @@ impl<R: Raft<S = S>, S: Store + RaftStorage, P: SnapshotProcessor, A: Actor> App
                         in_message::Msg::CheckCluster(ref check_cluster_request) => {
                             self.process_check_cluster(check_cluster_request)
                         }
-                        in_message::Msg::DeliverMessage(ref deliver_message) => {
+                        in_message::Msg::DeliverMessage(deliver_message) => {
                             self.process_deliver_message(deliver_message)
                         }
                         in_message::Msg::DeliverSnapshotRequest(deliver_snapshot_request) => {
