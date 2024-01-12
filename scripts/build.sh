@@ -37,7 +37,7 @@ if [ "$1" == "release" ] || [ "$1" == "debug" ]; then
   mode=$([ "$1" == "release" ] && echo "--$1" || echo "")
   docker run "${DOCKER_RUN_FLAGS[@]}" "${DOCKER_IMAGE_ID}" \
       nix develop --command env cargo build $mode \
-          -p tcp_atomic_counter_enclave_app
+          -p tcp_atomic_counter_enclave_app -p tcp_ledger_enclave_app
 
   # KOKORO_ARTIFACTS_DIR may be unset if this script is run manually; it'll
   # always be set during CI builds.
@@ -45,6 +45,9 @@ if [ "$1" == "release" ] || [ "$1" == "debug" ]; then
     mkdir -p "${KOKORO_ARTIFACTS_DIR}/binaries"
     cp --preserve=timestamps -v -f \
         target/x86_64-unknown-none/$1/tcp_atomic_counter_enclave_app \
+        "${KOKORO_ARTIFACTS_DIR}/binaries/"
+    cp --preserve=timestamps -v -f \
+        target/x86_64-unknown-none/$1/tcp_ledger_enclave_app \
         "${KOKORO_ARTIFACTS_DIR}/binaries/"
   fi
 
