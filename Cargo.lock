@@ -1512,6 +1512,7 @@ dependencies = [
  "micro_rpc",
  "micro_rpc_build",
  "prost",
+ "prost-types",
 ]
 
 [[package]]

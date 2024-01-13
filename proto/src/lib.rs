@@ -28,3 +28,8 @@ pub mod runtime {
         include!(concat!(env!("OUT_DIR"), "/runtime.endpoint.rs"));
     }
 }
+pub mod fcp {
+    pub mod confidentialcompute {
+        include!(concat!(env!("OUT_DIR"), "/fcp.confidentialcompute.rs"));
+    }
+}

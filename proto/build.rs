@@ -16,7 +16,11 @@ use std::io::Result;
 
 fn main() -> Result<()> {
     micro_rpc_build::compile(
-        &["src/endpoint.proto", "src/atomic_counter.proto"],
+        &[
+            "src/endpoint.proto",
+            "src/atomic_counter.proto",
+            "src/ledger.proto",
+        ],
         &["src"],
         micro_rpc_build::CompileOptions {
             bytes: vec![
