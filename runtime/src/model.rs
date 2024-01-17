@@ -14,7 +14,6 @@
 
 use crate::StdError;
 use alloc::boxed::Box;
-use alloc::vec::Vec;
 use core::fmt;
 use core::option::Option;
 use core::result::Result;

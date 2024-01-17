@@ -19,9 +19,9 @@ use alloc::vec::Vec;
 use core::convert::TryInto;
 use core::option::Option;
 use core::{cmp, fmt};
-use hashbrown::{HashMap, HashSet};
+use hashbrown::HashMap;
 use prost::{
-    bytes::{Buf, BufMut, Bytes, BytesMut},
+    bytes::{BufMut, Bytes, BytesMut},
     Message,
 };
 use tcp_proto::runtime::endpoint::{
@@ -410,7 +410,7 @@ impl SnapshotSenderState {
             snapshot_id: self.snapshot_id,
             ..Default::default()
         };
-        let mut chunk_size = next_chunk.len();
+        let chunk_size = next_chunk.len();
         if self.next_chunk_index == 0 {
             // Send header for the new snapshot transfer.
             payload.it = Some(deliver_snapshot_request::payload::It::Header(
@@ -668,7 +668,7 @@ impl SnapshotSender for DefaultSnapshotSender {
         match deliver_snapshot_request::Payload::decode(request.payload_contents) {
             Ok(payload) => match payload.it {
                 None => {}
-                Some(deliver_snapshot_request::payload::It::Header(header)) => {
+                Some(deliver_snapshot_request::payload::It::Header(_)) => {
                     response_payload.snapshot_id = payload.snapshot_id;
                     response_payload.chunk_index = 0;
                 }
@@ -938,8 +938,9 @@ mod test {
     use crate::logger::log::create_logger;
     use crate::util::raft::{create_raft_snapshot, create_raft_snapshot_metadata};
 
+    use hashbrown::HashSet;
+
     use raft::eraftpb::ConfState as RaftConfigState;
-    use slog::o;
 
     const REPLICA_0: u64 = 0;
     const REPLICA_1: u64 = 1;
@@ -1357,7 +1358,7 @@ mod test {
             0,
         );
 
-        let mut complete_result = receiver.try_complete();
+        let complete_result = receiver.try_complete();
 
         assert!(complete_result.is_none());
 
@@ -1399,7 +1400,7 @@ mod test {
             0,
         );
 
-        let mut complete_result = receiver.try_complete();
+        let complete_result = receiver.try_complete();
 
         assert!(complete_result.is_none());
 
@@ -1566,8 +1567,6 @@ mod test {
     #[test]
     fn test_snapshot_receiver_rejected_no_header() {
         let mut receiver = DefaultSnapshotReceiver::new();
-
-        let metadata = default_snapshot_metadata();
 
         let data_1 = Bytes::from(vec![1, 2, 3, 4, 5]);
 

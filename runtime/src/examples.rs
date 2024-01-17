@@ -16,7 +16,6 @@ use alloc::{
     boxed::Box,
     collections::BTreeMap,
     string::{String, ToString},
-    vec::Vec,
 };
 use hashbrown::HashMap;
 use prost::{bytes::Bytes, Message};

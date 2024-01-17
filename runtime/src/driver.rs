@@ -824,7 +824,7 @@ impl<R: Raft<S = S>, S: Store + RaftStorage, P: SnapshotProcessor, A: Actor> Dri
                 deliver_snapshot_response.delivery_id,
                 Ok(deliver_snapshot_response),
             ),
-            SnapshotProcessorRole::Receiver(receiver) => {
+            SnapshotProcessorRole::Receiver(_) => {
                 warn!(
                     self.logger,
                     "Node is snapshot receiving mode, unexpected deliver snapshot response"
@@ -845,7 +845,7 @@ impl<R: Raft<S = S>, S: Store + RaftStorage, P: SnapshotProcessor, A: Actor> Dri
                 deliver_snapshot_failure.delivery_id,
                 Err(SnapshotError::FailedDelivery),
             ),
-            SnapshotProcessorRole::Receiver(receiver) => {
+            SnapshotProcessorRole::Receiver(_) => {
                 warn!(
                     self.logger,
                     "Node is snapshot receiving mode, unexpected deliver snapshot failure"
@@ -881,7 +881,7 @@ impl<R: Raft<S = S>, S: Store + RaftStorage, P: SnapshotProcessor, A: Actor> Dri
                                 error!(self.logger, "Raft experienced unrecoverable error: {}", e);
                             }
                         }
-                        Err(e) => {
+                        Err(_) => {
                             warn!(
                                 self.logger,
                                 "Snapshot has been received but failed validation"
@@ -907,7 +907,7 @@ impl<R: Raft<S = S>, S: Store + RaftStorage, P: SnapshotProcessor, A: Actor> Dri
                     out_messages.push(out_message::Msg::DeliverSnapshotRequest(request));
                 }
             }
-            SnapshotProcessorRole::Receiver(receiver) => {
+            SnapshotProcessorRole::Receiver(_) => {
                 if !snapshot_messages.is_empty() {
                     warn!(
                         self.logger,
@@ -1402,14 +1402,6 @@ mod test {
             self
         }
 
-        fn expect_get_self_config(&mut self, self_config: Vec<u8>) -> &mut MockHostBuilder {
-            self.mock_host
-                .expect_get_self_config()
-                .return_const(self_config);
-
-            self
-        }
-
         fn expect_send_messages(
             &mut self,
             sent_messages: Vec<out_message::Msg>,
@@ -1861,7 +1853,7 @@ mod test {
         fn take(
             &mut self,
             mut raft_builder: RaftBuilder,
-            mut snapshot_builder: SnapshotBuilder,
+            snapshot_builder: SnapshotBuilder,
         ) -> Driver<MockRaft<MockStore>, MockStore, DefaultSnapshotProcessor, MockActor> {
             let (mock_store, mut mock_raft) = raft_builder.take();
             let mock_actor = mem::take(&mut self.mock_actor);
@@ -2094,7 +2086,6 @@ mod test {
         let init_snapshot = Bytes::from(vec![2, 3, 4]);
         let self_config = vec![1, 2, 3];
 
-        let proposal_response = vec![4, 5, 6];
         let mut mock_host = MockHostBuilder::new()
             .expect_public_signing_key(vec![])
             .expect_send_messages(vec![create_start_replica_response(node_id)])
@@ -2114,7 +2105,7 @@ mod test {
 
         let exp_self_config = self_config.clone();
         let mut driver = DriverBuilder::new()
-            .expect_on_init(move |mut actor_context| {
+            .expect_on_init(move |actor_context| {
                 assert_eq!(node_id, actor_context.id());
                 assert_eq!(instant, actor_context.instant());
                 assert_eq!(exp_self_config, actor_context.config());
@@ -2660,7 +2651,6 @@ mod test {
                 deliver_snapshot_response.clone(),
             );
 
-        let exp_self_config = self_config.clone();
         let mut driver = DriverBuilder::new()
             .expect_on_init(|_| Ok(()))
             .expect_on_save_snapshot(Ok(init_snapshot.clone()))
@@ -2781,7 +2771,6 @@ mod test {
             )
             .expect_sender_try_complete(None);
 
-        let exp_self_config = self_config.clone();
         let mut driver = DriverBuilder::new()
             .expect_on_init(|_| Ok(()))
             .expect_on_save_snapshot(Ok(init_snapshot.clone()))

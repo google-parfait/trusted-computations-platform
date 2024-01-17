@@ -31,8 +31,7 @@ use raft::{
 };
 use slog::Logger;
 use snapshot::{
-    SnapshotError, SnapshotProcessor, SnapshotProcessorRole, SnapshotReceiver,
-    SnapshotReceiverImpl, SnapshotSender, SnapshotSenderImpl,
+    SnapshotError, SnapshotReceiver, SnapshotReceiverImpl, SnapshotSender, SnapshotSenderImpl,
 };
 use tcp_proto::runtime::endpoint::{
     raft_config::SnapshotConfig, DeliverSnapshotRequest, DeliverSnapshotResponse, OutMessage,
