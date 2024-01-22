@@ -12,6 +12,11 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
+use crate::apps::atomic_counter::service::{
+    counter_request, counter_response, CounterCompareAndSwapRequest, CounterCompareAndSwapResponse,
+    CounterConfig, CounterRequest, CounterResponse, CounterSnapshot, CounterSnapshotValue,
+    CounterStatus,
+};
 use alloc::{
     boxed::Box,
     collections::BTreeMap,
@@ -20,13 +25,7 @@ use alloc::{
 use hashbrown::HashMap;
 use prost::{bytes::Bytes, Message};
 use slog::{debug, warn};
-use tcp_proto::examples::atomic_counter::{
-    counter_request, counter_response, CounterCompareAndSwapRequest, CounterCompareAndSwapResponse,
-    CounterConfig, CounterRequest, CounterResponse, CounterSnapshot, CounterSnapshotValue,
-    CounterStatus,
-};
-
-use crate::model::{Actor, ActorContext, ActorError, CommandOutcome, EventOutcome};
+use tcp_runtime::model::{Actor, ActorContext, ActorError, CommandOutcome, EventOutcome};
 
 pub struct CounterValue {
     value: i64,

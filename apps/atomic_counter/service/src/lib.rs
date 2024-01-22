@@ -12,32 +12,21 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-#![feature(trait_upcasting)]
-#![cfg_attr(not(feature = "std"), no_std)]
-#![cfg_attr(not(feature = "std"), feature(error_in_core))]
+#![no_std]
+#![feature(never_type)]
 
 extern crate alloc;
-#[cfg(feature = "std")]
-extern crate core;
 extern crate hashbrown;
 extern crate prost;
-extern crate raft;
 extern crate slog;
-extern crate tcp_proto;
+extern crate tcp_runtime;
 
-pub mod consensus;
-pub mod driver;
-pub mod logger;
-#[cfg(all(test, feature = "std"))]
-pub mod mock;
-pub mod model;
-pub mod platform;
-pub mod service;
-pub mod snapshot;
-pub mod storage;
-pub mod util;
+pub mod apps {
+    pub mod atomic_counter {
+        pub mod service {
+            include!(concat!(env!("OUT_DIR"), "/apps.atomic_counter.service.rs"));
+        }
+    }
+}
 
-#[cfg(not(feature = "std"))]
-use core::error::Error as StdError;
-#[cfg(feature = "std")]
-use std::error::Error as StdError;
+pub mod actor;

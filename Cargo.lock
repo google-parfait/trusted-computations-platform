@@ -1485,6 +1485,39 @@ dependencies = [
  "oak_enclave_runtime_support",
  "oak_restricted_kernel_interface",
  "oak_restricted_kernel_sdk",
+ "tcp_atomic_counter_service",
+ "tcp_proto",
+ "tcp_runtime",
+]
+
+[[package]]
+name = "tcp_atomic_counter_service"
+version = "0.1.0"
+dependencies = [
+ "hashbrown",
+ "micro_rpc_build",
+ "mockall",
+ "prost",
+ "prost-build",
+ "slog",
+ "slog-term",
+ "tcp_integration",
+ "tcp_proto",
+ "tcp_runtime",
+]
+
+[[package]]
+name = "tcp_integration"
+version = "0.1.0"
+dependencies = [
+ "hashbrown",
+ "micro_rpc",
+ "prost",
+ "prost-build",
+ "raft",
+ "raft-proto",
+ "slog",
+ "slog-term",
  "tcp_proto",
  "tcp_runtime",
 ]

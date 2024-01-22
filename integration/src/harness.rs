@@ -14,46 +14,33 @@
 
 #![allow(dead_code)]
 
-extern crate alloc;
-extern crate core;
-extern crate hashbrown;
-extern crate prost;
-extern crate slog;
-extern crate tcp_proto;
-extern crate tcp_runtime;
-
-use alloc::collections::BTreeMap;
 use core::cell::RefCell;
 use core::mem;
 use hashbrown::HashMap;
-use prost::{bytes::Bytes, Message};
+use prost::bytes::Bytes;
 use slog::{info, Logger};
-use tcp_proto::examples::atomic_counter::{
-    counter_request, counter_response, CounterCompareAndSwapRequest, CounterCompareAndSwapResponse,
-    CounterConfig, CounterRequest, CounterResponse, CounterStatus,
-};
 use tcp_proto::runtime::endpoint::raft_config::SnapshotConfig;
 use tcp_proto::runtime::endpoint::*;
 use tcp_runtime::driver::Driver;
-use tcp_runtime::examples::CounterActor;
 use tcp_runtime::logger::log::create_logger;
+use tcp_runtime::model::Actor;
 use tcp_runtime::platform::{Application, Attestation, Host, PalError};
 use tcp_runtime::snapshot::{
     DefaultSnapshotProcessor, DefaultSnapshotReceiver, DefaultSnapshotSender,
 };
 use tcp_runtime::{consensus::RaftSimple, storage::MemoryStorage};
 
-struct FakeCluster {
+pub struct FakeCluster<A: Actor> {
     app_config: Bytes,
     advance_step: u64,
-    platforms: HashMap<u64, FakePlatform>,
+    platforms: HashMap<u64, FakePlatform<A>>,
     leader_id: u64,
     pull_messages: Vec<OutMessage>,
     logger: Logger,
 }
 
-impl FakeCluster {
-    fn new(app_config: Bytes) -> FakeCluster {
+impl<A: Actor> FakeCluster<A> {
+    pub fn new(app_config: Bytes) -> FakeCluster<A> {
         FakeCluster {
             app_config,
             advance_step: 100,
@@ -64,11 +51,11 @@ impl FakeCluster {
         }
     }
 
-    fn leader_id(&self) -> u64 {
+    pub fn leader_id(&self) -> u64 {
         self.leader_id
     }
 
-    fn non_leader_id(&self) -> u64 {
+    pub fn non_leader_id(&self) -> u64 {
         *self
             .platforms
             .keys()
@@ -76,8 +63,18 @@ impl FakeCluster {
             .unwrap()
     }
 
-    fn start_node(&mut self, node_id: u64, leader: bool) {
-        self.platforms.insert(node_id, FakePlatform::new(node_id));
+    pub fn send_proposal(&mut self, node_id: u64, proposal_contents: Bytes) {
+        self.platforms
+            .get_mut(&node_id)
+            .unwrap()
+            .send_proposal(proposal_contents);
+    }
+
+    pub fn start_node(&mut self, node_id: u64, leader: bool, actor: A) {
+        self.platforms.insert(
+            node_id,
+            FakePlatform::new(node_id, self.app_config.clone(), actor),
+        );
 
         self.platforms
             .get_mut(&node_id)
@@ -85,7 +82,7 @@ impl FakeCluster {
             .send_start_node(self.app_config.clone(), leader);
     }
 
-    fn stop_node(&mut self, node_id: u64) {
+    pub fn stop_node(&mut self, node_id: u64) {
         self.platforms.remove(&node_id);
 
         if self.leader_id == node_id {
@@ -93,7 +90,7 @@ impl FakeCluster {
         }
     }
 
-    fn add_node_to_cluster(&mut self, node_id: u64) {
+    pub fn add_node_to_cluster(&mut self, node_id: u64) {
         self.platforms
             .get_mut(&self.leader_id)
             .unwrap()
@@ -102,7 +99,7 @@ impl FakeCluster {
         self.advance_until_added_to_cluster(node_id);
     }
 
-    fn advance_until_added_to_cluster(&mut self, node_id: u64) {
+    pub fn advance_until_added_to_cluster(&mut self, node_id: u64) {
         self.advance_until(&mut |envelope_out| match &envelope_out.msg {
             Some(out_message::Msg::CheckCluster(response)) => {
                 !response.has_pending_changes && response.cluster_replica_ids.contains(&node_id)
@@ -111,7 +108,7 @@ impl FakeCluster {
         });
     }
 
-    fn advance_until_elected_leader(&mut self, excluding_node_id: Option<u64>) {
+    pub fn advance_until_elected_leader(&mut self, excluding_node_id: Option<u64>) {
         let mut leader_id = 0;
 
         self.advance_until(&mut |envelope_out| match &envelope_out.msg {
@@ -137,7 +134,7 @@ impl FakeCluster {
         self.leader_id = leader_id;
     }
 
-    fn advance_until(
+    pub fn advance_until(
         &mut self,
         condition: &mut impl FnMut(&OutMessage) -> bool,
     ) -> Vec<OutMessage> {
@@ -152,7 +149,7 @@ impl FakeCluster {
         }
     }
 
-    fn advance(&mut self) {
+    pub fn advance(&mut self) {
         let mut messages_in: Vec<(u64, in_message::Msg)> = Vec::new();
         for (_, platform) in &mut self.platforms {
             let messages_out = platform.take_messages_out();
@@ -199,7 +196,7 @@ impl FakeCluster {
         self.print_log_messages();
     }
 
-    fn extract_pull_messages(
+    pub fn extract_pull_messages(
         &mut self,
         filter: &mut impl FnMut(&OutMessage) -> bool,
     ) -> Vec<OutMessage> {
@@ -217,7 +214,7 @@ impl FakeCluster {
         result
     }
 
-    fn print_log_messages(&mut self) {
+    pub fn print_log_messages(&mut self) {
         let messages = self.extract_pull_messages(&mut |envelope_out| match &envelope_out.msg {
             Some(out_message::Msg::Log(_)) => true,
             _ => false,
@@ -232,100 +229,19 @@ impl FakeCluster {
         }
     }
 
-    fn stop(&mut self) {}
-
-    fn send_cas_counter_request(
-        &mut self,
-        node_id: u64,
-        request_id: u64,
-        counter_name: &str,
-        expected_value: i64,
-        new_value: i64,
-    ) {
-        self.send_counter_request(
-            node_id,
-            CounterRequest {
-                id: request_id,
-                name: counter_name.to_string(),
-                op: Some(counter_request::Op::CompareAndSwap(
-                    CounterCompareAndSwapRequest {
-                        expected_value,
-                        new_value,
-                    },
-                )),
-                ..Default::default()
-            },
-        )
-    }
-
-    fn send_counter_request(&mut self, node_id: u64, counter_request: CounterRequest) {
-        self.platforms
-            .get_mut(&node_id)
-            .unwrap()
-            .send_counter_request(&counter_request);
-    }
-
-    fn advance_until_counter_response(&mut self, response_id: u64) -> CounterResponse {
-        let mut counter_response_opt: Option<CounterResponse> = None;
-        let response_messages = self.advance_until(&mut |envelope_out| match &envelope_out.msg {
-            Some(out_message::Msg::ExecuteProposal(response)) => {
-                let counter_response =
-                    CounterResponse::decode(response.result_contents.as_ref()).unwrap();
-                if counter_response.id == response_id {
-                    counter_response_opt = Some(counter_response);
-                    return true;
-                }
-                false
-            }
-            _ => false,
-        });
-
-        assert!(!response_messages.is_empty());
-
-        counter_response_opt.unwrap()
-    }
-
-    fn advance_until_cas_counter_response(
-        &mut self,
-        counter_request_id: u64,
-        counter_response_status: CounterStatus,
-        old_value: i64,
-        new_value: i64,
-    ) -> bool {
-        let counter_response = self.advance_until_counter_response(counter_request_id);
-
-        let counter_op = if counter_response_status == CounterStatus::Success {
-            Some(counter_response::Op::CompareAndSwap(
-                CounterCompareAndSwapResponse {
-                    old_value,
-                    new_value,
-                },
-            ))
-        } else {
-            None
-        };
-
-        counter_response
-            == CounterResponse {
-                id: counter_request_id,
-                status: counter_response_status.into(),
-                op: counter_op,
-            }
-    }
+    pub fn stop(&mut self) {}
 }
 
-struct FakePlatform {
+pub struct FakePlatform<A: Actor> {
     id: u64,
     messages_in: Vec<InMessage>,
     instant: u64,
-    driver: RefCell<
-        Driver<RaftSimple<MemoryStorage>, MemoryStorage, DefaultSnapshotProcessor, CounterActor>,
-    >,
+    driver: RefCell<Driver<RaftSimple<MemoryStorage>, MemoryStorage, DefaultSnapshotProcessor, A>>,
     host: RefCell<FakeHost>,
 }
 
-impl FakePlatform {
-    fn new(id: u64) -> FakePlatform {
+impl<A: Actor> FakePlatform<A> {
+    pub fn new(id: u64, app_config: Bytes, actor: A) -> FakePlatform<A> {
         FakePlatform {
             id,
             messages_in: Vec::new(),
@@ -337,13 +253,13 @@ impl FakePlatform {
                     Box::new(DefaultSnapshotSender::new()),
                     Box::new(DefaultSnapshotReceiver::new()),
                 ),
-                CounterActor::new(),
+                actor,
             )),
-            host: RefCell::new(FakeHost::new()),
+            host: RefCell::new(FakeHost::new(app_config)),
         }
     }
 
-    fn send_start_node(&mut self, app_config: Bytes, is_leader: bool) {
+    pub fn send_start_node(&mut self, app_config: Bytes, is_leader: bool) {
         self.append_meessage_in(InMessage {
             msg: Some(in_message::Msg::StartReplica(StartReplicaRequest {
                 is_leader,
@@ -364,13 +280,13 @@ impl FakePlatform {
         });
     }
 
-    fn send_stop_node(&mut self) {
+    pub fn send_stop_node(&mut self) {
         self.append_meessage_in(InMessage {
             msg: Some(in_message::Msg::StopReplica(StopReplicaRequest {})),
         });
     }
 
-    fn send_change_cluster(
+    pub fn send_change_cluster(
         &mut self,
         change_id: u64,
         replica_id: u64,
@@ -385,21 +301,29 @@ impl FakePlatform {
         });
     }
 
-    fn send_check_cluster(&mut self) {
+    pub fn send_check_cluster(&mut self) {
         self.append_meessage_in(InMessage {
             msg: Some(in_message::Msg::CheckCluster(CheckClusterRequest {})),
         });
     }
 
-    fn advance_time(&mut self, duration: u64) {
+    pub fn send_proposal(&mut self, proposal_contents: Bytes) {
+        self.append_meessage_in(InMessage {
+            msg: Some(in_message::Msg::ExecuteProposal(ExecuteProposalRequest {
+                proposal_contents,
+            })),
+        });
+    }
+
+    pub fn advance_time(&mut self, duration: u64) {
         self.instant += duration;
     }
 
-    fn append_meessage_in(&mut self, message_in: InMessage) {
+    pub fn append_meessage_in(&mut self, message_in: InMessage) {
         self.messages_in.push(message_in)
     }
 
-    fn send_messages_in(&mut self) {
+    pub fn send_messages_in(&mut self) {
         let messages = mem::take(&mut self.messages_in);
 
         let mut driver = self.driver.borrow_mut();
@@ -418,31 +342,20 @@ impl FakePlatform {
         }
     }
 
-    fn take_messages_out(&mut self) -> Vec<OutMessage> {
+    pub fn take_messages_out(&mut self) -> Vec<OutMessage> {
         self.host.borrow_mut().take_messages_out()
-    }
-
-    fn send_counter_request(&mut self, counter_request: &CounterRequest) {
-        self.append_meessage_in(InMessage {
-            msg: Some(in_message::Msg::ExecuteProposal(ExecuteProposalRequest {
-                proposal_contents: counter_request.encode_to_vec().into(),
-            })),
-        });
     }
 }
 
-struct FakeHost {
-    config: Vec<u8>,
+pub struct FakeHost {
+    config: Bytes,
     messages_out: Vec<OutMessage>,
 }
 
 impl FakeHost {
-    fn new() -> FakeHost {
+    fn new(app_config: Bytes) -> FakeHost {
         FakeHost {
-            config: CounterConfig {
-                initial_values: BTreeMap::new(),
-            }
-            .encode_to_vec(),
+            config: app_config,
             messages_out: Vec::new(),
         }
     }
@@ -458,7 +371,7 @@ impl Host for FakeHost {
     }
 
     fn get_self_config(&self) -> Vec<u8> {
-        self.config.clone()
+        self.config.clone().into()
     }
 
     fn send_messages(&mut self, mut messages: Vec<OutMessage>) {
@@ -490,92 +403,5 @@ impl Attestation for FakeAttestation {
 
     fn public_signing_key(&self) -> Vec<u8> {
         Vec::new()
-    }
-}
-
-#[cfg(test)]
-mod test {
-    use super::*;
-
-    #[test]
-    fn integration() {
-        let counter_name_1 = "counter 1";
-        let counter_value_1: i64 = 10;
-        let counter_name_2 = "counter 2";
-        let counter_value_2: i64 = 15;
-        let config = CounterConfig {
-            initial_values: BTreeMap::from([
-                (counter_name_1.to_string(), counter_value_1),
-                (counter_name_2.to_string(), counter_value_2),
-            ]),
-        };
-
-        let mut cluster = FakeCluster::new(config.encode_to_vec().into());
-
-        cluster.start_node(1, true);
-        cluster.advance_until_elected_leader(None);
-        assert!(cluster.leader_id() == 1);
-
-        cluster.start_node(2, false);
-        cluster.start_node(3, false);
-
-        cluster.add_node_to_cluster(2);
-
-        cluster.send_cas_counter_request(
-            cluster.leader_id(),
-            1,
-            counter_name_1,
-            counter_value_1,
-            counter_value_1 + 1,
-        );
-        cluster.send_cas_counter_request(
-            cluster.leader_id(),
-            2,
-            counter_name_2,
-            counter_value_2,
-            counter_value_2 + 1,
-        );
-
-        assert!(cluster.advance_until_cas_counter_response(
-            1,
-            CounterStatus::Success,
-            counter_value_1,
-            counter_value_1 + 1
-        ));
-        assert!(cluster.advance_until_cas_counter_response(
-            2,
-            CounterStatus::Success,
-            counter_value_2,
-            counter_value_2 + 1
-        ));
-
-        cluster.add_node_to_cluster(3);
-
-        cluster.send_cas_counter_request(
-            cluster.non_leader_id(),
-            3,
-            counter_name_1,
-            counter_value_1 + 1,
-            counter_value_1 + 2,
-        );
-        assert!(cluster.advance_until_cas_counter_response(3, CounterStatus::Rejected, 0, 0));
-
-        let leader_id = cluster.leader_id();
-        cluster.stop_node(leader_id);
-        cluster.advance_until_elected_leader(Some(leader_id));
-
-        cluster.send_cas_counter_request(
-            cluster.leader_id(),
-            4,
-            counter_name_2,
-            counter_value_2 + 1,
-            counter_value_2 + 2,
-        );
-        assert!(cluster.advance_until_cas_counter_response(
-            4,
-            CounterStatus::Success,
-            counter_value_2 + 1,
-            counter_value_2 + 2
-        ));
     }
 }

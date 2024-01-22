@@ -26,8 +26,9 @@ use oak_channel::server;
 use oak_core::samplestore::StaticSampleStore;
 use oak_restricted_kernel_interface::syscall;
 use oak_restricted_kernel_sdk::{FileDescriptorChannel, StderrLogger};
+use tcp_atomic_counter_service::actor::CounterActor;
 use tcp_proto::runtime::endpoint::EndpointServiceServer;
-use tcp_runtime::{examples::CounterActor, service::ApplicationService};
+use tcp_runtime::service::ApplicationService;
 
 static LOGGER: StderrLogger = StderrLogger {};
 

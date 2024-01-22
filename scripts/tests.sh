@@ -30,9 +30,9 @@ env cargo fmt --all -- --check
 # Run all tests with default features (e.g. !std, prost-codec)
 printf "\n// Running all tests with default features"
 printf "\n// cargo test --all -- --nocapture\n\n"
-env cargo test --all -- --nocapture
+env cargo test --all -- --nocapture --color always --test-threads 1
 
 # Run all tests with non-default features
 printf "\n// Running all tests with non-default features"
 printf "\n// cargo test --all --no-default-features --features std -- --nocapture\n\n"
-env cargo test --all --no-default-features --features std  -- --nocapture
+env cargo test --all --no-default-features --features std  -- --nocapture --color always --test-threads 1

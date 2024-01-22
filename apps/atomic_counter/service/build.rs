@@ -16,17 +16,12 @@ use std::io::Result;
 
 fn main() -> Result<()> {
     micro_rpc_build::compile(
-        &["src/endpoint.proto", "src/ledger.proto"],
-        &["src"],
+        &["proto/atomic_counter.proto"],
+        &["proto"],
         micro_rpc_build::CompileOptions {
             bytes: vec![
-                ".runtime.endpoint.StartReplicaRequest".to_string(),
-                ".runtime.endpoint.DeliverMessage".to_string(),
-                ".runtime.endpoint.DeliverSnapshotRequest".to_string(),
-                ".runtime.endpoint.DeliverSnapshotResponse".to_string(),
-                ".runtime.endpoint.ExecuteProposalRequest".to_string(),
-                ".runtime.endpoint.ExecuteProposalResponse".to_string(),
-                ".runtime.endpoint.Entry".to_string(),
+                ".apps.atomic_counter.service.CounterSnapshotValue".to_string(),
+                ".apps.atomic_counter.service.CounterRequest".to_string(),
             ],
             ..Default::default()
         },

@@ -1,7 +1,9 @@
 [workspace]
 resolver = "2"
 members = [
-    "apps/*",
+    "apps/ledger_app",
+    "apps/atomic_counter/*",
+    "integration",
     "runtime",
     "proto"
 ]

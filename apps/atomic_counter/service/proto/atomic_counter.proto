@@ -14,7 +14,7 @@
 
 syntax = "proto3";
 
-package examples.atomic_counter;
+package apps.atomic_counter.service;
 
 // Represents a request to execute an operation on a named counter.
 message CounterRequest {

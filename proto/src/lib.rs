@@ -17,11 +17,6 @@
 
 extern crate prost;
 
-pub mod examples {
-    pub mod atomic_counter {
-        include!(concat!(env!("OUT_DIR"), "/examples.atomic_counter.rs"));
-    }
-}
 pub mod runtime {
     pub mod endpoint {
         use prost::Message;
