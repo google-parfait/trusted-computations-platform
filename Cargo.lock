@@ -1538,6 +1538,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "tcp_ledger_service"
+version = "0.1.0"
+dependencies = [
+ "byteorder",
+ "micro_rpc",
+ "micro_rpc_build",
+ "prost",
+ "prost-types",
+]
+
+[[package]]
 name = "tcp_proto"
 version = "0.1.0"
 dependencies = [

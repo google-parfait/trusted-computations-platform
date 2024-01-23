@@ -1,4 +1,4 @@
-// Copyright 2023 The Trusted Computations Platform Authors.
+// Copyright 2024 The Trusted Computations Platform Authors.
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -12,14 +12,16 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-#![no_std]
-#![feature(never_type)]
+use std::io::Result;
 
-extern crate prost;
-
-pub mod runtime {
-    pub mod endpoint {
-        use prost::Message;
-        include!(concat!(env!("OUT_DIR"), "/runtime.endpoint.rs"));
-    }
+fn main() -> Result<()> {
+    micro_rpc_build::compile(
+        &["src/proto/ledger.proto"],
+        &["src/proto"],
+        micro_rpc_build::CompileOptions {
+            bytes: vec![],
+            ..Default::default()
+        },
+    );
+    Ok(())
 }
