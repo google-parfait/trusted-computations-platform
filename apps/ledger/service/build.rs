@@ -16,8 +16,12 @@ use std::io::Result;
 
 fn main() -> Result<()> {
     micro_rpc_build::compile(
-        &["src/proto/ledger.proto"],
-        &["src/proto"],
+        &[
+            "proto/access_policy.proto",
+            "proto/blob_header.proto",
+            "proto/ledger.proto",
+        ],
+        &["proto"],
         micro_rpc_build::CompileOptions {
             bytes: vec![],
             ..Default::default()

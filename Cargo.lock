@@ -167,6 +167,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "cfc_crypto"
+version = "0.1.0"
+dependencies = [
+ "aes-gcm",
+ "anyhow",
+ "hpke",
+]
+
+[[package]]
 name = "cfg-if"
 version = "1.0.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -416,6 +425,7 @@ dependencies = [
  "ff",
  "generic-array",
  "group",
+ "hkdf",
  "pkcs8",
  "rand_core",
  "sec1",
@@ -626,6 +636,7 @@ dependencies = [
  "generic-array",
  "hkdf",
  "hmac",
+ "p256",
  "rand_core",
  "sha2",
  "subtle",
@@ -1541,11 +1552,15 @@ dependencies = [
 name = "tcp_ledger_service"
 version = "0.1.0"
 dependencies = [
+ "anyhow",
  "byteorder",
+ "cfc_crypto",
  "micro_rpc",
  "micro_rpc_build",
  "prost",
  "prost-types",
+ "rand",
+ "sha2",
 ]
 
 [[package]]

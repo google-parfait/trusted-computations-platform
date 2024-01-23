@@ -15,6 +15,7 @@
 #![no_std]
 #![feature(never_type)]
 
+extern crate alloc;
 extern crate prost;
 
 pub mod fcp {
@@ -22,3 +23,8 @@ pub mod fcp {
         include!(concat!(env!("OUT_DIR"), "/fcp.confidentialcompute.rs"));
     }
 }
+
+pub mod ledger;
+
+mod attestation;
+mod budget;
