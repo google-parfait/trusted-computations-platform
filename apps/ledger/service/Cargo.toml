@@ -4,6 +4,10 @@ version = "0.1.0"
 edition = "2021"
 license = "Apache-2.0"
 
+[features]
+default = []
+std = ["tcp_runtime/std"]
+
 [dependencies]
 byteorder = { version = "*", default-features = false }
 micro_rpc = { workspace = true }
@@ -13,6 +17,11 @@ sha2 = { version = "*", default-features = false }
 anyhow = { version = "*", default-features = false }
 rand = { version = "*", default-features = false, features = ["getrandom"] }
 cfc_crypto = { path = "../cfc_crypto" }
+slog = { version = "2.2", default-features = false }
+tcp_runtime = { path = "../../../runtime" }
+
+[dev-dependencies]
+mockall = { version = "0.11.4" }
 
 [build-dependencies]
 micro_rpc_build = { workspace = true }

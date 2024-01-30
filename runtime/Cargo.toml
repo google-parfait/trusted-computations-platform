@@ -5,7 +5,7 @@ authors = ["people"]
 
 [features]
 default = []
-std = ["slog-term", "slog/std"]
+std = ["slog-term", "slog/std", "mockall"]
 
 [dependencies]
 raft = { workspace = true }
@@ -17,9 +17,9 @@ slog-term = { version = "2.4.0", optional = true }
 spin = { version = "0.9.8" }
 tcp_proto = { path = "../proto" }
 micro_rpc = { workspace = true }
+mockall = { version = "0.11.4", optional = true }
 
 [dev-dependencies]
-mockall = { version = "0.11.4" }
 
 [build-dependencies]
 prost-build = { version = "0.11" }

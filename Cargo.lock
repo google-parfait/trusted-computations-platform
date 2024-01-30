@@ -1557,10 +1557,13 @@ dependencies = [
  "cfc_crypto",
  "micro_rpc",
  "micro_rpc_build",
+ "mockall",
  "prost",
  "prost-types",
  "rand",
  "sha2",
+ "slog",
+ "tcp_runtime",
 ]
 
 [[package]]

@@ -12,11 +12,13 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-#![no_std]
+#![cfg_attr(not(feature = "std"), no_std)]
 #![feature(never_type)]
 
 extern crate alloc;
 extern crate prost;
+extern crate slog;
+extern crate tcp_runtime;
 
 pub mod fcp {
     pub mod confidentialcompute {
@@ -24,6 +26,7 @@ pub mod fcp {
     }
 }
 
+pub mod actor;
 pub mod ledger;
 
 mod attestation;

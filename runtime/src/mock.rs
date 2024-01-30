@@ -12,7 +12,8 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-#![cfg(all(test, feature = "std"))]
+#![cfg(feature = "std")]
+
 extern crate mockall;
 extern crate tcp_proto;
 
@@ -53,6 +54,22 @@ mock! {
         fn on_process_command(&mut self, command: Bytes) -> Result<CommandOutcome, ActorError>;
 
         fn on_apply_event(&mut self, index: u64, event: Bytes) -> Result<EventOutcome, ActorError>;
+    }
+}
+
+mock! {
+    pub ActorContext {}
+
+    impl ActorContext for ActorContext {
+        fn logger(&self) -> &Logger;
+
+        fn id(&self) -> u64;
+
+        fn instant(&self) -> u64;
+
+        fn config(&self) -> Bytes;
+
+        fn leader(&self) -> bool;
     }
 }
 

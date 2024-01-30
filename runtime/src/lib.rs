@@ -28,7 +28,7 @@ extern crate tcp_proto;
 pub mod consensus;
 pub mod driver;
 pub mod logger;
-#[cfg(all(test, feature = "std"))]
+#[cfg(feature = "std")]
 pub mod mock;
 pub mod model;
 pub mod platform;

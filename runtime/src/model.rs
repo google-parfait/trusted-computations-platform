@@ -22,7 +22,7 @@ use slog::Logger;
 
 /// Enumerates actor induced errors. Note that all errors indicate that
 /// actor cannot continue to operate and must be terminated.
-#[derive(Debug)]
+#[derive(Debug, PartialEq)]
 pub enum ActorError {
     /// An internal error.
     Internal,
