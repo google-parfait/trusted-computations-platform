@@ -976,8 +976,10 @@ impl<R: Raft<S = S>, S: Store + RaftStorage, P: SnapshotProcessor, A: Actor> Dri
     ) -> Result<(), PalError> {
         self.check_driver_started()?;
 
+        let latest_snapshot_size = self.raft.mut_store().latest_snapshot_size();
         self.stash_message(out_message::Msg::GetReplicaState(GetReplicaStateResponse {
             applied_index: self.raft_progress.applied_index,
+            latest_snapshot_size,
         }));
 
         Ok(())
@@ -1276,8 +1278,14 @@ mod test {
         envelope
     }
 
-    fn create_get_replica_state_response(applied_index: u64) -> out_message::Msg {
-        out_message::Msg::GetReplicaState(GetReplicaStateResponse { applied_index })
+    fn create_get_replica_state_response(
+        applied_index: u64,
+        latest_snapshot_size: u64,
+    ) -> out_message::Msg {
+        out_message::Msg::GetReplicaState(GetReplicaStateResponse {
+            applied_index,
+            latest_snapshot_size,
+        })
     }
 
     fn create_deliver_message_request(raft_message: &RaftMessage) -> InMessage {
@@ -1464,6 +1472,13 @@ mod test {
             self.mock_store
                 .expect_should_snapshot()
                 .return_const(should_snapshot);
+            self
+        }
+
+        fn expect_latest_snapshot_size(mut self, latest_snapshot_size: u64) -> RaftBuilder {
+            self.mock_store
+                .expect_latest_snapshot_size()
+                .return_const(latest_snapshot_size);
             self
         }
 
@@ -2512,6 +2527,9 @@ mod test {
             entry.encode_to_vec().into(),
         );
 
+        let snapshot = Bytes::from(vec![4, 5, 6]);
+        let latest_snapshot_size = snapshot.len() as u64;
+
         let mut mock_host = MockHostBuilder::new()
             .expect_public_signing_key(vec![])
             .expect_send_messages(vec![create_start_replica_response(node_id)])
@@ -2522,6 +2540,7 @@ mod test {
             )])
             .expect_send_messages(vec![create_get_replica_state_response(
                 committed_normal_entry.index,
+                latest_snapshot_size,
             )])
             .take();
 
@@ -2535,8 +2554,6 @@ mod test {
             1,
         );
         let light_ready = RaftLightReady::default();
-
-        let snapshot = Bytes::from(vec![4, 5, 6]);
 
         let raft_builder = RaftBuilder::new()
             .expect_leader(false)
@@ -2555,7 +2572,8 @@ mod test {
             )
             .expect_state(&raft_state)
             .expect_advance_ready(ready.number(), light_ready)
-            .expect_advance_apply();
+            .expect_advance_apply()
+            .expect_latest_snapshot_size(latest_snapshot_size);
 
         let snapshot_builder = SnapshotBuilder::new()
             .expect_init(node_id)

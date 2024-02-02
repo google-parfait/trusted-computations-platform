@@ -125,6 +125,8 @@ mock! {
             config_state: RaftConfigState,
             snapshot_data: Bytes,
         ) -> Result<(), RaftError>;
+
+        fn latest_snapshot_size(&self) -> u64;
     }
 }
 

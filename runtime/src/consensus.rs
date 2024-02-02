@@ -64,6 +64,10 @@ pub trait Store {
         config_state: RaftConfigState,
         snapshot_data: Bytes,
     ) -> Result<(), RaftError>;
+
+    // Returns the size of the latest snapshot (in bytes).
+    // If there are no snapshots, returns 0.
+    fn latest_snapshot_size(&self) -> u64;
 }
 
 #[derive(PartialEq, Eq, Clone, Default)]

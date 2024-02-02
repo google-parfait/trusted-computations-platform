@@ -391,6 +391,9 @@ message GetReplicaStateResponse {
   // Index of the last committed entry that has been applied to the actor on
   // this replica.
   uint64 applied_index = 1;
+
+  // Size (in bytes) of the latest snapshot.
+  uint64 latest_snapshot_size = 2;
 }
 
 service EndpointService {

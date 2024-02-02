@@ -387,6 +387,10 @@ impl Store for MemoryStorage {
             .borrow()
             .should_snapshot(applied_index, config_state)
     }
+
+    fn latest_snapshot_size(&self) -> u64 {
+        self.core.borrow().snapshot.data.len() as u64
+    }
 }
 
 impl Storage for MemoryStorage {
@@ -830,6 +834,45 @@ mod test {
 
         assert_eq!(Ok(create_snapshot(3, 3, &voters)), storage.snapshot(3, 1));
         assert_eq!(Ok(create_snapshot(3, 3, &voters)), storage.snapshot(2, 2));
+    }
+
+    #[test]
+    fn test_storage_latest_snapshot_size() {
+        let entries = vec![
+            create_empty_raft_entry(3, 3),
+            create_empty_raft_entry(4, 4),
+            create_empty_raft_entry(5, 5),
+        ];
+
+        let mut voters = vec![1];
+
+        let mut storage = create_storage(2, 2, 1, &entries, &voters);
+
+        voters = vec![1, 2];
+        let config_state = create_raft_config_state(voters.clone());
+
+        let snapshot_data = Bytes::from(vec![4, 5, 6]);
+        let snapshot_size = snapshot_data.len() as u64;
+        storage
+            .create_snapshot(3, config_state, snapshot_data)
+            .unwrap();
+
+        assert_eq!(storage.latest_snapshot_size(), snapshot_size);
+    }
+
+    #[test]
+    fn test_storage_latest_snapshot_size_no_previous_snapshot() {
+        let entries = vec![
+            create_empty_raft_entry(3, 3),
+            create_empty_raft_entry(4, 4),
+            create_empty_raft_entry(5, 5),
+        ];
+
+        let voters = vec![1];
+
+        let storage = create_storage(2, 2, 1, &entries, &voters);
+
+        assert_eq!(storage.latest_snapshot_size(), 0);
     }
 
     #[test]
