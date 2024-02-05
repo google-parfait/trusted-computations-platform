@@ -21,7 +21,7 @@ fn main() -> Result<()> {
             "proto/blob_header.proto",
             "proto/ledger.proto",
         ],
-        &["proto"],
+        &["proto", "../../../proto"],
         micro_rpc_build::CompileOptions {
             bytes: vec![],
             ..Default::default()

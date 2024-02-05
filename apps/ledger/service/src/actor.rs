@@ -12,21 +12,26 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-use crate::ledger::LedgerService;
-use alloc::boxed::Box;
-use prost::bytes::Bytes;
+use crate::attestation;
+use crate::fcp::confidentialcompute::*;
+use crate::ledger::{Ledger, LedgerService};
+
+use alloc::{boxed::Box, format, vec};
+use prost::{bytes::Bytes, Message};
 use tcp_runtime::model::{Actor, ActorContext, ActorError, CommandOutcome, EventOutcome};
+
+use slog::warn;
 
 pub struct LedgerActor {
     context: Option<Box<dyn ActorContext>>,
-    ledger: LedgerService,
+    ledger: Box<dyn Ledger>,
 }
 
 impl LedgerActor {
     pub fn new() -> Self {
         LedgerActor {
             context: None,
-            ledger: LedgerService::new(),
+            ledger: Box::new(LedgerService::new()),
         }
     }
 
@@ -35,6 +40,117 @@ impl LedgerActor {
             .as_mut()
             .expect("Context is initialized")
             .as_mut()
+    }
+
+    fn parse_request(&mut self, bytes: &Bytes) -> Result<LedgerRequest, micro_rpc::Status> {
+        let request = LedgerRequest::decode(bytes.clone()).map_err(|error| {
+            warn!(
+                self.get_context().logger(),
+                "LedgerRequest cannot be parsed: {}", error
+            );
+            micro_rpc::Status::new_with_message(
+                micro_rpc::StatusCode::InvalidArgument,
+                "LedgerRequest cannot be parsed",
+            )
+        })?;
+
+        if request.request.is_none() {
+            warn!(self.get_context().logger(), "Unknown request {:?}", request);
+            return Err(micro_rpc::Status::new_with_message(
+                micro_rpc::StatusCode::InvalidArgument,
+                "Unknown request",
+            ));
+        }
+        Ok(request)
+    }
+
+    // Handles the actor command and returns the command outcome or the status to be promptly
+    // returned to the untrusted side.
+    fn handle_command(&mut self, command: Bytes) -> Result<CommandOutcome, micro_rpc::Status> {
+        let mut request = self.parse_request(&command)?;
+
+        if !self.get_context().leader() {
+            // Not a leader.
+            warn!(
+                self.get_context().logger(),
+                "Command {:?} rejected: not a leader", request
+            );
+            return Err(micro_rpc::Status::new_with_message(
+                micro_rpc::StatusCode::Unavailable,
+                "Command rejected",
+            ));
+        }
+
+        if let Some(ledger_request::Request::AuthorizeAccess(ref mut authorize_access_request)) =
+            request.request
+        {
+            // Special case for the AuthorizeAccess where the attestation is performed
+            // as prerequisite for executing the rest of the command.
+            attestation::verify_attestation(
+                &authorize_access_request.recipient_public_key,
+                &authorize_access_request.recipient_attestation,
+                &authorize_access_request.recipient_tag,
+            )
+            .map_err(|err| {
+                micro_rpc::Status::new_with_message(
+                    micro_rpc::StatusCode::InvalidArgument,
+                    format!("attestation validation failed: {:?}", err),
+                )
+            })?;
+
+            // Empty out the attestation field
+            authorize_access_request.recipient_attestation = vec![];
+            // Encode the remaining request as the event.
+            return Ok(CommandOutcome::Event(request.encode_to_vec().into()));
+        }
+
+        // In all other cases delegate to processing the command as the event.
+        Ok(CommandOutcome::Event(command))
+    }
+
+    fn handle_event(
+        &mut self,
+        _index: u64,
+        event: Bytes,
+    ) -> Result<EventOutcome, micro_rpc::Status> {
+        let request = self.parse_request(&event)?;
+        let response_data = match request.request {
+            Some(ledger_request::Request::AuthorizeAccess(authorize_access_request)) => {
+                let response = self.ledger.authorize_access(authorize_access_request)?;
+                response.encode_to_vec()
+            }
+            Some(ledger_request::Request::CreateKey(create_key_request)) => {
+                let response = self.ledger.create_key(create_key_request)?;
+                response.encode_to_vec()
+            }
+            Some(ledger_request::Request::DeleteKey(delete_key_request)) => {
+                let response = self.ledger.delete_key(delete_key_request)?;
+                response.encode_to_vec()
+            }
+            Some(ledger_request::Request::RevokeAccess(revoke_access_request)) => {
+                let response = self.ledger.revoke_access(revoke_access_request)?;
+                response.encode_to_vec()
+            }
+            _ => {
+                return Err(micro_rpc::Status::new_with_message(
+                    micro_rpc::StatusCode::InvalidArgument,
+                    "Unexpected event type",
+                ));
+            }
+        };
+
+        Ok(EventOutcome::Response(response_data.into()))
+    }
+}
+
+impl LedgerResponse {
+    fn with_error(error: micro_rpc::Status) -> Self {
+        LedgerResponse {
+            response: Some(ledger_response::Response::Error(crate::micro_rpc::Status {
+                code: error.code as i32,
+                message: error.message.into(),
+            })),
+        }
     }
 }
 
@@ -59,7 +175,7 @@ impl Actor for LedgerActor {
 
     /// Handles restoration of the actor state from snapshot. If error is returned the actor
     /// is considered is unknown state and is destroyed.
-    fn on_load_snapshot(&mut self, snapshot: Bytes) -> Result<(), ActorError> {
+    fn on_load_snapshot(&mut self, _snapshot: Bytes) -> Result<(), ActorError> {
         Err(ActorError::Internal)
     }
 
@@ -69,14 +185,22 @@ impl Actor for LedgerActor {
     /// executed) or to propose an event for replication by the consensus module (e.g. the
     /// event to update actor state once replicated).
     fn on_process_command(&mut self, command: Bytes) -> Result<CommandOutcome, ActorError> {
-        Err(ActorError::Internal)
+        self.handle_command(command).or_else(|err| {
+            Ok(CommandOutcome::Response(
+                LedgerResponse::with_error(err).encode_to_vec().into(),
+            ))
+        })
     }
 
     /// Handles committed events by applying them to the actor state. Event represents
     /// a state transition of the actor and may result in messages being sent to the
     /// consumer (e.g. response to the command that generated this event).
     fn on_apply_event(&mut self, index: u64, event: Bytes) -> Result<EventOutcome, ActorError> {
-        Err(ActorError::Internal)
+        self.handle_event(index, event).or_else(|err| {
+            Ok(EventOutcome::Response(
+                LedgerResponse::with_error(err).encode_to_vec().into(),
+            ))
+        })
     }
 }
 

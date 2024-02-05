@@ -18,6 +18,7 @@ package fcp.confidentialcompute;
 
 import "google/protobuf/duration.proto";
 import "google/protobuf/timestamp.proto";
+import "micro_rpc/messages.proto";
 
 // The Trusted Ledger is an application built on top of Trusted Computation
 // Platform that is responsible for ensuring that access to encrypted blobs of
@@ -180,5 +181,7 @@ message LedgerResponse {
     AuthorizeAccessResponse authorize_access = 3;
     // Response for RevokeAccessRequest.
     RevokeAccessResponse revoke_access = 4;
+    // Error response for all requests.
+    micro_rpc.Status error = 5;
   }
 }

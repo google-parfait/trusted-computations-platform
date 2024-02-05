@@ -20,7 +20,7 @@ use prost::Message;
 use rand::{rngs::OsRng, RngCore};
 use sha2::{Digest, Sha256};
 
-use crate::attestation;
+use crate::attestation::Application;
 use crate::budget;
 
 use crate::fcp::confidentialcompute::{
@@ -29,7 +29,7 @@ use crate::fcp::confidentialcompute::{
     RevokeAccessRequest, RevokeAccessResponse,
 };
 
-trait Ledger {
+pub trait Ledger {
     fn create_key(
         &mut self,
         request: CreateKeyRequest,
@@ -189,18 +189,11 @@ impl Ledger for LedgerService {
             )
         })?;
 
-        // Verify the attestation and compute the properties of the requesting application.
-        let recipient_app = attestation::verify_attestation(
-            &request.recipient_public_key,
-            &request.recipient_attestation,
-            &request.recipient_tag,
-        )
-        .map_err(|err| {
-            micro_rpc::Status::new_with_message(
-                micro_rpc::StatusCode::InvalidArgument,
-                format!("attestation validation failed: {:?}", err),
-            )
-        })?;
+        // TODO(b/288331695): Attestation validation must be done before calling this method.
+        // Here the implementation assumes that the attestation has already been done.
+        let recipient_app = Application {
+            tag: &request.recipient_tag,
+        };
 
         // Decode the blob header and access policy. Since the access policy was provided by an
         // untrusted source, we need to verify it by checking the hash in the header. The header is

@@ -26,6 +26,10 @@ pub mod fcp {
     }
 }
 
+pub mod micro_rpc {
+    include!(concat!(env!("OUT_DIR"), "/micro_rpc.rs"));
+}
+
 pub mod actor;
 pub mod ledger;
 
