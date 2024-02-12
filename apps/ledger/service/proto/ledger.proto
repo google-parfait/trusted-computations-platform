@@ -185,3 +185,11 @@ message LedgerResponse {
     micro_rpc.Status error = 5;
   }
 }
+
+// Configuration message for the Trusted Ledger.
+message LedgerConfig {
+}
+
+// Snapshot message for the Trusted Ledger.
+message LedgerSnapshot {
+}

@@ -20,7 +20,7 @@ use alloc::{boxed::Box, format, vec};
 use prost::{bytes::Bytes, Message};
 use tcp_runtime::model::{Actor, ActorContext, ActorError, CommandOutcome, EventOutcome};
 
-use slog::warn;
+use slog::{debug, error, warn};
 
 pub struct LedgerActor {
     context: Option<Box<dyn ActorContext>>,
@@ -46,7 +46,7 @@ impl LedgerActor {
         let request = LedgerRequest::decode(bytes.clone()).map_err(|error| {
             warn!(
                 self.get_context().logger(),
-                "LedgerRequest cannot be parsed: {}", error
+                "LedgerActor: request cannot be parsed: {}", error
             );
             micro_rpc::Status::new_with_message(
                 micro_rpc::StatusCode::InvalidArgument,
@@ -55,7 +55,10 @@ impl LedgerActor {
         })?;
 
         if request.request.is_none() {
-            warn!(self.get_context().logger(), "Unknown request {:?}", request);
+            warn!(
+                self.get_context().logger(),
+                "LedgerActor: unknown request {:?}", request
+            );
             return Err(micro_rpc::Status::new_with_message(
                 micro_rpc::StatusCode::InvalidArgument,
                 "Unknown request",
@@ -69,11 +72,17 @@ impl LedgerActor {
     fn handle_command(&mut self, command: Bytes) -> Result<CommandOutcome, micro_rpc::Status> {
         let mut request = self.parse_request(&command)?;
 
+        debug!(
+            self.get_context().logger(),
+            "LedgerActor: handling {} command",
+            request.name()
+        );
+
         if !self.get_context().leader() {
             // Not a leader.
             warn!(
                 self.get_context().logger(),
-                "Command {:?} rejected: not a leader", request
+                "LedgerActor: command {:?} rejected: not a leader", request
             );
             return Err(micro_rpc::Status::new_with_message(
                 micro_rpc::StatusCode::Unavailable,
@@ -114,6 +123,13 @@ impl LedgerActor {
         event: Bytes,
     ) -> Result<EventOutcome, micro_rpc::Status> {
         let request = self.parse_request(&event)?;
+
+        debug!(
+            self.get_context().logger(),
+            "LedgerActor: handling {} event",
+            request.name()
+        );
+
         let response_data = match request.request {
             Some(ledger_request::Request::AuthorizeAccess(authorize_access_request)) => {
                 let response = self.ledger.authorize_access(authorize_access_request)?;
@@ -134,12 +150,24 @@ impl LedgerActor {
             _ => {
                 return Err(micro_rpc::Status::new_with_message(
                     micro_rpc::StatusCode::InvalidArgument,
-                    "Unexpected event type",
+                    "LedgerActor: unexpected event type",
                 ));
             }
         };
 
         Ok(EventOutcome::Response(response_data.into()))
+    }
+}
+
+impl LedgerRequest {
+    fn name(self: &Self) -> &'static str {
+        match self.request {
+            Some(ledger_request::Request::AuthorizeAccess(_)) => "AuthorizeAccess",
+            Some(ledger_request::Request::CreateKey(_)) => "CreateKey",
+            Some(ledger_request::Request::DeleteKey(_)) => "DeleteKey",
+            Some(ledger_request::Request::RevokeAccess(_)) => "RevokeAccess",
+            _ => "Unknown",
+        }
     }
 }
 
@@ -158,8 +186,21 @@ impl Actor for LedgerActor {
     /// Handles actor initialization. If error is returned the actor is considered
     /// in unknown state and is destroyed.
     fn on_init(&mut self, context: Box<dyn ActorContext>) -> Result<(), ActorError> {
+        if self.context.is_some() {
+            error!(
+                self.get_context().logger(),
+                "LedgerActor: already initialized"
+            );
+            return Err(ActorError::Internal);
+        }
+
         self.context = Some(context);
-        // TODO: error if already initialized
+        debug!(self.get_context().logger(), "LedgerActor: initializing");
+
+        let _ = LedgerConfig::decode(self.get_context().config().as_ref())
+            .map_err(|_| ActorError::ConfigLoading)?;
+        // TODO: use the config.
+
         Ok(())
     }
 
@@ -170,13 +211,19 @@ impl Actor for LedgerActor {
     /// Handles creation of the actor state snapshot. If error is returned the actor
     /// is considered is unknown state and is destroyed.
     fn on_save_snapshot(&mut self) -> Result<Bytes, ActorError> {
-        Err(ActorError::Internal)
+        debug!(self.get_context().logger(), "LedgerActor: saving snapshot");
+        let snapshot = LedgerSnapshot {};
+        // TODO: populate the snapshot.
+        Ok(snapshot.encode_to_vec().into())
     }
 
     /// Handles restoration of the actor state from snapshot. If error is returned the actor
     /// is considered is unknown state and is destroyed.
-    fn on_load_snapshot(&mut self, _snapshot: Bytes) -> Result<(), ActorError> {
-        Err(ActorError::Internal)
+    fn on_load_snapshot(&mut self, snapshot: Bytes) -> Result<(), ActorError> {
+        debug!(self.get_context().logger(), "LedgerActor: loading snapshot");
+        let _ = LedgerSnapshot::decode(snapshot).map_err(|_| ActorError::SnapshotLoading)?;
+        // TODO: use the snapshot.
+        Ok(())
     }
 
     /// Handles processing of a command by the actor. Command represents an intent of a
@@ -207,12 +254,18 @@ impl Actor for LedgerActor {
 #[cfg(all(test, feature = "std"))]
 mod tests {
     use super::*;
+    use tcp_runtime::logger::log::create_logger;
     use tcp_runtime::mock::MockActorContext;
 
     #[test]
     fn create_actor() {
+        let config = LedgerConfig {};
         let mut mock_context = Box::new(MockActorContext::new());
+        mock_context.expect_logger().return_const(create_logger());
         mock_context.expect_id().return_const(0u64);
+        mock_context
+            .expect_config()
+            .return_const::<Bytes>(config.encode_to_vec().into());
 
         let mut actor = LedgerActor::new();
         assert_eq!(actor.on_init(mock_context), Ok(()));
