@@ -119,33 +119,47 @@ impl LedgerActor {
 
     fn handle_event(
         &mut self,
-        _index: u64,
+        index: u64,
         event: Bytes,
     ) -> Result<EventOutcome, micro_rpc::Status> {
         let request = self.parse_request(&event)?;
 
         debug!(
             self.get_context().logger(),
-            "LedgerActor: handling {} event",
+            "LedgerActor: handling event at index {}: {}",
+            index,
             request.name()
         );
 
-        let response_data = match request.request {
+        let response = match request.request {
             Some(ledger_request::Request::AuthorizeAccess(authorize_access_request)) => {
-                let response = self.ledger.authorize_access(authorize_access_request)?;
-                response.encode_to_vec()
+                let authorize_access_response =
+                    self.ledger.authorize_access(authorize_access_request)?;
+                if !self.get_context().leader() {
+                    return Ok(EventOutcome::None);
+                }
+                ledger_response::Response::AuthorizeAccess(authorize_access_response)
             }
             Some(ledger_request::Request::CreateKey(create_key_request)) => {
-                let response = self.ledger.create_key(create_key_request)?;
-                response.encode_to_vec()
+                let create_key_response = self.ledger.create_key(create_key_request)?;
+                if !self.get_context().leader() {
+                    return Ok(EventOutcome::None);
+                }
+                ledger_response::Response::CreateKey(create_key_response)
             }
             Some(ledger_request::Request::DeleteKey(delete_key_request)) => {
-                let response = self.ledger.delete_key(delete_key_request)?;
-                response.encode_to_vec()
+                let delete_key_response = self.ledger.delete_key(delete_key_request)?;
+                if !self.get_context().leader() {
+                    return Ok(EventOutcome::None);
+                }
+                ledger_response::Response::DeleteKey(delete_key_response)
             }
             Some(ledger_request::Request::RevokeAccess(revoke_access_request)) => {
-                let response = self.ledger.revoke_access(revoke_access_request)?;
-                response.encode_to_vec()
+                let revoke_access_response = self.ledger.revoke_access(revoke_access_request)?;
+                if !self.get_context().leader() {
+                    return Ok(EventOutcome::None);
+                }
+                ledger_response::Response::RevokeAccess(revoke_access_response)
             }
             _ => {
                 return Err(micro_rpc::Status::new_with_message(
@@ -155,7 +169,13 @@ impl LedgerActor {
             }
         };
 
-        Ok(EventOutcome::Response(response_data.into()))
+        Ok(EventOutcome::Response(
+            LedgerResponse {
+                response: Some(response),
+            }
+            .encode_to_vec()
+            .into(),
+        ))
     }
 }
 

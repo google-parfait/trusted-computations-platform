@@ -1563,6 +1563,8 @@ dependencies = [
  "rand",
  "sha2",
  "slog",
+ "tcp_integration",
+ "tcp_proto",
  "tcp_runtime",
 ]
 

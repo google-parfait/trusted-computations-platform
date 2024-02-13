@@ -22,6 +22,8 @@ tcp_runtime = { path = "../../../runtime" }
 
 [dev-dependencies]
 mockall = { version = "0.11.4" }
+tcp_integration = { path = "../../../integration", features = ["std"] }
+tcp_proto = { path = "../../../proto" }
 
 [build-dependencies]
 micro_rpc_build = { workspace = true }

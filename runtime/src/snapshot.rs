@@ -335,6 +335,15 @@ impl SnapshotProcessor for DefaultSnapshotProcessor {
     }
 }
 
+/// Calculates the number of chunks needed to transmit a snapshot.
+fn chunk_count(snapshot_size: u64, chunk_size: u64) -> u64 {
+    if snapshot_size > 0 {
+        (snapshot_size - 1) / chunk_size + 1
+    } else {
+        1
+    }
+}
+
 struct SnapshotSenderState {
     logger: Logger,
     snapshot_id: u32,
@@ -365,7 +374,7 @@ impl SnapshotSenderState {
             snapshot_metadata,
             snapshot_data,
             chunk_size,
-            chunk_count: (snapshot_size - 1) / chunk_size + 1,
+            chunk_count: chunk_count(snapshot_size, chunk_size),
             next_chunk_index: 0,
             sent_chunk_count: 0,
             pending_chunks: HashMap::new(),
@@ -741,7 +750,7 @@ impl ReceiverState {
             snapshot_size,
             snapshot_metadata,
             chunk_size,
-            chunk_count: (snapshot_size - 1) / chunk_size + 1,
+            chunk_count: chunk_count(snapshot_size, chunk_size),
             chunks,
         }
     }
