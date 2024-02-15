@@ -16,6 +16,8 @@ use alloc::{collections::BTreeMap, format, vec::Vec};
 use anyhow::anyhow;
 use core::time::Duration;
 
+use cfc_crypto::PrivateKey;
+use hpke::{Deserializable, Serializable};
 use prost::Message;
 use rand::{rngs::OsRng, RngCore};
 use sha2::{Digest, Sha256};
@@ -23,11 +25,7 @@ use sha2::{Digest, Sha256};
 use crate::attestation::Application;
 use crate::budget;
 
-use crate::fcp::confidentialcompute::{
-    AuthorizeAccessRequest, AuthorizeAccessResponse, BlobHeader, CreateKeyRequest,
-    CreateKeyResponse, DataAccessPolicy, DeleteKeyRequest, DeleteKeyResponse, PublicKeyDetails,
-    RevokeAccessRequest, RevokeAccessResponse,
-};
+use crate::fcp::confidentialcompute::*;
 
 pub trait Ledger {
     fn create_key(
@@ -97,55 +95,49 @@ impl LedgerService {
             .clone()
             .map_or(Ok(Duration::ZERO), <Duration>::try_from)
     }
-}
 
-impl Ledger for LedgerService {
-    fn create_key(
-        &mut self,
+    pub fn produce_create_key_event(
+        &self,
         request: CreateKeyRequest,
-    ) -> Result<CreateKeyResponse, micro_rpc::Status> {
-        self.update_current_time(&request.now).map_err(|err| {
+    ) -> Result<CreateKeyEvent, micro_rpc::Status> {
+        let now = Self::parse_timestamp(&request.now).map_err(|err| {
             micro_rpc::Status::new_with_message(
                 micro_rpc::StatusCode::InvalidArgument,
                 format!("`now` is invalid: {:?}", err),
             )
         })?;
+
         let ttl = Self::parse_duration(&request.ttl).map_err(|err| {
             micro_rpc::Status::new_with_message(
                 micro_rpc::StatusCode::InvalidArgument,
                 format!("`ttl` is invalid: {:?}", err),
             )
         })?;
+
         // The expiration time cannot overflow because proto Timestamps and Durations are signed
         // but Rust's Durations are unsigned.
-        let expiration = self.current_time + ttl;
+        let expiration = now + ttl;
 
         // Find an available key id. The number of keys is expected to remain small, so this is
         // unlikely to require more than 1 or 2 attempts.
+        // This relies on the state at the time when the event is produced, so there is
+        // an extremely tiny chance of key_id collision by the time when the event is applied.
+        // The code that applies the event must ensure that there is no collision.
         let mut key_id: u32;
         while {
             key_id = OsRng.next_u32();
             self.per_key_ledgers.contains_key(&key_id)
         } {}
 
-        // Construct and save a new keypair.
+        // Construct a new keypair.
         let (private_key, public_key) = cfc_crypto::gen_keypair();
-        self.per_key_ledgers.insert(
-            key_id,
-            PerKeyLedger {
-                private_key,
-                public_key: public_key.clone(),
-                expiration,
-                budget_tracker: budget::BudgetTracker::new(),
-            },
-        );
 
-        // Construct the response.
+        // Construct the details for the new key.
         let public_key_details = PublicKeyDetails {
             public_key_id: key_id,
             issued: Some(prost_types::Timestamp {
-                seconds: self.current_time.as_secs().try_into().unwrap(),
-                nanos: self.current_time.subsec_nanos().try_into().unwrap(),
+                seconds: now.as_secs().try_into().unwrap(),
+                nanos: now.subsec_nanos().try_into().unwrap(),
             }),
             expiration: Some(prost_types::Timestamp {
                 seconds: expiration.as_secs().try_into().map_err(|_| {
@@ -156,13 +148,86 @@ impl Ledger for LedgerService {
                 })?,
                 nanos: expiration.subsec_nanos().try_into().unwrap(),
             }),
+        };
+
+        // Construct the event
+        Ok(CreateKeyEvent {
+            public_key,
+            private_key: private_key.to_bytes().to_vec(),
+            public_key_details: Some(public_key_details),
+        })
+    }
+
+    pub fn apply_create_key_event(
+        &mut self,
+        event: CreateKeyEvent,
+    ) -> Result<CreateKeyResponse, micro_rpc::Status> {
+        let public_key_details = event.public_key_details.ok_or_else(|| {
+            micro_rpc::Status::new_with_message(
+                micro_rpc::StatusCode::InvalidArgument,
+                "`public_key_details` is missing",
+            )
+        })?;
+
+        self.update_current_time(&public_key_details.issued)
+            .map_err(|err| {
+                micro_rpc::Status::new_with_message(
+                    micro_rpc::StatusCode::InvalidArgument,
+                    format!("`public_key_details.issued` is invalid: {:?}", err),
+                )
+            })?;
+
+        let expiration = Self::parse_timestamp(&public_key_details.expiration).map_err(|err| {
+            micro_rpc::Status::new_with_message(
+                micro_rpc::StatusCode::InvalidArgument,
+                format!("`public_key_details.expiration` is invalid: {:?}", err),
+            )
+        })?;
+
+        let key_id = public_key_details.public_key_id;
+
+        // Verify that there is no key_id collision
+        if self.per_key_ledgers.contains_key(&key_id) {
+            return Err(micro_rpc::Status::new_with_message(
+                micro_rpc::StatusCode::InvalidArgument,
+                "Cannot commit changes for already used key_id",
+            ));
         }
-        .encode_to_vec();
+
+        let public_key = event.public_key;
+        let private_key = PrivateKey::from_bytes(&event.private_key).map_err(|err| {
+            micro_rpc::Status::new_with_message(
+                micro_rpc::StatusCode::InvalidArgument,
+                format!("failed to parse `private_key`: {:?}", err),
+            )
+        })?;
+
+        // Insert keys
+        self.per_key_ledgers.insert(
+            key_id,
+            PerKeyLedger {
+                private_key,
+                public_key: public_key.clone(),
+                expiration,
+                budget_tracker: budget::BudgetTracker::new(),
+            },
+        );
+
         Ok(CreateKeyResponse {
             public_key,
-            public_key_details,
+            public_key_details: public_key_details.encode_to_vec(),
             ..Default::default()
         })
+    }
+}
+
+impl Ledger for LedgerService {
+    fn create_key(
+        &mut self,
+        request: CreateKeyRequest,
+    ) -> Result<CreateKeyResponse, micro_rpc::Status> {
+        let create_key_event = self.produce_create_key_event(request)?;
+        self.apply_create_key_event(create_key_event)
     }
 
     fn delete_key(

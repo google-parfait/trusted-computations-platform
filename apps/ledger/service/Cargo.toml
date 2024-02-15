@@ -19,6 +19,7 @@ rand = { version = "*", default-features = false, features = ["getrandom"] }
 cfc_crypto = { path = "../cfc_crypto" }
 slog = { version = "2.2", default-features = false }
 tcp_runtime = { path = "../../../runtime" }
+hpke = { version = "*" }
 
 [dev-dependencies]
 mockall = { version = "0.11.4" }

@@ -24,14 +24,14 @@ use slog::{debug, error, warn};
 
 pub struct LedgerActor {
     context: Option<Box<dyn ActorContext>>,
-    ledger: Box<dyn Ledger>,
+    ledger: LedgerService,
 }
 
 impl LedgerActor {
     pub fn new() -> Self {
         LedgerActor {
             context: None,
-            ledger: Box::new(LedgerService::new()),
+            ledger: LedgerService::new(),
         }
     }
 
@@ -42,8 +42,10 @@ impl LedgerActor {
             .as_mut()
     }
 
-    fn parse_request(&mut self, bytes: &Bytes) -> Result<LedgerRequest, micro_rpc::Status> {
-        let request = LedgerRequest::decode(bytes.clone()).map_err(|error| {
+    // Handles the actor command and returns the command outcome or the status to be promptly
+    // returned to the untrusted side.
+    fn handle_command(&mut self, command: Bytes) -> Result<CommandOutcome, micro_rpc::Status> {
+        let ledger_request = LedgerRequest::decode(command.clone()).map_err(|error| {
             warn!(
                 self.get_context().logger(),
                 "LedgerActor: request cannot be parsed: {}", error
@@ -54,35 +56,18 @@ impl LedgerActor {
             )
         })?;
 
-        if request.request.is_none() {
-            warn!(
-                self.get_context().logger(),
-                "LedgerActor: unknown request {:?}", request
-            );
-            return Err(micro_rpc::Status::new_with_message(
-                micro_rpc::StatusCode::InvalidArgument,
-                "Unknown request",
-            ));
-        }
-        Ok(request)
-    }
-
-    // Handles the actor command and returns the command outcome or the status to be promptly
-    // returned to the untrusted side.
-    fn handle_command(&mut self, command: Bytes) -> Result<CommandOutcome, micro_rpc::Status> {
-        let mut request = self.parse_request(&command)?;
-
         debug!(
             self.get_context().logger(),
             "LedgerActor: handling {} command",
-            request.name()
+            ledger_request.name()
         );
 
         if !self.get_context().leader() {
             // Not a leader.
             warn!(
                 self.get_context().logger(),
-                "LedgerActor: command {:?} rejected: not a leader", request
+                "LedgerActor: command {} rejected: not a leader",
+                ledger_request.name()
             );
             return Err(micro_rpc::Status::new_with_message(
                 micro_rpc::StatusCode::Unavailable,
@@ -90,31 +75,55 @@ impl LedgerActor {
             ));
         }
 
-        if let Some(ledger_request::Request::AuthorizeAccess(ref mut authorize_access_request)) =
-            request.request
-        {
-            // Special case for the AuthorizeAccess where the attestation is performed
-            // as prerequisite for executing the rest of the command.
-            attestation::verify_attestation(
-                &authorize_access_request.recipient_public_key,
-                &authorize_access_request.recipient_attestation,
-                &authorize_access_request.recipient_tag,
-            )
-            .map_err(|err| {
-                micro_rpc::Status::new_with_message(
-                    micro_rpc::StatusCode::InvalidArgument,
-                    format!("attestation validation failed: {:?}", err),
+        let event = match ledger_request.request {
+            Some(ledger_request::Request::AuthorizeAccess(mut authorize_access_request)) => {
+                // Special case for the AuthorizeAccess where the attestation is performed
+                // as prerequisite for executing the rest of the command.
+                attestation::verify_attestation(
+                    &authorize_access_request.recipient_public_key,
+                    &authorize_access_request.recipient_attestation,
+                    &authorize_access_request.recipient_tag,
                 )
-            })?;
+                .map_err(|err| {
+                    micro_rpc::Status::new_with_message(
+                        micro_rpc::StatusCode::InvalidArgument,
+                        format!("attestation validation failed: {:?}", err),
+                    )
+                })?;
+                // Empty out the attestation field
+                authorize_access_request.recipient_attestation = vec![];
+                ledger_event::Event::AuthorizeAccess(authorize_access_request)
+            }
+            Some(ledger_request::Request::CreateKey(create_key_request)) => {
+                // Special case for the CreateKey where the public/private keypair
+                // has to be created in advance and replicated so that exactly the
+                // same keypair is stored on every replica.
+                let create_key_event = self.ledger.produce_create_key_event(create_key_request)?;
+                ledger_event::Event::CreateKey(create_key_event)
+            }
+            Some(ledger_request::Request::DeleteKey(delete_key_request)) => {
+                // In this case the original request is replicated as the event.
+                ledger_event::Event::DeleteKey(delete_key_request)
+            }
+            Some(ledger_request::Request::RevokeAccess(revoke_access_request)) => {
+                // In this case the original request is replicated as the event.
+                ledger_event::Event::RevokeAccess(revoke_access_request)
+            }
+            _ => {
+                warn!(
+                    self.get_context().logger(),
+                    "LedgerActor: unknown request {:?}", ledger_request
+                );
+                return Err(micro_rpc::Status::new_with_message(
+                    micro_rpc::StatusCode::InvalidArgument,
+                    "LedgerActor: unexpected request type",
+                ));
+            }
+        };
 
-            // Empty out the attestation field
-            authorize_access_request.recipient_attestation = vec![];
-            // Encode the remaining request as the event.
-            return Ok(CommandOutcome::Event(request.encode_to_vec().into()));
-        }
-
-        // In all other cases delegate to processing the command as the event.
-        Ok(CommandOutcome::Event(command))
+        Ok(CommandOutcome::Event(
+            LedgerEvent { event: Some(event) }.encode_to_vec().into(),
+        ))
     }
 
     fn handle_event(
@@ -122,17 +131,26 @@ impl LedgerActor {
         index: u64,
         event: Bytes,
     ) -> Result<EventOutcome, micro_rpc::Status> {
-        let request = self.parse_request(&event)?;
+        let ledger_event = LedgerEvent::decode(event.clone()).map_err(|error| {
+            warn!(
+                self.get_context().logger(),
+                "LedgerActor: event cannot be parsed: {}", error
+            );
+            micro_rpc::Status::new_with_message(
+                micro_rpc::StatusCode::InvalidArgument,
+                "LedgerRequest cannot be parsed",
+            )
+        })?;
 
         debug!(
             self.get_context().logger(),
             "LedgerActor: handling event at index {}: {}",
             index,
-            request.name()
+            ledger_event.name()
         );
 
-        let response = match request.request {
-            Some(ledger_request::Request::AuthorizeAccess(authorize_access_request)) => {
+        let response = match ledger_event.event {
+            Some(ledger_event::Event::AuthorizeAccess(authorize_access_request)) => {
                 let authorize_access_response =
                     self.ledger.authorize_access(authorize_access_request)?;
                 if !self.get_context().leader() {
@@ -140,21 +158,21 @@ impl LedgerActor {
                 }
                 ledger_response::Response::AuthorizeAccess(authorize_access_response)
             }
-            Some(ledger_request::Request::CreateKey(create_key_request)) => {
-                let create_key_response = self.ledger.create_key(create_key_request)?;
+            Some(ledger_event::Event::CreateKey(create_key_event)) => {
+                let create_key_response = self.ledger.apply_create_key_event(create_key_event)?;
                 if !self.get_context().leader() {
                     return Ok(EventOutcome::None);
                 }
                 ledger_response::Response::CreateKey(create_key_response)
             }
-            Some(ledger_request::Request::DeleteKey(delete_key_request)) => {
+            Some(ledger_event::Event::DeleteKey(delete_key_request)) => {
                 let delete_key_response = self.ledger.delete_key(delete_key_request)?;
                 if !self.get_context().leader() {
                     return Ok(EventOutcome::None);
                 }
                 ledger_response::Response::DeleteKey(delete_key_response)
             }
-            Some(ledger_request::Request::RevokeAccess(revoke_access_request)) => {
+            Some(ledger_event::Event::RevokeAccess(revoke_access_request)) => {
                 let revoke_access_response = self.ledger.revoke_access(revoke_access_request)?;
                 if !self.get_context().leader() {
                     return Ok(EventOutcome::None);
@@ -162,6 +180,10 @@ impl LedgerActor {
                 ledger_response::Response::RevokeAccess(revoke_access_response)
             }
             _ => {
+                warn!(
+                    self.get_context().logger(),
+                    "LedgerActor: unknown event {:?}", ledger_event
+                );
                 return Err(micro_rpc::Status::new_with_message(
                     micro_rpc::StatusCode::InvalidArgument,
                     "LedgerActor: unexpected event type",
@@ -186,6 +208,18 @@ impl LedgerRequest {
             Some(ledger_request::Request::CreateKey(_)) => "CreateKey",
             Some(ledger_request::Request::DeleteKey(_)) => "DeleteKey",
             Some(ledger_request::Request::RevokeAccess(_)) => "RevokeAccess",
+            _ => "Unknown",
+        }
+    }
+}
+
+impl LedgerEvent {
+    fn name(self: &Self) -> &'static str {
+        match self.event {
+            Some(ledger_event::Event::AuthorizeAccess(_)) => "AuthorizeAccess",
+            Some(ledger_event::Event::CreateKey(_)) => "CreateKey",
+            Some(ledger_event::Event::DeleteKey(_)) => "DeleteKey",
+            Some(ledger_event::Event::RevokeAccess(_)) => "RevokeAccess",
             _ => "Unknown",
         }
     }
