@@ -169,7 +169,7 @@ impl Actor for CounterActor {
         let mut status = CounterStatus::Success;
 
         match CounterRequest::decode(command.clone()) {
-            Ok(request) => {
+            Ok(mut request) => {
                 debug!(
                     self.get_context().logger(),
                     "Processing #{} command", request.id
@@ -194,8 +194,10 @@ impl Actor for CounterActor {
                     );
                 }
 
+                // Clear out context so that it is not replicated.
+                request.context = Bytes::new();
                 if let CounterStatus::Success = status {
-                    return Ok(CommandOutcome::Event(command));
+                    return Ok(CommandOutcome::Event(request.encode_to_vec().into()));
                 }
             }
             Err(e) => {
