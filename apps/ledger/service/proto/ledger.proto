@@ -213,9 +213,62 @@ message LedgerResponse {
 }
 
 // Configuration message for the Trusted Ledger.
-message LedgerConfig {
+message LedgerConfig {}
+
+// Snapshot of a blob budget.
+message BlobBudgetSnapshot {
+  // Blob ID.
+  bytes blob_id = 1;
+
+  // Per-transform budgets.
+  repeated uint32 transform_access_budgets = 2;
+
+  // Budgets that are shared between transforms.
+  repeated uint32 shared_access_budgets = 3;
+}
+
+// Snapshot of state per access policy, which includes all blobs covered by that
+// policy.
+message PerPolicyBudgetSnapshot {
+  // Access policy SHA-256 hash
+  bytes access_policy_sha256 = 1;
+
+  // Per-blob budgets.
+  repeated BlobBudgetSnapshot budgets = 2;
+}
+
+message BudgetSnapshot {
+  // Budget data per access policy.
+  repeated PerPolicyBudgetSnapshot per_policy_snapshots = 1;
+
+  // Blob ids whose budgets have been consumed.
+  repeated bytes consumed_budgets = 2;
+}
+
+// Snapshot of state per public/private keypair.
+message PerKeySnapshot {
+  // ID of the public key.
+  fixed32 public_key_id = 1;
+
+  // The serialized bytes of the public key.
+  bytes public_key = 2;
+
+  // The serialized bytes of the private key.
+  bytes private_key = 3;
+
+  // Expiration for this public/private keypair.
+  google.protobuf.Timestamp expiration = 4;
+
+  // All budgets related to the current public/private keypair.
+  BudgetSnapshot budgets = 5;
 }
 
 // Snapshot message for the Trusted Ledger.
 message LedgerSnapshot {
+  // Last known current time at the moment when the snapshot was taken.
+  google.protobuf.Timestamp current_time = 1;
+
+  // Maps public key id to the the public/private keypair specific data
+  // snapshot.
+  repeated PerKeySnapshot per_key_snapshots = 2;
 }

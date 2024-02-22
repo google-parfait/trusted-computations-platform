@@ -21,7 +21,8 @@ use alloc::{
 };
 
 use crate::fcp::confidentialcompute::{
-    access_budget::Kind as AccessBudgetKind, AccessBudget, DataAccessPolicy,
+    access_budget::Kind as AccessBudgetKind, AccessBudget, BlobBudgetSnapshot, BudgetSnapshot,
+    DataAccessPolicy, PerPolicyBudgetSnapshot,
 };
 
 /// The remaining privacy budget for an individual blob.
@@ -248,6 +249,31 @@ impl BudgetTracker {
                 map.remove(blob_id);
             }
         }
+    }
+
+    pub fn save_snapshot(&self) -> BudgetSnapshot {
+        let mut snapshot = BudgetSnapshot::default();
+
+        for (access_policy_sha256, budgets) in &self.budgets {
+            let mut per_policy_snapshot = PerPolicyBudgetSnapshot::default();
+            per_policy_snapshot.access_policy_sha256 = access_policy_sha256.clone();
+
+            for (blob_id, blob_budget) in budgets {
+                per_policy_snapshot.budgets.push(BlobBudgetSnapshot {
+                    blob_id: blob_id.clone(),
+                    transform_access_budgets: blob_budget.transform_access_budgets.clone(),
+                    shared_access_budgets: blob_budget.shared_access_budgets.clone(),
+                });
+            }
+
+            snapshot.per_policy_snapshots.push(per_policy_snapshot);
+        }
+
+        for blob_id in &self.consumed_budgets {
+            snapshot.consumed_budgets.push(blob_id.clone());
+        }
+
+        snapshot
     }
 }
 
@@ -702,6 +728,85 @@ mod tests {
         assert_eq!(
             tracker.update_budget(blob_id, transform_index, &policy2, policy_hash2),
             Ok(())
+        );
+    }
+
+    #[test]
+    fn test_updated_budget_snapshot() {
+        let mut tracker = BudgetTracker::default();
+        let app = Application { tag: "tag" };
+        let policy = DataAccessPolicy {
+            transforms: vec![Transform {
+                src: 0,
+                access_budget: Some(AccessBudget {
+                    kind: Some(AccessBudgetKind::Times(2)),
+                }),
+                ..Default::default()
+            }],
+            ..Default::default()
+        };
+        let policy_hash = b"hash";
+        let blob_id = b"blob-id";
+
+        let transform_index = tracker
+            .find_matching_transform(blob_id, /* node_id= */ 0, &policy, policy_hash, &app)
+            .unwrap();
+        assert_eq!(
+            tracker.update_budget(blob_id, transform_index, &policy, policy_hash),
+            Ok(()),
+        );
+
+        assert_eq!(
+            tracker.save_snapshot(),
+            BudgetSnapshot {
+                per_policy_snapshots: vec![PerPolicyBudgetSnapshot {
+                    access_policy_sha256: policy_hash.to_vec(),
+                    budgets: vec![BlobBudgetSnapshot {
+                        blob_id: blob_id.to_vec(),
+                        transform_access_budgets: vec![1],
+                        shared_access_budgets: vec![],
+                    }],
+                }],
+                consumed_budgets: vec![],
+            }
+        );
+    }
+
+    #[test]
+    fn test_consumed_budget_snapshot() {
+        let mut tracker = BudgetTracker::default();
+        let app = Application { tag: "tag" };
+        let policy = DataAccessPolicy {
+            transforms: vec![Transform {
+                src: 0,
+                access_budget: Some(AccessBudget {
+                    kind: Some(AccessBudgetKind::Times(1)),
+                }),
+                ..Default::default()
+            }],
+            ..Default::default()
+        };
+        let policy_hash = b"hash";
+        let blob_id = b"blob-id";
+
+        let transform_index = tracker
+            .find_matching_transform(blob_id, /* node_id= */ 0, &policy, policy_hash, &app)
+            .unwrap();
+        assert_eq!(
+            tracker.update_budget(blob_id, transform_index, &policy, policy_hash),
+            Ok(()),
+        );
+        tracker.consume_budget(blob_id);
+
+        assert_eq!(
+            tracker.save_snapshot(),
+            BudgetSnapshot {
+                per_policy_snapshots: vec![PerPolicyBudgetSnapshot {
+                    access_policy_sha256: policy_hash.to_vec(),
+                    budgets: vec![],
+                }],
+                consumed_budgets: vec![blob_id.to_vec()],
+            }
         );
     }
 }

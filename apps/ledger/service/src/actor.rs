@@ -12,7 +12,6 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-use crate::attestation;
 use crate::fcp::confidentialcompute::*;
 use crate::ledger::{Ledger, LedgerService};
 
@@ -79,15 +78,10 @@ impl LedgerActor {
             Some(ledger_request::Request::AuthorizeAccess(mut authorize_access_request)) => {
                 // Special case for the AuthorizeAccess where the attestation is performed
                 // as prerequisite for executing the rest of the command.
-                attestation::verify_attestation(
-                    &authorize_access_request.recipient_public_key,
-                    &authorize_access_request.recipient_attestation,
-                    &authorize_access_request.recipient_tag,
-                )
-                .map_err(|err| {
+                LedgerService::verify_attestation(&authorize_access_request).map_err(|error| {
                     micro_rpc::Status::new_with_message(
                         micro_rpc::StatusCode::InvalidArgument,
-                        format!("attestation validation failed: {:?}", err),
+                        format!("attestation validation failed: {:?}", error),
                     )
                 })?;
                 // Empty out the attestation field
@@ -266,7 +260,13 @@ impl Actor for LedgerActor {
     /// is considered is unknown state and is destroyed.
     fn on_save_snapshot(&mut self) -> Result<Bytes, ActorError> {
         debug!(self.get_context().logger(), "LedgerActor: saving snapshot");
-        let snapshot = LedgerSnapshot {};
+        let snapshot = self.ledger.save_snapshot().map_err(|error| {
+            error!(
+                self.get_context().logger(),
+                "LedgerActor: failed to save snapshot: {}", error
+            );
+            ActorError::Internal
+        })?;
         // TODO: populate the snapshot.
         Ok(snapshot.encode_to_vec().into())
     }
