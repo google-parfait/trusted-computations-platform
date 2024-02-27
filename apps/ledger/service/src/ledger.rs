@@ -23,7 +23,7 @@ use rand::{rngs::OsRng, RngCore};
 use sha2::{Digest, Sha256};
 
 use crate::attestation::{self, Application};
-use crate::budget;
+use crate::budget::{self, BudgetTracker};
 
 use crate::fcp::confidentialcompute::*;
 
@@ -247,6 +247,54 @@ impl LedgerService {
         }
         Ok(snapshot)
     }
+
+    pub fn load_snapshot(&mut self, snapshot: LedgerSnapshot) -> Result<(), micro_rpc::Status> {
+        self.current_time = Self::parse_timestamp(&snapshot.current_time).map_err(|err| {
+            micro_rpc::Status::new_with_message(
+                micro_rpc::StatusCode::InvalidArgument,
+                format!("`current_time` is invalid: {:?}", err),
+            )
+        })?;
+        self.per_key_ledgers.clear();
+
+        for per_key_snapshot in snapshot.per_key_snapshots {
+            let mut per_key_ledger = PerKeyLedger {
+                private_key: PrivateKey::from_bytes(&per_key_snapshot.private_key).map_err(
+                    |err| {
+                        micro_rpc::Status::new_with_message(
+                            micro_rpc::StatusCode::InvalidArgument,
+                            format!("failed to parse `private_key`: {:?}", err),
+                        )
+                    },
+                )?,
+                public_key: per_key_snapshot.public_key,
+                expiration: Self::parse_timestamp(&per_key_snapshot.expiration).map_err(|err| {
+                    micro_rpc::Status::new_with_message(
+                        micro_rpc::StatusCode::InvalidArgument,
+                        format!("`expiration` is invalid: {:?}", err),
+                    )
+                })?,
+                budget_tracker: BudgetTracker::new(),
+            };
+            if per_key_snapshot.budgets.is_some() {
+                per_key_ledger
+                    .budget_tracker
+                    .load_snapshot(per_key_snapshot.budgets.unwrap())?;
+            }
+            if self
+                .per_key_ledgers
+                .insert(per_key_snapshot.public_key_id, per_key_ledger)
+                .is_some()
+            {
+                return Err(micro_rpc::Status::new_with_message(
+                    micro_rpc::StatusCode::InvalidArgument,
+                    "Duplicated `public_key_id` in the snapshot",
+                ));
+            }
+        }
+
+        Ok(())
+    }
 }
 
 impl Ledger for LedgerService {
@@ -393,31 +441,12 @@ impl Ledger for LedgerService {
 mod tests {
     use super::*;
 
+    use crate::assert_err;
     use crate::fcp::confidentialcompute::{
         access_budget::Kind as AccessBudgetKind, data_access_policy::Transform, AccessBudget,
         ApplicationMatcher,
     };
     use alloc::{borrow::ToOwned, vec};
-
-    /// Macro asserting that a result is failed with a particular code and message.
-    macro_rules! assert_err {
-        ($left:expr, $code:expr, $substr:expr) => {
-            match (&$left, &$code, &$substr) {
-                (left_val, code_val, substr_val) =>
-                    assert!(
-                        (*left_val).as_ref().is_err_and(
-                            |err| err.code == *code_val && err.message.contains(*substr_val)),
-                            "assertion failed: \
-                             `(val.err().code == code && val.err().message.contains(substr)`\n\
-                             val: {:?}\n\
-                             code: {:?}\n\
-                             substr: {:?}",
-                            left_val,
-                            code_val,
-                            substr_val)
-            }
-        };
-    }
 
     /// Helper function to create a LedgerService with one key.
     fn create_ledger_service() -> (LedgerService, Vec<u8>, u32) {
@@ -1112,6 +1141,95 @@ mod tests {
                     }),
                 }],
             }
+        );
+    }
+
+    #[test]
+    fn test_load_snapshot() {
+        let mut ledger = LedgerService::default();
+        let (private_key, public_key) = cfc_crypto::gen_keypair();
+        let snapshot = LedgerSnapshot {
+            current_time: Some(prost_types::Timestamp {
+                seconds: 1000,
+                ..Default::default()
+            }),
+            per_key_snapshots: vec![
+                PerKeySnapshot {
+                    public_key_id: 1,
+                    public_key: public_key.clone(),
+                    private_key: private_key.to_bytes().to_vec(),
+                    expiration: Some(prost_types::Timestamp {
+                        seconds: 2000,
+                        ..Default::default()
+                    }),
+                    budgets: Some(BudgetSnapshot {
+                        per_policy_snapshots: vec![PerPolicyBudgetSnapshot {
+                            access_policy_sha256: b"hash1".to_vec(),
+                            budgets: vec![BlobBudgetSnapshot {
+                                blob_id: b"blob1".to_vec(),
+                                ..Default::default()
+                            }],
+                        }],
+                        consumed_budgets: vec![],
+                    }),
+                },
+                PerKeySnapshot {
+                    public_key_id: 2,
+                    public_key: public_key.clone(),
+                    private_key: private_key.to_bytes().to_vec(),
+                    expiration: Some(prost_types::Timestamp {
+                        seconds: 2500,
+                        ..Default::default()
+                    }),
+                    budgets: Some(BudgetSnapshot {
+                        per_policy_snapshots: vec![],
+                        consumed_budgets: vec![b"blob2".to_vec()],
+                    }),
+                },
+            ],
+        };
+        // Load the snapshot then save a new one and verify that the same
+        // snapshot is produced.
+        assert_eq!(ledger.load_snapshot(snapshot.clone()), Ok(()));
+        assert_eq!(ledger.save_snapshot(), Ok(snapshot));
+    }
+
+    #[test]
+    fn test_load_snapshot_replaces_state() {
+        let (mut ledger, _, _) = create_ledger_service();
+        let snapshot = LedgerSnapshot {
+            current_time: Some(prost_types::Timestamp::default()),
+            ..Default::default()
+        };
+        assert_ne!(ledger.save_snapshot(), Ok(snapshot.clone()));
+        assert_eq!(ledger.load_snapshot(snapshot.clone()), Ok(()));
+        assert_eq!(ledger.save_snapshot(), Ok(snapshot));
+    }
+
+    #[test]
+    fn test_load_snapshot_duplicating_public_key_id() {
+        let mut ledger = LedgerService::default();
+        let (private_key, public_key) = cfc_crypto::gen_keypair();
+        assert_err!(
+            ledger.load_snapshot(LedgerSnapshot {
+                current_time: Some(prost_types::Timestamp::default()),
+                per_key_snapshots: vec![
+                    PerKeySnapshot {
+                        public_key_id: 1,
+                        public_key: public_key.clone(),
+                        private_key: private_key.to_bytes().to_vec(),
+                        ..Default::default()
+                    },
+                    PerKeySnapshot {
+                        public_key_id: 1,
+                        public_key: public_key.clone(),
+                        private_key: private_key.to_bytes().to_vec(),
+                        ..Default::default()
+                    }
+                ],
+            }),
+            micro_rpc::StatusCode::InvalidArgument,
+            "Duplicated `public_key_id` in the snapshot"
         );
     }
 }

@@ -267,7 +267,6 @@ impl Actor for LedgerActor {
             );
             ActorError::Internal
         })?;
-        // TODO: populate the snapshot.
         Ok(snapshot.encode_to_vec().into())
     }
 
@@ -275,8 +274,20 @@ impl Actor for LedgerActor {
     /// is considered is unknown state and is destroyed.
     fn on_load_snapshot(&mut self, snapshot: Bytes) -> Result<(), ActorError> {
         debug!(self.get_context().logger(), "LedgerActor: loading snapshot");
-        let _ = LedgerSnapshot::decode(snapshot).map_err(|_| ActorError::SnapshotLoading)?;
-        // TODO: use the snapshot.
+        let snapshot = LedgerSnapshot::decode(snapshot).map_err(|error| {
+            error!(
+                self.get_context().logger(),
+                "LedgerActor: failed to decode snapshot: {}", error
+            );
+            ActorError::SnapshotLoading
+        })?;
+        self.ledger.load_snapshot(snapshot).map_err(|error| {
+            error!(
+                self.get_context().logger(),
+                "LedgerActor: failed to load snapshot: {}", error
+            );
+            ActorError::SnapshotLoading
+        })?;
         Ok(())
     }
 
@@ -311,8 +322,7 @@ mod tests {
     use tcp_runtime::logger::log::create_logger;
     use tcp_runtime::mock::MockActorContext;
 
-    #[test]
-    fn create_actor() {
+    fn create_actor() -> LedgerActor {
         let config = LedgerConfig {};
         let mut mock_context = Box::new(MockActorContext::new());
         mock_context.expect_logger().return_const(create_logger());
@@ -323,6 +333,38 @@ mod tests {
 
         let mut actor = LedgerActor::new();
         assert_eq!(actor.on_init(mock_context), Ok(()));
+        actor
+    }
+
+    #[test]
+    fn test_create_actor() {
+        let mut actor = create_actor();
         assert_eq!(actor.get_context().id(), 0u64);
+    }
+
+    #[test]
+    fn test_save_snapshot() {
+        let mut actor = create_actor();
+        let snapshot = LedgerSnapshot {
+            current_time: Some(prost_types::Timestamp::default()),
+            ..Default::default()
+        };
+        assert_eq!(
+            actor.on_save_snapshot().unwrap(),
+            Into::<Bytes>::into(snapshot.encode_to_vec())
+        );
+    }
+
+    #[test]
+    fn test_load_snapshot() {
+        let mut actor = create_actor();
+        let snapshot = LedgerSnapshot {
+            current_time: Some(prost_types::Timestamp::default()),
+            ..Default::default()
+        };
+        assert_eq!(
+            actor.on_load_snapshot(snapshot.encode_to_vec().into()),
+            Ok(())
+        );
     }
 }
