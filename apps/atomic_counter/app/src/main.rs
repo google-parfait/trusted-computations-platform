@@ -21,26 +21,17 @@ extern crate tcp_proto;
 extern crate tcp_runtime;
 
 use alloc::boxed::Box;
-use core::panic::PanicInfo;
-use oak_channel::server;
-use oak_core::samplestore::StaticSampleStore;
-use oak_restricted_kernel_interface::syscall;
-use oak_restricted_kernel_sdk::{FileDescriptorChannel, StderrLogger};
+use oak_restricted_kernel_sdk::{
+    channel::{start_blocking_server, FileDescriptorChannel},
+    entrypoint,
+    utils::{log, samplestore::StaticSampleStore},
+};
 use tcp_atomic_counter_service::actor::CounterActor;
 use tcp_proto::runtime::endpoint::EndpointServiceServer;
 use tcp_runtime::service::ApplicationService;
 
-static LOGGER: StderrLogger = StderrLogger {};
-
-#[no_mangle]
-fn _start() -> ! {
-    log::set_logger(&LOGGER).unwrap();
-    log::set_max_level(log::LevelFilter::Debug);
-    oak_enclave_runtime_support::init();
-    main();
-}
-
-fn main() -> ! {
+#[entrypoint]
+fn run_server() -> ! {
     log::info!("In main!");
     // Only log warnings and errors to reduce the risk of accidentally leaking execution
     // information through debug logs.
@@ -49,21 +40,10 @@ fn main() -> ! {
     let mut invocation_stats = StaticSampleStore::<1000>::new().unwrap();
     let service: ApplicationService<CounterActor> = ApplicationService::new(CounterActor::new());
     let server = EndpointServiceServer::new(service);
-    server::start_blocking_server(
+    start_blocking_server(
         Box::<FileDescriptorChannel>::default(),
         server,
         &mut invocation_stats,
     )
     .expect("Server encountered an unrecoverable error");
-}
-
-#[alloc_error_handler]
-fn out_of_memory(layout: ::core::alloc::Layout) -> ! {
-    panic!("Error allocating memory: {:#?}", layout);
-}
-
-#[panic_handler]
-fn panic(info: &PanicInfo) -> ! {
-    log::error!("PANIC: {}", info);
-    syscall::exit(-1);
 }

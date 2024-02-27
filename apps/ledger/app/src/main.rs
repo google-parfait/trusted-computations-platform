@@ -16,32 +16,11 @@
 #![no_main]
 #![feature(alloc_error_handler)]
 
-use core::panic::PanicInfo;
 use oak_restricted_kernel_interface::syscall;
-use oak_restricted_kernel_sdk::StderrLogger;
+use oak_restricted_kernel_sdk::{entrypoint, utils::log};
 
-static LOGGER: StderrLogger = StderrLogger {};
-
-#[no_mangle]
-fn _start() -> ! {
-    log::set_logger(&LOGGER).unwrap();
-    log::set_max_level(log::LevelFilter::Debug);
-    oak_enclave_runtime_support::init();
-    main();
-}
-
-fn main() -> ! {
+#[entrypoint]
+fn run_server() -> ! {
     log::info!("In main!");
-    syscall::exit(-1);
-}
-
-#[alloc_error_handler]
-fn out_of_memory(layout: ::core::alloc::Layout) -> ! {
-    panic!("Error allocating memory: {:#?}", layout);
-}
-
-#[panic_handler]
-fn panic(info: &PanicInfo) -> ! {
-    log::error!("PANIC: {}", info);
     syscall::exit(-1);
 }
