@@ -1090,6 +1090,9 @@ impl<R: Raft<S = S>, S: Store + RaftStorage, P: SnapshotProcessor, A: Actor> App
                         in_message::Msg::GetReplicaState(ref get_replica_state_request) => {
                             self.process_get_replica_state(get_replica_state_request)
                         }
+                        in_message::Msg::SecureChannelHandshake(ref _secure_channel_handshake) => {
+                            Ok({})
+                        }
                     }?;
                 }
             };

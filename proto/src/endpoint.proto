@@ -50,6 +50,10 @@ message InMessage {
     ExecuteProposalRequest execute_proposal = 6;
     // Requests the Trusted Host to report the current state of this replica.
     GetReplicaStateRequest get_replica_state = 10;
+    // Requests the Trusted Host to deliver a handshake message from another
+    // replica (hosted on a different Trusted host) in order to establish a
+    // secure communication channel with it.
+    SecureChannelHandshake secure_channel_handshake = 11;
   }
 }
 
@@ -95,6 +99,10 @@ message OutMessage {
     ExecuteProposalResponse execute_proposal = 7;
     // Responds to the Untrusted Launcher with the current state of this replica.
     GetReplicaStateResponse get_replica_state = 10;
+    // Requests the Untrusted Launcher to deliver a handshake message to another
+    // replica (hosted on a different Trusted host) in order to establish a secure
+    // communication channel with it.
+    SecureChannelHandshake secure_channel_handshake = 11;
   }
 }
 
@@ -394,6 +402,45 @@ message GetReplicaStateResponse {
 
   // Size (in bytes) of the latest snapshot.
   uint64 latest_snapshot_size = 2;
+}
+
+// Handshake message to establish a secure communication channel between two
+// raft replicas.
+message SecureChannelHandshake {
+  // The replica id of the recipient.
+  uint64 recipient_replica_id = 1;
+  // The replica id of the sender.
+  uint64 sender_replica_id = 2;
+  // Encryption scheme used for any future communication between the two
+  // replicas.
+  oneof encryption {
+    NoiseProtocol noise_protocol = 3;
+  }
+
+  // TODO: Add missing encryption and attestation fields.
+  message NoiseProtocol {
+    oneof message {
+      // Request to initiate a handshake with `recipient_replica_id`.
+      InitiatorRequest initiator_request = 1;
+      // Response to a previously received `InitiatorRequest` to complete
+      // handshake.
+      RecipientResponse recipient_response = 2;
+    }
+
+    message InitiatorRequest {
+      // Attestation report of the initiator that must be verified by the
+      // recipient before a secure communication channel can be established.
+      Attestation attestation = 1;
+    }
+
+    message RecipientResponse {
+      // Attestation report of the recipient that must be verified by the
+      // initiator before a secure communication channel can be established.
+      Attestation attestation = 1;
+    }
+
+    message Attestation {}
+  }
 }
 
 service EndpointService {
