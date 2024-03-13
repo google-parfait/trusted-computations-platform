@@ -25,6 +25,7 @@ extern crate raft;
 extern crate slog;
 extern crate tcp_proto;
 
+pub mod communication;
 pub mod consensus;
 pub mod driver;
 pub mod logger;
