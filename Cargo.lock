@@ -1548,6 +1548,7 @@ dependencies = [
  "micro_rpc",
  "oak_restricted_kernel_interface",
  "oak_restricted_kernel_sdk",
+ "tcp_ledger_service",
  "tcp_proto",
  "tcp_runtime",
 ]
