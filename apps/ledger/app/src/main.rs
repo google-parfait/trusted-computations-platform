@@ -32,7 +32,6 @@ use tcp_runtime::service::ApplicationService;
 
 #[entrypoint]
 fn run_server() -> ! {
-    log::info!("In main!");
     // Only log warnings and errors to reduce the risk of accidentally leaking execution
     // information through debug logs.
     log::set_max_level(log::LevelFilter::Warn);
