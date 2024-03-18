@@ -12,10 +12,12 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
+use core::any::Any;
+
 use crate::{logger::log::create_logger, platform::PalError};
 use alloc::vec::Vec;
 use hashbrown::HashMap;
-use slog::Logger;
+use slog::{warn, Logger};
 use tcp_proto::runtime::endpoint::*;
 
 /// Responsible for managing communication between raft replicas such as
@@ -79,6 +81,13 @@ impl DefaultCommunicationModule {
             replica_id: 0,
         }
     }
+
+    fn check_initialized(&self) -> Result<(), PalError> {
+        if self.replica_id == 0 {
+            return Err(PalError::InvalidOperation);
+        }
+        Ok(())
+    }
 }
 
 impl CommunicationModule for DefaultCommunicationModule {
@@ -87,7 +96,37 @@ impl CommunicationModule for DefaultCommunicationModule {
     }
 
     fn process_out_message(&mut self, message: out_message::Msg) -> Result<(), PalError> {
-        Ok(())
+        self.check_initialized()?;
+
+        let peer_replica_id = match &message {
+            out_message::Msg::DeliverMessage(deliver_message) => {
+                deliver_message.recipient_replica_id
+            }
+            out_message::Msg::DeliverSnapshotRequest(deliver_snapshot_request) => {
+                deliver_snapshot_request.recipient_replica_id
+            }
+            out_message::Msg::DeliverSnapshotResponse(deliver_snapshot_response) => {
+                deliver_snapshot_response.recipient_replica_id
+            }
+            _ => {
+                warn!(
+                    self.logger,
+                    "Message type {:?} is not supported.",
+                    &message.type_id()
+                );
+                return Err(PalError::InvalidArgument);
+            }
+        };
+
+        let replica_state =
+            self.replicas
+                .entry(peer_replica_id)
+                .or_insert(CommunicationState::new(
+                    self.logger.clone(),
+                    self.replica_id,
+                    peer_replica_id,
+                ));
+        replica_state.process_out_message(message)
     }
 
     fn process_in_message(
@@ -145,5 +184,107 @@ impl CommunicationState {
 
     fn take_out_messages(&mut self) -> Vec<out_message::Msg> {
         Vec::new()
+    }
+}
+
+#[cfg(all(test, feature = "std"))]
+mod test {
+    use prost::bytes::Bytes;
+    use tcp_proto::runtime::endpoint::*;
+
+    use crate::{
+        communication::{CommunicationModule, DefaultCommunicationModule},
+        platform::PalError,
+    };
+
+    fn create_deliver_message_response(
+        sender_replica_id: u64,
+        recipient_replica_id: u64,
+    ) -> out_message::Msg {
+        out_message::Msg::DeliverMessage(DeliverMessage {
+            recipient_replica_id,
+            sender_replica_id,
+            message_contents: Bytes::new(),
+        })
+    }
+
+    fn create_deliver_snapshot_request(
+        sender_replica_id: u64,
+        recipient_replica_id: u64,
+    ) -> out_message::Msg {
+        out_message::Msg::DeliverSnapshotRequest(DeliverSnapshotRequest {
+            recipient_replica_id,
+            sender_replica_id,
+            delivery_id: 0,
+            payload_contents: Bytes::new(),
+        })
+    }
+
+    fn create_deliver_snapshot_response(
+        sender_replica_id: u64,
+        recipient_replica_id: u64,
+    ) -> out_message::Msg {
+        out_message::Msg::DeliverSnapshotResponse(DeliverSnapshotResponse {
+            recipient_replica_id,
+            sender_replica_id,
+            delivery_id: 0,
+            payload_contents: Bytes::new(),
+        })
+    }
+
+    fn create_unsupported_message() -> out_message::Msg {
+        out_message::Msg::StartReplica(StartReplicaResponse { replica_id: 0 })
+    }
+
+    #[test]
+    fn test_process_out_message() {
+        let mut communication_module = DefaultCommunicationModule::new();
+        let sender_replica_id = 11111;
+        let recipient_replica_id_a = 88888;
+        let recipient_replica_id_b = 99999;
+
+        // Invoking `process_out_message` before `init` should fail.
+        assert_eq!(
+            Err(PalError::InvalidOperation),
+            communication_module.process_out_message(create_deliver_message_response(
+                sender_replica_id,
+                recipient_replica_id_a
+            ))
+        );
+
+        communication_module.init(sender_replica_id);
+
+        assert_eq!(
+            Ok(()),
+            communication_module.process_out_message(create_deliver_message_response(
+                sender_replica_id,
+                recipient_replica_id_a
+            ))
+        );
+        assert_eq!(
+            Ok(()),
+            communication_module.process_out_message(create_deliver_snapshot_request(
+                sender_replica_id,
+                recipient_replica_id_a
+            ))
+        );
+        assert_eq!(
+            Ok(()),
+            communication_module.process_out_message(create_deliver_snapshot_response(
+                sender_replica_id,
+                recipient_replica_id_a
+            ))
+        );
+        assert_eq!(
+            Ok(()),
+            communication_module.process_out_message(create_deliver_message_response(
+                sender_replica_id,
+                recipient_replica_id_b
+            ))
+        );
+        assert_eq!(
+            Err(PalError::InvalidArgument),
+            communication_module.process_out_message(create_unsupported_message())
+        );
     }
 }
