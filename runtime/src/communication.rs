@@ -133,11 +133,46 @@ impl CommunicationModule for DefaultCommunicationModule {
         &mut self,
         message: in_message::Msg,
     ) -> Result<Option<in_message::Msg>, PalError> {
-        Ok(None)
+        self.check_initialized()?;
+
+        let peer_replica_id = match &message {
+            in_message::Msg::SecureChannelHandshake(secure_channel_handshake) => {
+                secure_channel_handshake.sender_replica_id
+            }
+            in_message::Msg::DeliverMessage(deliver_message) => deliver_message.sender_replica_id,
+            in_message::Msg::DeliverSnapshotRequest(deliver_snapshot_request) => {
+                deliver_snapshot_request.sender_replica_id
+            }
+            in_message::Msg::DeliverSnapshotResponse(deliver_snapshot_response) => {
+                deliver_snapshot_response.sender_replica_id
+            }
+            _ => {
+                warn!(
+                    self.logger,
+                    "Message type {:?} is not supported.",
+                    &message.type_id()
+                );
+                return Err(PalError::InvalidArgument);
+            }
+        };
+
+        let replica_state =
+            self.replicas
+                .entry(peer_replica_id)
+                .or_insert(CommunicationState::new(
+                    self.logger.clone(),
+                    self.replica_id,
+                    peer_replica_id,
+                ));
+        replica_state.process_in_message(message)
     }
 
     fn take_out_messages(&mut self) -> Vec<out_message::Msg> {
-        Vec::new()
+        let mut messages = Vec::new();
+        for (_, replica_state) in self.replicas.iter_mut() {
+            messages.append(&mut replica_state.take_out_messages())
+        }
+        messages
     }
 }
 
@@ -189,51 +224,68 @@ impl CommunicationState {
 
 #[cfg(all(test, feature = "std"))]
 mod test {
-    use prost::bytes::Bytes;
-    use tcp_proto::runtime::endpoint::*;
-
     use crate::{
         communication::{CommunicationModule, DefaultCommunicationModule},
         platform::PalError,
     };
+    use alloc::vec::Vec;
+    use prost::bytes::Bytes;
+    use tcp_proto::runtime::endpoint::*;
 
-    fn create_deliver_message_response(
-        sender_replica_id: u64,
-        recipient_replica_id: u64,
-    ) -> out_message::Msg {
-        out_message::Msg::DeliverMessage(DeliverMessage {
+    fn create_deliver_message(sender_replica_id: u64, recipient_replica_id: u64) -> DeliverMessage {
+        DeliverMessage {
             recipient_replica_id,
             sender_replica_id,
             message_contents: Bytes::new(),
-        })
+        }
     }
 
     fn create_deliver_snapshot_request(
         sender_replica_id: u64,
         recipient_replica_id: u64,
-    ) -> out_message::Msg {
-        out_message::Msg::DeliverSnapshotRequest(DeliverSnapshotRequest {
+    ) -> DeliverSnapshotRequest {
+        DeliverSnapshotRequest {
             recipient_replica_id,
             sender_replica_id,
             delivery_id: 0,
             payload_contents: Bytes::new(),
-        })
+        }
     }
 
     fn create_deliver_snapshot_response(
         sender_replica_id: u64,
         recipient_replica_id: u64,
-    ) -> out_message::Msg {
-        out_message::Msg::DeliverSnapshotResponse(DeliverSnapshotResponse {
+    ) -> DeliverSnapshotResponse {
+        DeliverSnapshotResponse {
             recipient_replica_id,
             sender_replica_id,
             delivery_id: 0,
             payload_contents: Bytes::new(),
-        })
+        }
     }
 
-    fn create_unsupported_message() -> out_message::Msg {
+    fn create_secure_channel_handshake(
+        sender_replica_id: u64,
+        recipient_replica_id: u64,
+    ) -> SecureChannelHandshake {
+        SecureChannelHandshake {
+            recipient_replica_id,
+            sender_replica_id,
+            encryption: None,
+        }
+    }
+
+    fn create_unsupported_out_message() -> out_message::Msg {
         out_message::Msg::StartReplica(StartReplicaResponse { replica_id: 0 })
+    }
+
+    fn create_unsupported_in_message() -> in_message::Msg {
+        in_message::Msg::StartReplica(StartReplicaRequest {
+            is_leader: true,
+            replica_id_hint: 0,
+            raft_config: None,
+            app_config: Bytes::new(),
+        })
     }
 
     #[test]
@@ -246,9 +298,8 @@ mod test {
         // Invoking `process_out_message` before `init` should fail.
         assert_eq!(
             Err(PalError::InvalidOperation),
-            communication_module.process_out_message(create_deliver_message_response(
-                sender_replica_id,
-                recipient_replica_id_a
+            communication_module.process_out_message(out_message::Msg::DeliverMessage(
+                create_deliver_message(sender_replica_id, recipient_replica_id_a)
             ))
         );
 
@@ -256,35 +307,92 @@ mod test {
 
         assert_eq!(
             Ok(()),
-            communication_module.process_out_message(create_deliver_message_response(
-                sender_replica_id,
-                recipient_replica_id_a
+            communication_module.process_out_message(out_message::Msg::DeliverMessage(
+                create_deliver_message(sender_replica_id, recipient_replica_id_a)
             ))
         );
         assert_eq!(
             Ok(()),
-            communication_module.process_out_message(create_deliver_snapshot_request(
-                sender_replica_id,
-                recipient_replica_id_a
+            communication_module.process_out_message(out_message::Msg::DeliverSnapshotRequest(
+                create_deliver_snapshot_request(sender_replica_id, recipient_replica_id_a)
             ))
         );
         assert_eq!(
             Ok(()),
-            communication_module.process_out_message(create_deliver_snapshot_response(
-                sender_replica_id,
-                recipient_replica_id_a
+            communication_module.process_out_message(out_message::Msg::DeliverSnapshotResponse(
+                create_deliver_snapshot_response(sender_replica_id, recipient_replica_id_a)
             ))
         );
         assert_eq!(
             Ok(()),
-            communication_module.process_out_message(create_deliver_message_response(
-                sender_replica_id,
-                recipient_replica_id_b
+            communication_module.process_out_message(out_message::Msg::DeliverMessage(
+                create_deliver_message(sender_replica_id, recipient_replica_id_b)
             ))
         );
         assert_eq!(
             Err(PalError::InvalidArgument),
-            communication_module.process_out_message(create_unsupported_message())
+            communication_module.process_out_message(create_unsupported_out_message())
+        );
+        assert_eq!(
+            Vec::<out_message::Msg>::new(),
+            communication_module.take_out_messages()
+        );
+    }
+
+    #[test]
+    fn test_process_in_message() {
+        let mut communication_module = DefaultCommunicationModule::new();
+        let sender_replica_id_a = 11111;
+        let sender_replica_id_b = 22222;
+        let recipient_replica_id = 88888;
+
+        // Invoking `process_in_message` before `init` should fail.
+        assert_eq!(
+            Err(PalError::InvalidOperation),
+            communication_module.process_in_message(in_message::Msg::DeliverMessage(
+                create_deliver_message(sender_replica_id_a, recipient_replica_id)
+            ))
+        );
+
+        communication_module.init(recipient_replica_id);
+
+        assert_eq!(
+            Ok(None),
+            communication_module.process_in_message(in_message::Msg::SecureChannelHandshake(
+                create_secure_channel_handshake(sender_replica_id_a, recipient_replica_id)
+            ))
+        );
+        assert_eq!(
+            Ok(None),
+            communication_module.process_in_message(in_message::Msg::DeliverMessage(
+                create_deliver_message(sender_replica_id_a, recipient_replica_id)
+            ))
+        );
+        assert_eq!(
+            Ok(None),
+            communication_module.process_in_message(in_message::Msg::DeliverSnapshotRequest(
+                create_deliver_snapshot_request(sender_replica_id_a, recipient_replica_id)
+            ))
+        );
+        assert_eq!(
+            Ok(None),
+            communication_module.process_in_message(in_message::Msg::DeliverSnapshotResponse(
+                create_deliver_snapshot_response(sender_replica_id_a, recipient_replica_id)
+            ))
+        );
+        assert_eq!(
+            Ok(None),
+            communication_module.process_in_message(in_message::Msg::SecureChannelHandshake(
+                create_secure_channel_handshake(sender_replica_id_b, recipient_replica_id)
+            ))
+        );
+        assert_eq!(
+            Err(PalError::InvalidArgument),
+            communication_module.process_in_message(create_unsupported_in_message())
+        );
+        assert_eq!(
+            Vec::<out_message::Msg>::new(),
+            communication_module.take_out_messages()
         );
     }
 }
