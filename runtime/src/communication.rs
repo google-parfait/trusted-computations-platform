@@ -12,9 +12,10 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-use core::any::Any;
+use core::{any::Any, mem};
 
 use crate::{logger::log::create_logger, platform::PalError};
+use alloc::vec;
 use alloc::vec::Vec;
 use hashbrown::HashMap;
 use slog::{warn, Logger};
@@ -182,14 +183,21 @@ pub struct CommunicationState {
     peer_replica_id: u64,
     self_replica_id: u64,
     handshake_state: HandshakeState,
-    // Stashed messages that will be sent out once handshake completes.
-    stashed_messages: Vec<out_message::Msg>,
+    pending_handshake_message: Option<SecureChannelHandshake>,
+    // Unencrypted stashed messages that will be encrypted and sent out once
+    // handshake completes.
+    unencrypted_messages: Vec<out_message::Msg>,
 }
 
+#[derive(PartialEq)]
 enum HandshakeState {
+    // Handshake not performed yet.
     Unknown,
+    // Handshake has been initiated. Waiting for a response.
     Initiated,
+    // Handshake successfully completed and attestation verified.
     Completed,
+    // Handshake failed due to internal errors or failed attestation.
     Failed,
 }
 
@@ -202,23 +210,119 @@ impl CommunicationState {
             self_replica_id,
             peer_replica_id,
             handshake_state: HandshakeState::Unknown,
-            stashed_messages: Vec::new(),
+            pending_handshake_message: None,
+            unencrypted_messages: Vec::new(),
+        }
+    }
+
+    fn set_handshake_message(&mut self) {
+        if self.pending_handshake_message == None {
+            self.pending_handshake_message = Some(SecureChannelHandshake {
+                recipient_replica_id: self.peer_replica_id,
+                sender_replica_id: self.self_replica_id,
+                encryption: None,
+            });
         }
     }
 
     fn process_out_message(&mut self, message: out_message::Msg) -> Result<(), PalError> {
-        Ok(())
+        match &self.handshake_state {
+            HandshakeState::Unknown => {
+                self.set_handshake_message();
+                self.unencrypted_messages.push(message);
+                self.handshake_state = HandshakeState::Initiated;
+                Ok(())
+            }
+            HandshakeState::Initiated => {
+                self.unencrypted_messages.push(message);
+                Ok(())
+            }
+            HandshakeState::Completed => {
+                self.unencrypted_messages.push(message);
+                Ok(())
+            }
+            HandshakeState::Failed => {
+                warn!(
+                    self.logger,
+                    "Handshake failed with peer {}", self.peer_replica_id
+                );
+                return Err(PalError::Internal);
+            }
+        }
     }
 
     fn process_in_message(
         &mut self,
         message: in_message::Msg,
     ) -> Result<Option<in_message::Msg>, PalError> {
-        Ok(None)
+        match &self.handshake_state {
+            HandshakeState::Unknown => {
+                match message {
+                    // First message must be a handshake message.
+                    in_message::Msg::SecureChannelHandshake(_) => {
+                        // TODO: Verify attestation report.
+                        self.set_handshake_message();
+                        // Transition from Unknown->Completed state on the recipient side
+                        // since a handshake request was successfully received and verified,
+                        // and a handshake response has been set to be sent back to the sender.
+                        self.handshake_state = HandshakeState::Completed;
+                        Ok(None)
+                    }
+                    _ => {
+                        warn!(
+                            self.logger,
+                            "First message must be SecureChannelHandshake but found {:?}",
+                            &message.type_id()
+                        );
+                        self.handshake_state = HandshakeState::Failed;
+                        return Err(PalError::Internal);
+                    }
+                }
+            }
+            HandshakeState::Initiated => {
+                match message {
+                    // First message must be a handshake message.
+                    in_message::Msg::SecureChannelHandshake(_) => {
+                        // TODO: Verify attestation report.
+                        self.handshake_state = HandshakeState::Completed;
+                        Ok(None)
+                    }
+                    _ => {
+                        warn!(
+                            self.logger,
+                            "First message must be SecureChannelHandshake but found {:?}",
+                            &message.type_id()
+                        );
+                        self.handshake_state = HandshakeState::Failed;
+                        return Err(PalError::Internal);
+                    }
+                }
+            }
+            HandshakeState::Completed => {
+                // TODO: Decrypt message.
+                Ok(Some(message))
+            }
+            HandshakeState::Failed => {
+                warn!(
+                    self.logger,
+                    "Handshake failed with peer {}", self.peer_replica_id
+                );
+                return Err(PalError::Internal);
+            }
+        }
     }
 
     fn take_out_messages(&mut self) -> Vec<out_message::Msg> {
-        Vec::new()
+        let mut messages = Vec::new();
+        if let Some(pending_handshake_message) = self.pending_handshake_message.take() {
+            messages = vec![out_message::Msg::SecureChannelHandshake(
+                pending_handshake_message,
+            )]
+        } else if self.handshake_state == HandshakeState::Completed {
+            // TODO: Encrypt message.
+            messages = mem::take(&mut self.unencrypted_messages)
+        }
+        messages
     }
 }
 
@@ -228,7 +332,7 @@ mod test {
         communication::{CommunicationModule, DefaultCommunicationModule},
         platform::PalError,
     };
-    use alloc::vec::Vec;
+    use alloc::vec;
     use prost::bytes::Bytes;
     use tcp_proto::runtime::endpoint::*;
 
@@ -291,42 +395,54 @@ mod test {
     #[test]
     fn test_process_out_message() {
         let mut communication_module = DefaultCommunicationModule::new();
-        let sender_replica_id = 11111;
-        let recipient_replica_id_a = 88888;
-        let recipient_replica_id_b = 99999;
+        let self_replica_id = 11111;
+        let peer_replica_id_a = 88888;
+        let peer_replica_id_b = 99999;
+        let handshake_message_a =
+            out_message::Msg::SecureChannelHandshake(SecureChannelHandshake {
+                recipient_replica_id: peer_replica_id_a,
+                sender_replica_id: self_replica_id,
+                encryption: None,
+            });
+        let handshake_message_b =
+            out_message::Msg::SecureChannelHandshake(SecureChannelHandshake {
+                recipient_replica_id: peer_replica_id_b,
+                sender_replica_id: self_replica_id,
+                encryption: None,
+            });
 
         // Invoking `process_out_message` before `init` should fail.
         assert_eq!(
             Err(PalError::InvalidOperation),
             communication_module.process_out_message(out_message::Msg::DeliverMessage(
-                create_deliver_message(sender_replica_id, recipient_replica_id_a)
+                create_deliver_message(self_replica_id, peer_replica_id_a)
             ))
         );
 
-        communication_module.init(sender_replica_id);
+        communication_module.init(self_replica_id);
 
         assert_eq!(
             Ok(()),
             communication_module.process_out_message(out_message::Msg::DeliverMessage(
-                create_deliver_message(sender_replica_id, recipient_replica_id_a)
+                create_deliver_message(self_replica_id, peer_replica_id_a)
             ))
         );
         assert_eq!(
             Ok(()),
             communication_module.process_out_message(out_message::Msg::DeliverSnapshotRequest(
-                create_deliver_snapshot_request(sender_replica_id, recipient_replica_id_a)
+                create_deliver_snapshot_request(self_replica_id, peer_replica_id_a)
             ))
         );
         assert_eq!(
             Ok(()),
             communication_module.process_out_message(out_message::Msg::DeliverSnapshotResponse(
-                create_deliver_snapshot_response(sender_replica_id, recipient_replica_id_a)
+                create_deliver_snapshot_response(self_replica_id, peer_replica_id_a)
             ))
         );
         assert_eq!(
             Ok(()),
             communication_module.process_out_message(out_message::Msg::DeliverMessage(
-                create_deliver_message(sender_replica_id, recipient_replica_id_b)
+                create_deliver_message(self_replica_id, peer_replica_id_b)
             ))
         );
         assert_eq!(
@@ -334,7 +450,7 @@ mod test {
             communication_module.process_out_message(create_unsupported_out_message())
         );
         assert_eq!(
-            Vec::<out_message::Msg>::new(),
+            vec![handshake_message_a, handshake_message_b],
             communication_module.take_out_messages()
         );
     }
@@ -342,48 +458,66 @@ mod test {
     #[test]
     fn test_process_in_message() {
         let mut communication_module = DefaultCommunicationModule::new();
-        let sender_replica_id_a = 11111;
-        let sender_replica_id_b = 22222;
-        let recipient_replica_id = 88888;
+        let peer_replica_id_a = 11111;
+        let peer_replica_id_b = 22222;
+        let self_replica_id = 88888;
+        let handshake_message_a =
+            out_message::Msg::SecureChannelHandshake(SecureChannelHandshake {
+                recipient_replica_id: peer_replica_id_a,
+                sender_replica_id: self_replica_id,
+                encryption: None,
+            });
+        let handshake_message_b =
+            out_message::Msg::SecureChannelHandshake(SecureChannelHandshake {
+                recipient_replica_id: peer_replica_id_b,
+                sender_replica_id: self_replica_id,
+                encryption: None,
+            });
 
         // Invoking `process_in_message` before `init` should fail.
         assert_eq!(
             Err(PalError::InvalidOperation),
             communication_module.process_in_message(in_message::Msg::DeliverMessage(
-                create_deliver_message(sender_replica_id_a, recipient_replica_id)
+                create_deliver_message(peer_replica_id_a, self_replica_id)
             ))
         );
 
-        communication_module.init(recipient_replica_id);
+        communication_module.init(self_replica_id);
 
         assert_eq!(
             Ok(None),
             communication_module.process_in_message(in_message::Msg::SecureChannelHandshake(
-                create_secure_channel_handshake(sender_replica_id_a, recipient_replica_id)
+                create_secure_channel_handshake(peer_replica_id_a, self_replica_id)
             ))
         );
         assert_eq!(
-            Ok(None),
+            Ok(Some(in_message::Msg::DeliverMessage(
+                create_deliver_message(peer_replica_id_a, self_replica_id)
+            ))),
             communication_module.process_in_message(in_message::Msg::DeliverMessage(
-                create_deliver_message(sender_replica_id_a, recipient_replica_id)
+                create_deliver_message(peer_replica_id_a, self_replica_id)
             ))
         );
         assert_eq!(
-            Ok(None),
+            Ok(Some(in_message::Msg::DeliverSnapshotRequest(
+                create_deliver_snapshot_request(peer_replica_id_a, self_replica_id)
+            ))),
             communication_module.process_in_message(in_message::Msg::DeliverSnapshotRequest(
-                create_deliver_snapshot_request(sender_replica_id_a, recipient_replica_id)
+                create_deliver_snapshot_request(peer_replica_id_a, self_replica_id)
             ))
         );
         assert_eq!(
-            Ok(None),
+            Ok(Some(in_message::Msg::DeliverSnapshotResponse(
+                create_deliver_snapshot_response(peer_replica_id_a, self_replica_id)
+            ))),
             communication_module.process_in_message(in_message::Msg::DeliverSnapshotResponse(
-                create_deliver_snapshot_response(sender_replica_id_a, recipient_replica_id)
+                create_deliver_snapshot_response(peer_replica_id_a, self_replica_id)
             ))
         );
         assert_eq!(
             Ok(None),
             communication_module.process_in_message(in_message::Msg::SecureChannelHandshake(
-                create_secure_channel_handshake(sender_replica_id_b, recipient_replica_id)
+                create_secure_channel_handshake(peer_replica_id_b, self_replica_id)
             ))
         );
         assert_eq!(
@@ -391,8 +525,152 @@ mod test {
             communication_module.process_in_message(create_unsupported_in_message())
         );
         assert_eq!(
-            Vec::<out_message::Msg>::new(),
+            vec![handshake_message_a, handshake_message_b],
             communication_module.take_out_messages()
+        );
+    }
+
+    #[test]
+    fn test_mutual_handshake_success() {
+        let mut communication_module_a = DefaultCommunicationModule::new();
+        let mut communication_module_b = DefaultCommunicationModule::new();
+        let peer_replica_id_a = 11111;
+        let peer_replica_id_b = 22222;
+        let handshake_message_a_to_b = SecureChannelHandshake {
+            sender_replica_id: peer_replica_id_a,
+            recipient_replica_id: peer_replica_id_b,
+            encryption: None,
+        };
+        let handshake_message_b_to_a = SecureChannelHandshake {
+            sender_replica_id: peer_replica_id_b,
+            recipient_replica_id: peer_replica_id_a,
+            encryption: None,
+        };
+        let deliver_message = create_deliver_message(peer_replica_id_a, peer_replica_id_b);
+        let deliver_snapshot_request =
+            create_deliver_snapshot_request(peer_replica_id_a, peer_replica_id_b);
+
+        communication_module_a.init(peer_replica_id_a);
+        communication_module_b.init(peer_replica_id_b);
+
+        // Handshake initiated from a to b.
+        assert_eq!(
+            Ok(()),
+            communication_module_a
+                .process_out_message(out_message::Msg::DeliverMessage(deliver_message.clone()))
+        );
+        assert_eq!(
+            vec![out_message::Msg::SecureChannelHandshake(
+                handshake_message_a_to_b.clone()
+            )],
+            communication_module_a.take_out_messages()
+        );
+        // Taking out messages again should return empty since handshake has not completed.
+        assert_eq!(
+            Vec::<out_message::Msg>::new(),
+            communication_module_a.take_out_messages()
+        );
+
+        // Handshake response from b to a.
+        assert_eq!(
+            Ok(None),
+            communication_module_b.process_in_message(in_message::Msg::SecureChannelHandshake(
+                handshake_message_a_to_b.clone()
+            ))
+        );
+        assert_eq!(
+            vec![out_message::Msg::SecureChannelHandshake(
+                handshake_message_b_to_a.clone()
+            )],
+            communication_module_b.take_out_messages()
+        );
+
+        // Handshake response received by a. It should now be ok to return previously
+        // stashed messages.
+        assert_eq!(
+            Ok(None),
+            communication_module_a.process_in_message(in_message::Msg::SecureChannelHandshake(
+                handshake_message_b_to_a.clone()
+            ))
+        );
+        assert_eq!(
+            Ok(()),
+            communication_module_a.process_out_message(out_message::Msg::DeliverSnapshotRequest(
+                deliver_snapshot_request.clone()
+            ))
+        );
+        assert_eq!(
+            vec![
+                out_message::Msg::DeliverMessage(deliver_message.clone()),
+                out_message::Msg::DeliverSnapshotRequest(deliver_snapshot_request.clone())
+            ],
+            communication_module_a.take_out_messages()
+        );
+
+        assert_eq!(
+            Ok(Some(in_message::Msg::DeliverMessage(
+                deliver_message.clone()
+            ))),
+            communication_module_b
+                .process_in_message(in_message::Msg::DeliverMessage(deliver_message.clone()))
+        );
+    }
+
+    #[test]
+    fn test_invalid_handshake_message_fails() {
+        let mut communication_module_a = DefaultCommunicationModule::new();
+        let mut communication_module_b = DefaultCommunicationModule::new();
+        let peer_replica_id_a = 11111;
+        let peer_replica_id_b = 22222;
+        let deliver_message_a_to_b = create_deliver_message(peer_replica_id_a, peer_replica_id_b);
+        let deliver_message_b_to_a = create_deliver_message(peer_replica_id_b, peer_replica_id_a);
+
+        communication_module_a.init(peer_replica_id_a);
+        communication_module_b.init(peer_replica_id_b);
+
+        assert_eq!(
+            Ok(()),
+            communication_module_a.process_out_message(out_message::Msg::DeliverMessage(
+                deliver_message_a_to_b.clone()
+            ))
+        );
+        assert_eq!(
+            Err(PalError::Internal),
+            communication_module_b.process_in_message(in_message::Msg::DeliverMessage(
+                deliver_message_a_to_b.clone()
+            ))
+        );
+        assert_eq!(
+            Err(PalError::Internal),
+            communication_module_a.process_in_message(in_message::Msg::DeliverMessage(
+                deliver_message_b_to_a.clone()
+            ))
+        );
+        // Both a and b are in Failed state, so receiving or sending any subsequent messages should
+        // fail.
+        assert_eq!(
+            Err(PalError::Internal),
+            communication_module_a.process_in_message(in_message::Msg::DeliverMessage(
+                deliver_message_b_to_a.clone()
+            ))
+        );
+        assert_eq!(
+            Err(PalError::Internal),
+            communication_module_b.process_in_message(in_message::Msg::DeliverMessage(
+                deliver_message_a_to_b.clone()
+            ))
+        );
+        assert_eq!(
+            Err(PalError::Internal),
+            communication_module_a.process_out_message(out_message::Msg::DeliverMessage(
+                deliver_message_a_to_b.clone()
+            ))
+        );
+        assert_eq!(
+            Err(PalError::Internal),
+            communication_module_b.process_out_message(out_message::Msg::DeliverMessage(
+                deliver_message_b_to_a.clone()
+            ))
         );
     }
 }
