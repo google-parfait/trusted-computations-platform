@@ -13,6 +13,7 @@
 // limitations under the License.
 
 #![allow(clippy::useless_conversion)]
+use crate::communication::CommunicationModule;
 use crate::consensus::{Raft, RaftState, Store};
 use crate::logger::log::create_remote_logger;
 use crate::logger::DrainOutput;
@@ -48,7 +49,6 @@ struct DriverContextCore {
     config: Bytes,
     leader: bool,
     proposals: Vec<Bytes>,
-    messages: Vec<out_message::Msg>,
 }
 
 impl DriverContextCore {
@@ -59,7 +59,6 @@ impl DriverContextCore {
             config: Bytes::new(),
             leader: false,
             proposals: Vec::new(),
-            messages: Vec::new(),
         }
     }
 
@@ -93,11 +92,8 @@ impl DriverContextCore {
         self.proposals.push(proposal);
     }
 
-    fn take_outputs(&mut self) -> (Vec<Bytes>, Vec<out_message::Msg>) {
-        (
-            mem::take(&mut self.proposals),
-            mem::take(&mut self.messages),
-        )
+    fn take_outputs(&mut self) -> Vec<Bytes> {
+        mem::take(&mut self.proposals)
     }
 }
 
@@ -166,7 +162,7 @@ impl RaftProgress {
     }
 }
 
-pub struct Driver<R: Raft, S: Store, P: SnapshotProcessor, A: Actor> {
+pub struct Driver<R: Raft, S: Store, P: SnapshotProcessor, A: Actor, C: CommunicationModule> {
     core: Rc<RefCell<DriverContextCore>>,
     driver_config: DriverConfig,
     driver_state: DriverState,
@@ -184,10 +180,24 @@ pub struct Driver<R: Raft, S: Store, P: SnapshotProcessor, A: Actor> {
     raft_state: RaftState,
     prev_raft_state: RaftState,
     raft_progress: RaftProgress,
+    communication: C,
 }
 
-impl<R: Raft<S = S>, S: Store + RaftStorage, P: SnapshotProcessor, A: Actor> Driver<R, S, P, A> {
-    pub fn new(raft: R, store: Box<dyn FnMut(Logger, u64) -> S>, snapshot: P, actor: A) -> Self {
+impl<
+        R: Raft<S = S>,
+        S: Store + RaftStorage,
+        P: SnapshotProcessor,
+        A: Actor,
+        C: CommunicationModule,
+    > Driver<R, S, P, A, C>
+{
+    pub fn new(
+        raft: R,
+        store: Box<dyn FnMut(Logger, u64) -> S>,
+        snapshot: P,
+        actor: A,
+        communication: C,
+    ) -> Self {
         let (logger, logger_output) = create_remote_logger();
         Driver {
             core: Rc::new(RefCell::new(DriverContextCore::new())),
@@ -210,6 +220,7 @@ impl<R: Raft<S = S>, S: Store + RaftStorage, P: SnapshotProcessor, A: Actor> Dri
             raft_state: RaftState::new(),
             prev_raft_state: RaftState::new(),
             raft_progress: RaftProgress::new(),
+            communication,
         }
     }
 
@@ -452,16 +463,16 @@ impl<R: Raft<S = S>, S: Store + RaftStorage, P: SnapshotProcessor, A: Actor> Dri
         for raft_message in raft_messages {
             // Stash messages that contain snapshot to be sent out by the snapshot processor.
             if raft_message.msg_type == RaftMessageType::MsgSnapshot.into() {
-                self.stash_snapsho(raft_message);
+                self.stash_snapshot(raft_message);
                 continue;
             }
 
-            // Buffer message to be sent out.
-            self.stash_message(out_message::Msg::DeliverMessage(DeliverMessage {
-                recipient_replica_id: raft_message.to,
-                sender_replica_id: self.id,
-                message_contents: serialize_raft_message(&raft_message).unwrap(),
-            }));
+            self.communication
+                .process_out_message(out_message::Msg::DeliverMessage(DeliverMessage {
+                    recipient_replica_id: raft_message.to,
+                    sender_replica_id: self.id,
+                    message_contents: serialize_raft_message(&raft_message).unwrap(),
+                }))?;
         }
 
         Ok(())
@@ -687,6 +698,7 @@ impl<R: Raft<S = S>, S: Store + RaftStorage, P: SnapshotProcessor, A: Actor> Dri
             self.id,
             snapshot_config,
         );
+        self.communication.init(self.id);
 
         self.initilize_raft_node(
             &start_replica_request.raft_config,
@@ -766,11 +778,22 @@ impl<R: Raft<S = S>, S: Store + RaftStorage, P: SnapshotProcessor, A: Actor> Dri
     fn process_deliver_message(&mut self, deliver_message: DeliverMessage) -> Result<(), PalError> {
         self.check_driver_started()?;
 
-        self.make_raft_step(
-            deliver_message.sender_replica_id,
-            deliver_message.recipient_replica_id,
-            deliver_message.message_contents,
-        )
+        let message = self
+            .communication
+            .process_in_message(in_message::Msg::DeliverMessage(deliver_message))?
+            .unwrap();
+
+        match message {
+            in_message::Msg::DeliverMessage(m) => self.make_raft_step(
+                m.sender_replica_id,
+                m.recipient_replica_id,
+                m.message_contents,
+            ),
+            _ => {
+                warn!(self.logger, "Unexpected message type {:?}", message);
+                Err(PalError::Internal)
+            }
+        }
     }
 
     fn update_snapshot_cluster_change(&mut self) {
@@ -795,44 +818,69 @@ impl<R: Raft<S = S>, S: Store + RaftStorage, P: SnapshotProcessor, A: Actor> Dri
         &mut self,
         deliver_snapshot_request: DeliverSnapshotRequest,
     ) -> Result<(), PalError> {
-        let deliver_snapshot_response = match self.snapshot.mut_processor(self.instant) {
-            SnapshotProcessorRole::Sender(sender) => {
-                warn!(
-                    self.logger,
-                    "Node is in snapshot sending mode, unexpected deliver snapshot request"
-                );
-                sender.process_unexpected_request(deliver_snapshot_request)
-            }
-            SnapshotProcessorRole::Receiver(receiver) => {
-                receiver.process_request(deliver_snapshot_request)
-            }
-        };
-        self.stash_message(out_message::Msg::DeliverSnapshotResponse(
-            deliver_snapshot_response,
-        ));
+        let message = self
+            .communication
+            .process_in_message(in_message::Msg::DeliverSnapshotRequest(
+                deliver_snapshot_request,
+            ))?
+            .unwrap();
 
-        Ok(())
+        match message {
+            in_message::Msg::DeliverSnapshotRequest(m) => {
+                let deliver_snapshot_response = match self.snapshot.mut_processor(self.instant) {
+                    SnapshotProcessorRole::Sender(sender) => {
+                        warn!(
+                            self.logger,
+                            "Node is in snapshot sending mode, unexpected deliver snapshot request"
+                        );
+                        sender.process_unexpected_request(m)
+                    }
+                    SnapshotProcessorRole::Receiver(receiver) => receiver.process_request(m),
+                };
+                self.communication
+                    .process_out_message(out_message::Msg::DeliverSnapshotResponse(
+                        deliver_snapshot_response,
+                    ))
+            }
+            _ => {
+                warn!(self.logger, "Unexpected message type {:?}", message);
+                Err(PalError::Internal)
+            }
+        }
     }
 
     fn process_deliver_snapshot_response(
         &mut self,
         deliver_snapshot_response: DeliverSnapshotResponse,
     ) -> Result<(), PalError> {
-        match self.snapshot.mut_processor(self.instant) {
-            SnapshotProcessorRole::Sender(sender) => sender.process_response(
-                deliver_snapshot_response.sender_replica_id,
-                deliver_snapshot_response.delivery_id,
-                Ok(deliver_snapshot_response),
-            ),
-            SnapshotProcessorRole::Receiver(_) => {
-                warn!(
-                    self.logger,
-                    "Node is snapshot receiving mode, unexpected deliver snapshot response"
-                );
+        let message = self
+            .communication
+            .process_in_message(in_message::Msg::DeliverSnapshotResponse(
+                deliver_snapshot_response,
+            ))?
+            .unwrap();
+
+        match message {
+            in_message::Msg::DeliverSnapshotResponse(m) => {
+                match self.snapshot.mut_processor(self.instant) {
+                    SnapshotProcessorRole::Sender(sender) => {
+                        sender.process_response(m.sender_replica_id, m.delivery_id, Ok(m))
+                    }
+                    SnapshotProcessorRole::Receiver(_) => {
+                        warn!(
+                            self.logger,
+                            "Node is snapshot receiving mode, unexpected deliver snapshot response"
+                        );
+                    }
+                }
+
+                Ok(())
+            }
+            _ => {
+                warn!(self.logger, "Unexpected message type {:?}", message);
+                Err(PalError::Internal)
             }
         }
-
-        Ok(())
     }
 
     fn process_deliver_snapshot_failure(
@@ -893,7 +941,7 @@ impl<R: Raft<S = S>, S: Store + RaftStorage, P: SnapshotProcessor, A: Actor> Dri
         }
     }
 
-    fn process_snapshot_sending(&mut self) {
+    fn process_snapshot_sending(&mut self) -> Result<(), PalError> {
         let snapshot_messages = mem::take(&mut self.snapshots);
 
         let mut out_messages: Vec<out_message::Msg> = Vec::new();
@@ -922,8 +970,10 @@ impl<R: Raft<S = S>, S: Store + RaftStorage, P: SnapshotProcessor, A: Actor> Dri
         }
 
         for out_message in out_messages {
-            self.stash_message(out_message);
+            self.communication.process_out_message(out_message)?;
         }
+
+        Ok(())
     }
 
     fn process_execute_proposal(
@@ -985,15 +1035,24 @@ impl<R: Raft<S = S>, S: Store + RaftStorage, P: SnapshotProcessor, A: Actor> Dri
         Ok(())
     }
 
+    fn process_secure_channel_handshake(
+        &mut self,
+        secure_channel_handshake: SecureChannelHandshake,
+    ) -> Result<(), PalError> {
+        self.check_driver_started()?;
+
+        self.communication
+            .process_in_message(in_message::Msg::SecureChannelHandshake(
+                secure_channel_handshake,
+            ))?;
+        Ok(())
+    }
+
     fn process_actor_output(&mut self) {
-        let (proposals, messages) = self.mut_core().take_outputs();
+        let proposals = self.mut_core().take_outputs();
 
         for proposal in proposals {
             self.make_raft_proposal(proposal);
-        }
-
-        for message in messages {
-            self.stash_message(message);
         }
     }
 
@@ -1029,13 +1088,18 @@ impl<R: Raft<S = S>, S: Store + RaftStorage, P: SnapshotProcessor, A: Actor> Dri
         self.messages.push(OutMessage { msg: Some(message) });
     }
 
-    fn stash_snapsho(&mut self, snapshot_message: RaftMessage) {
+    fn stash_snapshot(&mut self, snapshot_message: RaftMessage) {
         self.snapshots.push(snapshot_message);
     }
 }
 
-impl<R: Raft<S = S>, S: Store + RaftStorage, P: SnapshotProcessor, A: Actor> Application
-    for Driver<R, S, P, A>
+impl<
+        R: Raft<S = S>,
+        S: Store + RaftStorage,
+        P: SnapshotProcessor,
+        A: Actor,
+        C: CommunicationModule,
+    > Application for Driver<R, S, P, A, C>
 {
     /// Handles messages received from the trusted host.
     fn receive_message(
@@ -1090,8 +1154,8 @@ impl<R: Raft<S = S>, S: Store + RaftStorage, P: SnapshotProcessor, A: Actor> App
                         in_message::Msg::GetReplicaState(ref get_replica_state_request) => {
                             self.process_get_replica_state(get_replica_state_request)
                         }
-                        in_message::Msg::SecureChannelHandshake(ref _secure_channel_handshake) => {
-                            Ok({})
+                        in_message::Msg::SecureChannelHandshake(secure_channel_handshake) => {
+                            self.process_secure_channel_handshake(secure_channel_handshake)
                         }
                     }?;
                 }
@@ -1108,10 +1172,16 @@ impl<R: Raft<S = S>, S: Store + RaftStorage, P: SnapshotProcessor, A: Actor> App
         self.process_state_machine()?;
 
         // Initiate if needed snapshot sending.
-        self.process_snapshot_sending();
+        self.process_snapshot_sending()?;
+
+        // Get stashed messages to be sent to Raft peers.
+        let mut messages = self.communication.take_out_messages();
+
+        // Append stashed messages with messages to be sent to the consumers.
+        messages.append(&mut self.take_out_messages());
 
         // Send messages to Raft peers and consumers through the trusted host.
-        host.send_messages(self.take_out_messages());
+        host.send_messages(messages);
 
         Ok(())
     }
@@ -1135,7 +1205,9 @@ mod test {
 
     use self::mockall::predicate::{always, eq};
     use super::*;
-    use mock::{MockActor, MockAttestation, MockHost, MockRaft, MockStore};
+    use mock::{
+        MockActor, MockAttestation, MockCommunicationModule, MockHost, MockRaft, MockStore,
+    };
     use model::ActorError;
     use raft::eraftpb::{
         ConfChange as RaftConfigChange, EntryType as RaftEntryType, MessageType as RaftMessageType,
@@ -1289,6 +1361,17 @@ mod test {
             applied_index,
             latest_snapshot_size,
         })
+    }
+
+    fn create_secure_channel_handshake(
+        sender_replica_id: u64,
+        recipient_replica_id: u64,
+    ) -> SecureChannelHandshake {
+        SecureChannelHandshake {
+            recipient_replica_id,
+            sender_replica_id,
+            encryption: None,
+        }
     }
 
     fn create_deliver_message_request(raft_message: &RaftMessage) -> InMessage {
@@ -1786,6 +1869,67 @@ mod test {
         }
     }
 
+    struct CommunicationBuilder {
+        mock_communication_module: MockCommunicationModule,
+    }
+
+    impl CommunicationBuilder {
+        fn new() -> CommunicationBuilder {
+            CommunicationBuilder {
+                mock_communication_module: MockCommunicationModule::new(),
+            }
+        }
+
+        fn expect_init(mut self, replica_id: u64) -> CommunicationBuilder {
+            self.mock_communication_module
+                .expect_init()
+                .with(eq(replica_id))
+                .once()
+                .return_const(());
+
+            self
+        }
+
+        fn expect_process_out_message(
+            mut self,
+            message: out_message::Msg,
+            result: Result<(), PalError>,
+        ) -> CommunicationBuilder {
+            self.mock_communication_module
+                .expect_process_out_message()
+                .with(eq(message))
+                .return_once_st(|_| result);
+
+            self
+        }
+
+        fn expect_process_in_message(
+            mut self,
+            message: in_message::Msg,
+            result: Result<Option<in_message::Msg>, PalError>,
+        ) -> CommunicationBuilder {
+            self.mock_communication_module
+                .expect_process_in_message()
+                .with(eq(message))
+                .return_once_st(|_| result);
+
+            self
+        }
+
+        fn expect_take_out_messages(mut self, messages: Vec<OutMessage>) -> CommunicationBuilder {
+            self.mock_communication_module
+                .expect_take_out_messages()
+                .once()
+                .return_const(messages);
+
+            self
+        }
+
+        fn take(mut self) -> MockCommunicationModule {
+            mem::take(&mut self.mock_communication_module)
+        }
+    }
+
     struct DriverBuilder {
         mock_actor: MockActor,
     }
@@ -1872,10 +2016,18 @@ mod test {
             &mut self,
             mut raft_builder: RaftBuilder,
             snapshot_builder: SnapshotBuilder,
-        ) -> Driver<MockRaft<MockStore>, MockStore, DefaultSnapshotProcessor, MockActor> {
+            communication_builder: CommunicationBuilder,
+        ) -> Driver<
+            MockRaft<MockStore>,
+            MockStore,
+            DefaultSnapshotProcessor,
+            MockActor,
+            MockCommunicationModule,
+        > {
             let (mock_store, mut mock_raft) = raft_builder.take();
             let mock_actor = mem::take(&mut self.mock_actor);
             let (mock_snapshot_sender, mock_snapshot_receiver) = snapshot_builder.take();
+            let mock_communication_module = communication_builder.take();
 
             mock_raft.expect_mut_store().return_var(mock_store);
 
@@ -1887,6 +2039,7 @@ mod test {
                     Box::new(mock_snapshot_receiver),
                 ),
                 mock_actor,
+                mock_communication_module,
             )
         }
     }
@@ -1927,10 +2080,14 @@ mod test {
             .expect_receiver_set_instant()
             .expect_receiver_try_complete(None);
 
+        let communication_builder = CommunicationBuilder::new()
+            .expect_init(node_id)
+            .expect_take_out_messages(Vec::new());
+
         let mut driver = DriverBuilder::new()
             .expect_on_init(|_| Ok(()))
             .expect_on_save_snapshot(Ok(init_snapshot.clone()))
-            .take(raft_builder, snapshot_builder);
+            .take(raft_builder, snapshot_builder, communication_builder);
 
         assert_eq!(
             Ok(()),
@@ -1971,11 +2128,16 @@ mod test {
             .expect_receiver_set_instant()
             .expect_receiver_try_complete(None);
 
+        let communication_builder = CommunicationBuilder::new()
+            .expect_init(node_id)
+            .expect_take_out_messages(Vec::new())
+            .expect_take_out_messages(Vec::new());
+
         let mut driver = DriverBuilder::new()
             .expect_on_init(|_| Ok(()))
             .expect_on_save_snapshot(Ok(init_snapshot.clone()))
             .expect_on_shutdown(|| ())
-            .take(raft_builder, snapshot_builder);
+            .take(raft_builder, snapshot_builder, communication_builder);
 
         assert_eq!(
             Ok(()),
@@ -2048,6 +2210,12 @@ mod test {
             .expect_receiver_try_complete(None)
             .expect_receiver_try_complete(None);
 
+        let communication_builder = CommunicationBuilder::new()
+            .expect_init(node_id)
+            .expect_take_out_messages(Vec::new())
+            .expect_take_out_messages(Vec::new())
+            .expect_take_out_messages(Vec::new());
+
         let mut driver = DriverBuilder::new()
             .expect_on_init(|_| Ok(()))
             .expect_on_save_snapshot(Ok(init_snapshot.clone()))
@@ -2059,7 +2227,7 @@ mod test {
                 proposal_contents_2.clone(),
                 Ok(CommandOutcome::Response(proposal_result_2.into())),
             )
-            .take(raft_builder, snapshot_builder);
+            .take(raft_builder, snapshot_builder, communication_builder);
 
         assert_eq!(
             Ok(()),
@@ -2122,6 +2290,11 @@ mod test {
             .expect_receiver_try_complete(None);
 
         let exp_self_config = self_config.clone();
+
+        let communication_builder = CommunicationBuilder::new()
+            .expect_init(node_id)
+            .expect_take_out_messages(Vec::new());
+
         let mut driver = DriverBuilder::new()
             .expect_on_init(move |actor_context| {
                 assert_eq!(node_id, actor_context.id());
@@ -2132,7 +2305,7 @@ mod test {
                 Ok(())
             })
             .expect_on_save_snapshot(Ok(init_snapshot.clone()))
-            .take(raft_builder, snapshot_builder);
+            .take(raft_builder, snapshot_builder, communication_builder);
 
         assert_eq!(
             Ok(()),
@@ -2181,10 +2354,15 @@ mod test {
             .expect_receiver_try_complete(None)
             .expect_receiver_try_complete(None);
 
+        let communication_builder = CommunicationBuilder::new()
+            .expect_init(node_id)
+            .expect_take_out_messages(Vec::new())
+            .expect_take_out_messages(Vec::new());
+
         let mut driver = DriverBuilder::new()
             .expect_on_init(|_| Ok(()))
             .expect_on_save_snapshot(Ok(init_snapshot.clone()))
-            .take(raft_builder, snapshot_builder);
+            .take(raft_builder, snapshot_builder, communication_builder);
 
         assert_eq!(
             Ok(()),
@@ -2248,10 +2426,15 @@ mod test {
             .expect_sender_set_instant()
             .expect_sender_next_request(None);
 
+        let communication_builder = CommunicationBuilder::new()
+            .expect_init(node_id)
+            .expect_take_out_messages(Vec::new())
+            .expect_take_out_messages(Vec::new());
+
         let mut driver = DriverBuilder::new()
             .expect_on_init(|_| Ok(()))
             .expect_on_save_snapshot(Ok(init_snapshot.clone()))
-            .take(raft_builder, snapshot_builder);
+            .take(raft_builder, snapshot_builder, communication_builder);
 
         assert_eq!(
             Ok(()),
@@ -2337,8 +2520,9 @@ mod test {
             .expect_public_signing_key(vec![])
             .expect_send_messages(vec![create_start_replica_response(node_id)])
             .expect_send_messages(vec![
-                create_deliver_message_response(&message_a),
-                create_deliver_message_response(&message_b),
+                out_message::Msg::SecureChannelHandshake(create_secure_channel_handshake(
+                    node_id, peer_id,
+                )),
                 create_execute_proposal_response(
                     Some(entry_id.clone()),
                     proposal_result.clone().into(),
@@ -2367,6 +2551,17 @@ mod test {
             .expect_receiver_try_complete(None)
             .expect_receiver_try_complete(None);
 
+        let communication_builder = CommunicationBuilder::new()
+            .expect_init(node_id)
+            .expect_take_out_messages(Vec::new())
+            .expect_process_out_message(create_deliver_message_response(&message_a), Ok(()))
+            .expect_process_out_message(create_deliver_message_response(&message_b), Ok(()))
+            .expect_take_out_messages(vec![OutMessage {
+                msg: Some(out_message::Msg::SecureChannelHandshake(
+                    create_secure_channel_handshake(node_id, peer_id),
+                )),
+            }]);
+
         let mut driver = DriverBuilder::new()
             .expect_on_init(|_| Ok(()))
             .expect_on_save_snapshot(Ok(init_snapshot.clone()))
@@ -2376,7 +2571,7 @@ mod test {
                 entry.entry_contents.into(),
                 Ok(EventOutcome::Response(proposal_result.into())),
             )
-            .take(raft_builder, snapshot_builder);
+            .take(raft_builder, snapshot_builder, communication_builder);
 
         assert_eq!(
             Ok(()),
@@ -2426,10 +2621,15 @@ mod test {
             .expect_receiver_try_complete(None)
             .expect_receiver_try_complete(None);
 
+        let communication_builder = CommunicationBuilder::new()
+            .expect_init(node_id)
+            .expect_take_out_messages(Vec::new())
+            .expect_take_out_messages(Vec::new());
+
         let mut driver = DriverBuilder::new()
             .expect_on_init(|_| Ok(()))
             .expect_on_save_snapshot(Ok(init_snapshot.clone()))
-            .take(raft_builder, snapshot_builder);
+            .take(raft_builder, snapshot_builder, communication_builder);
 
         assert_eq!(
             Ok(()),
@@ -2459,17 +2659,21 @@ mod test {
 
         let raft_state = create_default_raft_state(node_id);
 
-        let message_a = create_raft_message(node_id, peer_id, RaftMessageType::MsgBeat);
+        let message_a = create_raft_message(peer_id, node_id, RaftMessageType::MsgBeat);
+
+        let handshake_message = create_secure_channel_handshake(peer_id, node_id);
 
         let mut mock_host = MockHostBuilder::new()
             .expect_public_signing_key(vec![])
             .expect_send_messages(vec![create_start_replica_response(node_id)])
+            .expect_send_messages(vec![])
             .expect_send_messages(vec![])
             .take();
 
         let raft_builder = RaftBuilder::new()
             .expect_leader(false)
             .expect_init(|_, _, _, _, _, _| Ok(()))
+            .expect_has_ready(false)
             .expect_has_ready(false)
             .expect_has_ready(false)
             .expect_should_snapshot(false)
@@ -2480,12 +2684,29 @@ mod test {
             .expect_init(node_id)
             .expect_receiver_set_instant()
             .expect_receiver_try_complete(None)
+            .expect_receiver_try_complete(None)
             .expect_receiver_try_complete(None);
+
+        let communication_builder = CommunicationBuilder::new()
+            .expect_init(node_id)
+            .expect_take_out_messages(Vec::new())
+            .expect_process_in_message(
+                in_message::Msg::SecureChannelHandshake(handshake_message.clone()),
+                Ok(None),
+            )
+            .expect_take_out_messages(Vec::new())
+            .expect_process_in_message(
+                create_deliver_message_request(&message_a).msg.unwrap(),
+                Ok(Some(
+                    create_deliver_message_request(&message_a).msg.unwrap(),
+                )),
+            )
+            .expect_take_out_messages(Vec::new());
 
         let mut driver = DriverBuilder::new()
             .expect_on_init(|_| Ok(()))
             .expect_on_save_snapshot(Ok(init_snapshot.clone()))
-            .take(raft_builder, snapshot_builder);
+            .take(raft_builder, snapshot_builder, communication_builder);
 
         assert_eq!(
             Ok(()),
@@ -2506,6 +2727,19 @@ mod test {
             driver.receive_message(
                 &mut mock_host,
                 instant + 10,
+                Some(InMessage {
+                    msg: Some(in_message::Msg::SecureChannelHandshake(
+                        handshake_message.clone()
+                    ))
+                }),
+            )
+        );
+
+        assert_eq!(
+            Ok(()),
+            driver.receive_message(
+                &mut mock_host,
+                instant + 20,
                 Some(create_deliver_message_request(&message_a)),
             )
         );
@@ -2585,6 +2819,12 @@ mod test {
             .expect_receiver_try_complete(None)
             .expect_receiver_try_complete(None);
 
+        let communication_builder = CommunicationBuilder::new()
+            .expect_init(node_id)
+            .expect_take_out_messages(Vec::new())
+            .expect_take_out_messages(Vec::new())
+            .expect_take_out_messages(Vec::new());
+
         let mut driver = DriverBuilder::new()
             .expect_on_init(|_| Ok(()))
             .expect_on_save_snapshot(Ok(init_snapshot.clone()))
@@ -2594,7 +2834,7 @@ mod test {
                 Ok(EventOutcome::Response(proposal_result.into())),
             )
             .expect_on_save_snapshot(Ok(snapshot.clone()))
-            .take(raft_builder, snapshot_builder);
+            .take(raft_builder, snapshot_builder, communication_builder);
 
         assert_eq!(
             Ok(()),
@@ -2636,6 +2876,9 @@ mod test {
         let deliver_snapshot_response =
             create_deliver_snapshot_response(REPLICA_2, node_id, DELIVERY_1);
 
+        let handshake_message_from_peer = create_secure_channel_handshake(REPLICA_2, node_id);
+        let handshake_message_to_peer = create_secure_channel_handshake(node_id, REPLICA_2);
+
         let snapshot = create_raft_snapshot(
             create_raft_snapshot_metadata(1, 1, create_raft_config_state(vec![node_id, REPLICA_2])),
             vec![1, 2, 3].into(),
@@ -2648,6 +2891,9 @@ mod test {
         let mut mock_host = MockHostBuilder::new()
             .expect_public_signing_key(vec![])
             .expect_send_messages(vec![create_start_replica_response(node_id)])
+            .expect_send_messages(vec![out_message::Msg::SecureChannelHandshake(
+                handshake_message_to_peer.clone(),
+            )])
             .expect_send_messages(vec![wrap_deliver_snapshot_response_out(
                 deliver_snapshot_response.clone(),
             )])
@@ -2658,6 +2904,7 @@ mod test {
             .expect_init(|_, _, _, _, _, _| Ok(()))
             .expect_has_ready(false)
             .expect_has_ready(false)
+            .expect_has_ready(false)
             .expect_should_snapshot(false)
             .expect_state(&create_default_raft_state(node_id))
             .expect_make_step(&snapshot_message, Ok(()));
@@ -2666,16 +2913,45 @@ mod test {
             .expect_init(node_id)
             .expect_receiver_set_instant()
             .expect_receiver_try_complete(None)
+            .expect_receiver_try_complete(None)
             .expect_receiver_try_complete(Some(Ok((REPLICA_2, snapshot.clone()))))
             .expect_receiver_process_request(
                 deliver_snapshot_request.clone(),
                 deliver_snapshot_response.clone(),
             );
 
+        let communication_builder = CommunicationBuilder::new()
+            .expect_init(node_id)
+            .expect_take_out_messages(Vec::new())
+            .expect_process_in_message(
+                in_message::Msg::SecureChannelHandshake(handshake_message_from_peer.clone()),
+                Ok(None),
+            )
+            .expect_take_out_messages(vec![OutMessage {
+                msg: Some(out_message::Msg::SecureChannelHandshake(
+                    handshake_message_to_peer.clone(),
+                )),
+            }])
+            .expect_process_in_message(
+                in_message::Msg::DeliverSnapshotRequest(deliver_snapshot_request.clone()),
+                Ok(Some(in_message::Msg::DeliverSnapshotRequest(
+                    deliver_snapshot_request.clone(),
+                ))),
+            )
+            .expect_process_out_message(
+                wrap_deliver_snapshot_response_out(deliver_snapshot_response.clone()),
+                Ok(()),
+            )
+            .expect_take_out_messages(vec![OutMessage {
+                msg: Some(wrap_deliver_snapshot_response_out(
+                    deliver_snapshot_response.clone(),
+                )),
+            }]);
+
         let mut driver = DriverBuilder::new()
             .expect_on_init(|_| Ok(()))
             .expect_on_save_snapshot(Ok(init_snapshot.clone()))
-            .take(raft_builder, snapshot_builder);
+            .take(raft_builder, snapshot_builder, communication_builder);
 
         assert_eq!(
             Ok(()),
@@ -2695,7 +2971,20 @@ mod test {
             Ok(()),
             driver.receive_message(
                 &mut mock_host,
-                instant,
+                instant + 10,
+                Some(InMessage {
+                    msg: Some(in_message::Msg::SecureChannelHandshake(
+                        handshake_message_from_peer.clone()
+                    ))
+                }),
+            )
+        );
+
+        assert_eq!(
+            Ok(()),
+            driver.receive_message(
+                &mut mock_host,
+                instant + 20,
                 Some(wrap_deliver_snapshot_request_in(deliver_snapshot_request)),
             )
         );
@@ -2792,10 +3081,30 @@ mod test {
             )
             .expect_sender_try_complete(None);
 
+        let communication_builder = CommunicationBuilder::new()
+            .expect_init(node_id)
+            .expect_process_out_message(
+                wrap_deliver_snapshot_request_out(deliver_snapshot_request.clone()),
+                Ok(()),
+            )
+            .expect_take_out_messages(vec![OutMessage {
+                msg: Some(wrap_deliver_snapshot_request_out(
+                    deliver_snapshot_request.clone(),
+                )),
+            }])
+            .expect_process_in_message(
+                in_message::Msg::DeliverSnapshotResponse(deliver_snapshot_response.clone()),
+                Ok(Some(in_message::Msg::DeliverSnapshotResponse(
+                    deliver_snapshot_response.clone(),
+                ))),
+            )
+            .expect_take_out_messages(Vec::new())
+            .expect_take_out_messages(Vec::new());
+
         let mut driver = DriverBuilder::new()
             .expect_on_init(|_| Ok(()))
             .expect_on_save_snapshot(Ok(init_snapshot.clone()))
-            .take(raft_builder, snapshot_builder);
+            .take(raft_builder, snapshot_builder, communication_builder);
 
         assert_eq!(
             Ok(()),

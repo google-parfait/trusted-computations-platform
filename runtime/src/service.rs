@@ -17,6 +17,7 @@ extern crate micro_rpc;
 extern crate prost;
 extern crate tcp_proto;
 
+use crate::communication::DefaultCommunicationModule;
 use crate::model::Actor;
 use crate::platform::{Application, Attestation, Host, PalError};
 use crate::snapshot::{DefaultSnapshotReceiver, DefaultSnapshotSender};
@@ -87,7 +88,13 @@ impl Attestation for ApplicationAttestation {
 }
 
 pub struct ApplicationService<A: Actor> {
-    driver: Driver<RaftSimple<MemoryStorage>, MemoryStorage, DefaultSnapshotProcessor, A>,
+    driver: Driver<
+        RaftSimple<MemoryStorage>,
+        MemoryStorage,
+        DefaultSnapshotProcessor,
+        A,
+        DefaultCommunicationModule,
+    >,
 }
 
 impl<A: Actor> ApplicationService<A> {
@@ -101,6 +108,7 @@ impl<A: Actor> ApplicationService<A> {
                     Box::new(DefaultSnapshotReceiver::new()),
                 ),
                 actor,
+                DefaultCommunicationModule::new(),
             ),
         }
     }

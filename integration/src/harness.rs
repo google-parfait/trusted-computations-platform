@@ -21,6 +21,7 @@ use prost::bytes::Bytes;
 use slog::{info, Logger};
 use tcp_proto::runtime::endpoint::raft_config::SnapshotConfig;
 use tcp_proto::runtime::endpoint::*;
+use tcp_runtime::communication::DefaultCommunicationModule;
 use tcp_runtime::driver::Driver;
 use tcp_runtime::logger::log::create_logger;
 use tcp_runtime::model::Actor;
@@ -173,6 +174,12 @@ impl<A: Actor> FakeCluster<A> {
                             in_message::Msg::DeliverSnapshotResponse(deliver_snapshot_response),
                         ));
                     }
+                    Some(out_message::Msg::SecureChannelHandshake(secure_channel_handshake)) => {
+                        messages_in.push((
+                            secure_channel_handshake.recipient_replica_id,
+                            in_message::Msg::SecureChannelHandshake(secure_channel_handshake),
+                        ));
+                    }
                     _ => {
                         self.pull_messages.push(message_out);
                     }
@@ -182,7 +189,7 @@ impl<A: Actor> FakeCluster<A> {
 
         for (recipient_replica_id, message_in) in messages_in {
             if let Some(platform) = self.platforms.get_mut(&recipient_replica_id) {
-                platform.append_meessage_in(InMessage {
+                platform.append_message_in(InMessage {
                     msg: Some(message_in),
                 });
             }
@@ -236,7 +243,15 @@ pub struct FakePlatform<A: Actor> {
     id: u64,
     messages_in: Vec<InMessage>,
     instant: u64,
-    driver: RefCell<Driver<RaftSimple<MemoryStorage>, MemoryStorage, DefaultSnapshotProcessor, A>>,
+    driver: RefCell<
+        Driver<
+            RaftSimple<MemoryStorage>,
+            MemoryStorage,
+            DefaultSnapshotProcessor,
+            A,
+            DefaultCommunicationModule,
+        >,
+    >,
     host: RefCell<FakeHost>,
 }
 
@@ -254,13 +269,14 @@ impl<A: Actor> FakePlatform<A> {
                     Box::new(DefaultSnapshotReceiver::new()),
                 ),
                 actor,
+                DefaultCommunicationModule::new(),
             )),
             host: RefCell::new(FakeHost::new(app_config)),
         }
     }
 
     pub fn send_start_node(&mut self, app_config: Bytes, is_leader: bool) {
-        self.append_meessage_in(InMessage {
+        self.append_message_in(InMessage {
             msg: Some(in_message::Msg::StartReplica(StartReplicaRequest {
                 is_leader,
                 replica_id_hint: self.id,
@@ -281,7 +297,7 @@ impl<A: Actor> FakePlatform<A> {
     }
 
     pub fn send_stop_node(&mut self) {
-        self.append_meessage_in(InMessage {
+        self.append_message_in(InMessage {
             msg: Some(in_message::Msg::StopReplica(StopReplicaRequest {})),
         });
     }
@@ -292,7 +308,7 @@ impl<A: Actor> FakePlatform<A> {
         replica_id: u64,
         change_type: ChangeClusterType,
     ) {
-        self.append_meessage_in(InMessage {
+        self.append_message_in(InMessage {
             msg: Some(in_message::Msg::ChangeCluster(ChangeClusterRequest {
                 change_id,
                 replica_id,
@@ -302,13 +318,13 @@ impl<A: Actor> FakePlatform<A> {
     }
 
     pub fn send_check_cluster(&mut self) {
-        self.append_meessage_in(InMessage {
+        self.append_message_in(InMessage {
             msg: Some(in_message::Msg::CheckCluster(CheckClusterRequest {})),
         });
     }
 
     pub fn send_proposal(&mut self, proposal_contents: Bytes) {
-        self.append_meessage_in(InMessage {
+        self.append_message_in(InMessage {
             msg: Some(in_message::Msg::ExecuteProposal(ExecuteProposalRequest {
                 proposal_contents,
             })),
@@ -319,7 +335,7 @@ impl<A: Actor> FakePlatform<A> {
         self.instant += duration;
     }
 
-    pub fn append_meessage_in(&mut self, message_in: InMessage) {
+    pub fn append_message_in(&mut self, message_in: InMessage) {
         self.messages_in.push(message_in)
     }
 

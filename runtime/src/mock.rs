@@ -18,6 +18,7 @@ extern crate mockall;
 extern crate tcp_proto;
 
 use self::mockall::mock;
+use communication::CommunicationModule;
 use consensus;
 use consensus::{Raft, RaftLightReady, RaftReady, Store};
 use model::{Actor, ActorContext, ActorError, CommandOutcome, EventOutcome};
@@ -35,7 +36,8 @@ use snapshot::{
     SnapshotError, SnapshotReceiver, SnapshotReceiverImpl, SnapshotSender, SnapshotSenderImpl,
 };
 use tcp_proto::runtime::endpoint::{
-    raft_config::SnapshotConfig, DeliverSnapshotRequest, DeliverSnapshotResponse, OutMessage,
+    in_message, out_message, raft_config::SnapshotConfig, DeliverSnapshotRequest,
+    DeliverSnapshotResponse, OutMessage,
 };
 
 mock! {
@@ -250,5 +252,23 @@ mock! {
         fn process_unexpected_request(&mut self, request: DeliverSnapshotRequest) -> DeliverSnapshotResponse;
 
         fn try_complete(&mut self) -> Option<(u64, RaftSnapshotStatus)>;
+    }
+}
+
+mock! {
+    pub CommunicationModule {
+    }
+
+    impl CommunicationModule for CommunicationModule {
+        fn init(&mut self, replica_id: u64);
+
+        fn process_out_message(&mut self, message: out_message::Msg) -> Result<(), PalError>;
+
+        fn process_in_message(
+            &mut self,
+            message: in_message::Msg,
+        ) -> Result<Option<in_message::Msg>, PalError>;
+
+        fn take_out_messages(&mut self) -> Vec<OutMessage>;
     }
 }
