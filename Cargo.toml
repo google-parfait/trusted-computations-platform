@@ -9,11 +9,12 @@ members = [
 ]
 
 [workspace.dependencies]
-micro_rpc = { git = "https://github.com/project-oak/oak", rev = "bf694d851b0472398276c7e0f57da9c2d004e7ad" }
-micro_rpc_build = { git = "https://github.com/project-oak/oak", rev = "bf694d851b0472398276c7e0f57da9c2d004e7ad" }
-oak_enclave_runtime_support = { git = "https://github.com/project-oak/oak", rev = "bf694d851b0472398276c7e0f57da9c2d004e7ad" }
-oak_restricted_kernel_sdk = { git = "https://github.com/project-oak/oak", rev = "bf694d851b0472398276c7e0f57da9c2d004e7ad" }
-oak_restricted_kernel_interface = { git = "https://github.com/project-oak/oak", rev = "bf694d851b0472398276c7e0f57da9c2d004e7ad" }
+micro_rpc = { git = "https://github.com/project-oak/oak", rev = "b88b074940e998feb9097e58ff298ebd05f97d32" }
+micro_rpc_build = { git = "https://github.com/project-oak/oak", rev = "b88b074940e998feb9097e58ff298ebd05f97d32" }
+oak_crypto = { git = "https://github.com/project-oak/oak", rev = "b88b074940e998feb9097e58ff298ebd05f97d32" }
+oak_enclave_runtime_support = { git = "https://github.com/project-oak/oak", rev = "b88b074940e998feb9097e58ff298ebd05f97d32" }
+oak_restricted_kernel_sdk = { git = "https://github.com/project-oak/oak", rev = "b88b074940e998feb9097e58ff298ebd05f97d32" }
+oak_restricted_kernel_interface = { git = "https://github.com/project-oak/oak", rev = "b88b074940e998feb9097e58ff298ebd05f97d32" }
 # Temporarily point to the personal github repo, plan to migrate most of the trusted code to the Git on Borg.
 raft = { git = "https://github.com/google/raft-rs", rev = "93c40a24182cd595a3f50103a83aee0bacd9881b", package = "raft", default-features = false, features = ["prost-codec"] }
 raft-proto = { git = "https://github.com/google/raft-rs", rev = "93c40a24182cd595a3f50103a83aee0bacd9881b", package = "raft-proto", default-features = false, features = ["prost-codec"] }

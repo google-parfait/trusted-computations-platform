@@ -339,6 +339,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "fffa369a668c8af7dbf8b5e56c9f744fbd399949ed171606040001947de40b1c"
 dependencies = [
  "const-oid",
+ "pem-rfc7468",
  "zeroize",
 ]
 
@@ -426,6 +427,7 @@ dependencies = [
  "generic-array",
  "group",
  "hkdf",
+ "pem-rfc7468",
  "pkcs8",
  "rand_core",
  "sec1",
@@ -730,7 +732,7 @@ checksum = "f665ee40bc4a3c5590afb1e9677db74a508659dfd71e126420da8274909a0167"
 [[package]]
 name = "micro_rpc"
 version = "0.1.0"
-source = "git+https://github.com/project-oak/oak?rev=bf694d851b0472398276c7e0f57da9c2d004e7ad#bf694d851b0472398276c7e0f57da9c2d004e7ad"
+source = "git+https://github.com/project-oak/oak?rev=b88b074940e998feb9097e58ff298ebd05f97d32#b88b074940e998feb9097e58ff298ebd05f97d32"
 dependencies = [
  "async-trait",
  "micro_rpc_build",
@@ -740,7 +742,7 @@ dependencies = [
 [[package]]
 name = "micro_rpc_build"
 version = "0.1.0"
-source = "git+https://github.com/project-oak/oak?rev=bf694d851b0472398276c7e0f57da9c2d004e7ad#bf694d851b0472398276c7e0f57da9c2d004e7ad"
+source = "git+https://github.com/project-oak/oak?rev=b88b074940e998feb9097e58ff298ebd05f97d32#b88b074940e998feb9097e58ff298ebd05f97d32"
 dependencies = [
  "anyhow",
  "prost-build",
@@ -806,7 +808,7 @@ dependencies = [
 [[package]]
 name = "oak_channel"
 version = "0.1.0"
-source = "git+https://github.com/project-oak/oak?rev=bf694d851b0472398276c7e0f57da9c2d004e7ad#bf694d851b0472398276c7e0f57da9c2d004e7ad"
+source = "git+https://github.com/project-oak/oak?rev=b88b074940e998feb9097e58ff298ebd05f97d32#b88b074940e998feb9097e58ff298ebd05f97d32"
 dependencies = [
  "anyhow",
  "bitflags 2.4.0",
@@ -818,7 +820,7 @@ dependencies = [
 [[package]]
 name = "oak_core"
 version = "0.1.0"
-source = "git+https://github.com/project-oak/oak?rev=bf694d851b0472398276c7e0f57da9c2d004e7ad#bf694d851b0472398276c7e0f57da9c2d004e7ad"
+source = "git+https://github.com/project-oak/oak?rev=b88b074940e998feb9097e58ff298ebd05f97d32#b88b074940e998feb9097e58ff298ebd05f97d32"
 dependencies = [
  "getrandom",
  "lock_api",
@@ -828,26 +830,31 @@ dependencies = [
 [[package]]
 name = "oak_crypto"
 version = "0.1.0"
-source = "git+https://github.com/project-oak/oak?rev=bf694d851b0472398276c7e0f57da9c2d004e7ad#bf694d851b0472398276c7e0f57da9c2d004e7ad"
+source = "git+https://github.com/project-oak/oak?rev=b88b074940e998feb9097e58ff298ebd05f97d32#b88b074940e998feb9097e58ff298ebd05f97d32"
 dependencies = [
  "aes-gcm",
  "anyhow",
  "async-trait",
  "bytes",
+ "ecdsa",
+ "hex",
  "hkdf",
  "hpke",
  "micro_rpc_build",
- "oak_dice",
  "p256",
+ "pkcs8",
+ "primeorder",
  "prost",
  "rand_core",
  "sha2",
+ "static_assertions",
+ "zeroize",
 ]
 
 [[package]]
 name = "oak_dice"
 version = "0.1.0"
-source = "git+https://github.com/project-oak/oak?rev=bf694d851b0472398276c7e0f57da9c2d004e7ad#bf694d851b0472398276c7e0f57da9c2d004e7ad"
+source = "git+https://github.com/project-oak/oak?rev=b88b074940e998feb9097e58ff298ebd05f97d32#b88b074940e998feb9097e58ff298ebd05f97d32"
 dependencies = [
  "bitflags 2.4.0",
  "ciborium",
@@ -866,7 +873,7 @@ dependencies = [
 [[package]]
 name = "oak_enclave_runtime_support"
 version = "0.1.0"
-source = "git+https://github.com/project-oak/oak?rev=bf694d851b0472398276c7e0f57da9c2d004e7ad#bf694d851b0472398276c7e0f57da9c2d004e7ad"
+source = "git+https://github.com/project-oak/oak?rev=b88b074940e998feb9097e58ff298ebd05f97d32#b88b074940e998feb9097e58ff298ebd05f97d32"
 dependencies = [
  "libm",
  "log",
@@ -878,7 +885,7 @@ dependencies = [
 [[package]]
 name = "oak_restricted_kernel_interface"
 version = "0.1.0"
-source = "git+https://github.com/project-oak/oak?rev=bf694d851b0472398276c7e0f57da9c2d004e7ad#bf694d851b0472398276c7e0f57da9c2d004e7ad"
+source = "git+https://github.com/project-oak/oak?rev=b88b074940e998feb9097e58ff298ebd05f97d32#b88b074940e998feb9097e58ff298ebd05f97d32"
 dependencies = [
  "bitflags 2.4.0",
  "strum",
@@ -887,7 +894,7 @@ dependencies = [
 [[package]]
 name = "oak_restricted_kernel_sdk"
 version = "0.1.0"
-source = "git+https://github.com/project-oak/oak?rev=bf694d851b0472398276c7e0f57da9c2d004e7ad#bf694d851b0472398276c7e0f57da9c2d004e7ad"
+source = "git+https://github.com/project-oak/oak?rev=b88b074940e998feb9097e58ff298ebd05f97d32#b88b074940e998feb9097e58ff298ebd05f97d32"
 dependencies = [
  "anyhow",
  "lazy_static",
@@ -908,7 +915,7 @@ dependencies = [
 [[package]]
 name = "oak_restricted_kernel_sdk_proc_macro"
 version = "0.1.0"
-source = "git+https://github.com/project-oak/oak?rev=bf694d851b0472398276c7e0f57da9c2d004e7ad#bf694d851b0472398276c7e0f57da9c2d004e7ad"
+source = "git+https://github.com/project-oak/oak?rev=b88b074940e998feb9097e58ff298ebd05f97d32#b88b074940e998feb9097e58ff298ebd05f97d32"
 dependencies = [
  "quote",
  "syn 1.0.109",
@@ -936,6 +943,15 @@ dependencies = [
  "elliptic-curve",
  "primeorder",
  "sha2",
+]
+
+[[package]]
+name = "pem-rfc7468"
+version = "0.7.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "88b39c9bfcfc231068454382784bb460aae594343fb030d46e9f50a645418412"
+dependencies = [
+ "base64ct",
 ]
 
 [[package]]
@@ -1592,6 +1608,7 @@ dependencies = [
  "hashbrown",
  "micro_rpc",
  "mockall",
+ "oak_crypto",
  "prost",
  "prost-build",
  "raft",
