@@ -18,7 +18,6 @@ package fcp.confidentialcompute;
 
 import "google/protobuf/duration.proto";
 import "google/protobuf/timestamp.proto";
-import "micro_rpc/messages.proto";
 
 // The Trusted Ledger is an application built on top of Trusted Computation
 // Platform that is responsible for ensuring that access to encrypted blobs of
@@ -43,32 +42,6 @@ message CreateKeyRequest {
 
   // The TTL of the created key.
   google.protobuf.Duration ttl = 2;
-}
-
-message PublicKeyDetails {
-  // A unique identifier for the public key. This should be included in the
-  // header of any blobs encrypted using this key.
-  fixed32 public_key_id = 1;
-
-  // The time when the key was issued. Clients should not use the key if this
-  // time is in the future since it could indicate that the server is using
-  // the incorrect time.
-  google.protobuf.Timestamp issued = 2;
-
-  // The Ledger will not allow decryption using this key after this time.
-  // Clients should not encrypt data using an expired key.
-  google.protobuf.Timestamp expiration = 3;
-}
-
-message CreateKeyEvent {
-  // The serialized bytes of the public key.
-  bytes public_key = 1;
-
-  // The serialized bytes of the private key.
-  bytes private_key = 2;
-
-  // Additional information about the public key.
-  PublicKeyDetails public_key_details = 3;
 }
 
 message CreateKeyResponse {
@@ -160,115 +133,3 @@ message RevokeAccessRequest {
 }
 
 message RevokeAccessResponse {}
-
-// Request to the Trusted Ledger to propose an operation.
-message LedgerRequest {
-  oneof request {
-    // Creates a new public/private keypair for encrypting the symmetric keys
-    // used to encrypt blobs.
-    CreateKeyRequest create_key = 1;
-    // Deletes a public/private keypair. Once deleted, any blobs encrypted with
-    // the keypair will no longer be accessible.
-    DeleteKeyRequest delete_key = 2;
-    // Authorizes the caller to read an encrypted blob. If the enclave
-    // requesting access is authorized by the blob's policy and the remaining
-    // access budget, the Ledger will decrypt and return the blob's symmetric
-    // key (re-encrypted so that only the enclave can read it).
-    AuthorizeAccessRequest authorize_access = 3;
-    // Prevents all future access to an encrypted blob; all subsequent
-    // AuthorizeAccess requests for the blob will fail.
-    RevokeAccessRequest revoke_access = 4;
-  }
-}
-
-// Event used to replicate and apply the Trusted Ledger operation.
-message LedgerEvent {
-  oneof event {
-    // Contains information about the new public/private keypair to be
-    // applied to the state.
-    CreateKeyEvent create_key = 1;
-    // The same as in the LedgerRequest.
-    DeleteKeyRequest delete_key = 2;
-    // The same as in the LedgerRequest.
-    AuthorizeAccessRequest authorize_access = 3;
-    // The same as in the LedgerRequest.
-    RevokeAccessRequest revoke_access = 4;
-  }
-}
-
-// Response from the Trusted Ledger with a result of an operation.
-message LedgerResponse {
-  oneof response {
-    // Response for CreateKeyRequest.
-    CreateKeyResponse create_key = 1;
-    // Response for DeleteKeyRequest.
-    DeleteKeyResponse delete_key = 2;
-    // Response for AuthorizeAccessRequest.
-    AuthorizeAccessResponse authorize_access = 3;
-    // Response for RevokeAccessRequest.
-    RevokeAccessResponse revoke_access = 4;
-    // Error response for all requests.
-    micro_rpc.Status error = 5;
-  }
-}
-
-// Configuration message for the Trusted Ledger.
-message LedgerConfig {}
-
-// Snapshot of a blob budget.
-message BlobBudgetSnapshot {
-  // Blob ID.
-  bytes blob_id = 1;
-
-  // Per-transform budgets.
-  repeated uint32 transform_access_budgets = 2;
-
-  // Budgets that are shared between transforms.
-  repeated uint32 shared_access_budgets = 3;
-}
-
-// Snapshot of state per access policy, which includes all blobs covered by that
-// policy.
-message PerPolicyBudgetSnapshot {
-  // Access policy SHA-256 hash
-  bytes access_policy_sha256 = 1;
-
-  // Per-blob budgets.
-  repeated BlobBudgetSnapshot budgets = 2;
-}
-
-message BudgetSnapshot {
-  // Budget data per access policy.
-  repeated PerPolicyBudgetSnapshot per_policy_snapshots = 1;
-
-  // Blob ids whose budgets have been consumed.
-  repeated bytes consumed_budgets = 2;
-}
-
-// Snapshot of state per public/private keypair.
-message PerKeySnapshot {
-  // ID of the public key.
-  fixed32 public_key_id = 1;
-
-  // The serialized bytes of the public key.
-  bytes public_key = 2;
-
-  // The serialized bytes of the private key.
-  bytes private_key = 3;
-
-  // Expiration for this public/private keypair.
-  google.protobuf.Timestamp expiration = 4;
-
-  // All budgets related to the current public/private keypair.
-  BudgetSnapshot budgets = 5;
-}
-
-// Snapshot message for the Trusted Ledger.
-message LedgerSnapshot {
-  // Last known current time at the moment when the snapshot was taken.
-  google.protobuf.Timestamp current_time = 1;
-
-  // Maps public key id to the the public/private keypair specific data
-  // snapshot.
-  repeated PerKeySnapshot per_key_snapshots = 2;
-}

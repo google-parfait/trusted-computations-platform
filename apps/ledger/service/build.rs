@@ -20,6 +20,7 @@ fn main() -> Result<()> {
             "proto/access_policy.proto",
             "proto/blob_header.proto",
             "proto/ledger.proto",
+            "proto/ledger_actor.proto",
         ],
         &["proto", "../../../proto"],
         micro_rpc_build::CompileOptions {
