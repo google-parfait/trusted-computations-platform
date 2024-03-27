@@ -22,9 +22,12 @@ fn main() -> Result<()> {
             "proto/ledger.proto",
             "proto/ledger_actor.proto",
         ],
-        &["proto", "../../../proto"],
+        &["proto", "../../../proto", "../../../proto_stubs"],
         micro_rpc_build::CompileOptions {
-            bytes: vec![],
+            extern_paths: vec![micro_rpc_build::ExternPath::new(
+                ".oak.attestation.v1",
+                "::oak_proto_rust::oak::attestation::v1",
+            )],
             ..Default::default()
         },
     );

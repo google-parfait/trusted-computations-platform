@@ -732,11 +732,30 @@ checksum = "f665ee40bc4a3c5590afb1e9677db74a508659dfd71e126420da8274909a0167"
 [[package]]
 name = "micro_rpc"
 version = "0.1.0"
+source = "git+https://github.com/project-oak/oak?rev=319f9f97249c142abd7ad5038bdca24f90aeb515#319f9f97249c142abd7ad5038bdca24f90aeb515"
+dependencies = [
+ "async-trait",
+ "micro_rpc_build 0.1.0 (git+https://github.com/project-oak/oak?rev=319f9f97249c142abd7ad5038bdca24f90aeb515)",
+ "prost",
+]
+
+[[package]]
+name = "micro_rpc"
+version = "0.1.0"
 source = "git+https://github.com/project-oak/oak?rev=b88b074940e998feb9097e58ff298ebd05f97d32#b88b074940e998feb9097e58ff298ebd05f97d32"
 dependencies = [
  "async-trait",
- "micro_rpc_build",
+ "micro_rpc_build 0.1.0 (git+https://github.com/project-oak/oak?rev=b88b074940e998feb9097e58ff298ebd05f97d32)",
  "prost",
+]
+
+[[package]]
+name = "micro_rpc_build"
+version = "0.1.0"
+source = "git+https://github.com/project-oak/oak?rev=319f9f97249c142abd7ad5038bdca24f90aeb515#319f9f97249c142abd7ad5038bdca24f90aeb515"
+dependencies = [
+ "anyhow",
+ "prost-build",
 ]
 
 [[package]]
@@ -840,7 +859,7 @@ dependencies = [
  "hex",
  "hkdf",
  "hpke",
- "micro_rpc_build",
+ "micro_rpc_build 0.1.0 (git+https://github.com/project-oak/oak?rev=b88b074940e998feb9097e58ff298ebd05f97d32)",
  "p256",
  "pkcs8",
  "primeorder",
@@ -883,6 +902,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "oak_proto_rust"
+version = "0.0.1"
+source = "git+https://github.com/project-oak/oak?rev=319f9f97249c142abd7ad5038bdca24f90aeb515#319f9f97249c142abd7ad5038bdca24f90aeb515"
+dependencies = [
+ "micro_rpc 0.1.0 (git+https://github.com/project-oak/oak?rev=319f9f97249c142abd7ad5038bdca24f90aeb515)",
+ "micro_rpc_build 0.1.0 (git+https://github.com/project-oak/oak?rev=319f9f97249c142abd7ad5038bdca24f90aeb515)",
+ "prost",
+ "prost-build",
+]
+
+[[package]]
 name = "oak_restricted_kernel_interface"
 version = "0.1.0"
 source = "git+https://github.com/project-oak/oak?rev=b88b074940e998feb9097e58ff298ebd05f97d32#b88b074940e998feb9097e58ff298ebd05f97d32"
@@ -899,7 +929,7 @@ dependencies = [
  "anyhow",
  "lazy_static",
  "log",
- "micro_rpc",
+ "micro_rpc 0.1.0 (git+https://github.com/project-oak/oak?rev=b88b074940e998feb9097e58ff298ebd05f97d32)",
  "oak_channel",
  "oak_core",
  "oak_crypto",
@@ -1517,7 +1547,7 @@ dependencies = [
 name = "tcp_atomic_counter_enclave_app"
 version = "0.1.0"
 dependencies = [
- "micro_rpc",
+ "micro_rpc 0.1.0 (git+https://github.com/project-oak/oak?rev=b88b074940e998feb9097e58ff298ebd05f97d32)",
  "oak_restricted_kernel_interface",
  "oak_restricted_kernel_sdk",
  "tcp_atomic_counter_service",
@@ -1530,7 +1560,7 @@ name = "tcp_atomic_counter_service"
 version = "0.1.0"
 dependencies = [
  "hashbrown",
- "micro_rpc_build",
+ "micro_rpc_build 0.1.0 (git+https://github.com/project-oak/oak?rev=b88b074940e998feb9097e58ff298ebd05f97d32)",
  "mockall",
  "prost",
  "prost-build",
@@ -1546,7 +1576,7 @@ name = "tcp_integration"
 version = "0.1.0"
 dependencies = [
  "hashbrown",
- "micro_rpc",
+ "micro_rpc 0.1.0 (git+https://github.com/project-oak/oak?rev=b88b074940e998feb9097e58ff298ebd05f97d32)",
  "prost",
  "prost-build",
  "raft",
@@ -1561,7 +1591,7 @@ dependencies = [
 name = "tcp_ledger_enclave_app"
 version = "0.1.0"
 dependencies = [
- "micro_rpc",
+ "micro_rpc 0.1.0 (git+https://github.com/project-oak/oak?rev=b88b074940e998feb9097e58ff298ebd05f97d32)",
  "oak_restricted_kernel_interface",
  "oak_restricted_kernel_sdk",
  "tcp_ledger_service",
@@ -1577,9 +1607,10 @@ dependencies = [
  "byteorder",
  "cfc_crypto",
  "hpke",
- "micro_rpc",
- "micro_rpc_build",
+ "micro_rpc 0.1.0 (git+https://github.com/project-oak/oak?rev=b88b074940e998feb9097e58ff298ebd05f97d32)",
+ "micro_rpc_build 0.1.0 (git+https://github.com/project-oak/oak?rev=b88b074940e998feb9097e58ff298ebd05f97d32)",
  "mockall",
+ "oak_proto_rust",
  "prost",
  "prost-types",
  "rand",
@@ -1595,8 +1626,8 @@ name = "tcp_proto"
 version = "0.1.0"
 dependencies = [
  "byteorder",
- "micro_rpc",
- "micro_rpc_build",
+ "micro_rpc 0.1.0 (git+https://github.com/project-oak/oak?rev=b88b074940e998feb9097e58ff298ebd05f97d32)",
+ "micro_rpc_build 0.1.0 (git+https://github.com/project-oak/oak?rev=b88b074940e998feb9097e58ff298ebd05f97d32)",
  "prost",
  "prost-types",
 ]
@@ -1606,7 +1637,7 @@ name = "tcp_runtime"
 version = "0.1.0"
 dependencies = [
  "hashbrown",
- "micro_rpc",
+ "micro_rpc 0.1.0 (git+https://github.com/project-oak/oak?rev=b88b074940e998feb9097e58ff298ebd05f97d32)",
  "mockall",
  "oak_crypto",
  "prost",

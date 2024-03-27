@@ -229,7 +229,6 @@ mod test {
             .unwrap();
         let details1 = PublicKeyDetails::decode(response1.public_key_details.as_ref()).unwrap();
 
-        assert_eq!(response1.attestation, &[]);
         assert_eq!(
             details1.issued,
             Some(prost_types::Timestamp {

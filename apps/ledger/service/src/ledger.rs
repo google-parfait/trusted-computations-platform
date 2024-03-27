@@ -113,7 +113,8 @@ impl LedgerService {
     ) -> Result<Application<'a>, micro_rpc::Status> {
         attestation::verify_attestation(
             &request.recipient_public_key,
-            &request.recipient_attestation,
+            request.recipient_attestation_evidence.as_ref(),
+            request.recipient_attestation_endorsements.as_ref(),
             &request.recipient_tag,
         )
     }
@@ -482,7 +483,6 @@ mod tests {
             .unwrap();
         let details1 = PublicKeyDetails::decode(response1.public_key_details.as_ref()).unwrap();
 
-        assert_eq!(response1.attestation, &[]);
         assert_eq!(
             details1.issued,
             Some(prost_types::Timestamp {

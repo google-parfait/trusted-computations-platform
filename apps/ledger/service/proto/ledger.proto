@@ -18,6 +18,8 @@ package fcp.confidentialcompute;
 
 import "google/protobuf/duration.proto";
 import "google/protobuf/timestamp.proto";
+import "proto/attestation/endorsement.proto";
+import "proto/attestation/evidence.proto";
 
 // The Trusted Ledger is an application built on top of Trusted Computation
 // Platform that is responsible for ensuring that access to encrypted blobs of
@@ -53,8 +55,10 @@ message CreateKeyResponse {
   // attestation.
   bytes public_key_details = 2;
 
-  // The attestation for the application supplying the public key and details.
-  bytes attestation = 3;
+  // The attestation evidence for the Ledger.
+  oak.attestation.v1.Evidence attestation_evidence = 4;
+
+  reserved 3;
 }
 
 message DeleteKeyRequest {
@@ -89,8 +93,11 @@ message AuthorizeAccessRequest {
   // The public key to use to encrypt the response.
   bytes recipient_public_key = 6;
 
-  // The attestation for the application supplying the public key.
-  bytes recipient_attestation = 7;
+  // The attestation evidence for the application requesting access.
+  oak.attestation.v1.Evidence recipient_attestation_evidence = 9;
+
+  // The attestation endorsements for the application requesting access.
+  oak.attestation.v1.Endorsements recipient_attestation_endorsements = 11;
 
   // Optional tag to disambiguate between otherwise identical accesses in the
   // policy. This field is an orchestration-level hint, not something attested
@@ -104,6 +111,8 @@ message AuthorizeAccessRequest {
   // the symmetric key. This nonce must be appended to the associated data for
   // the symmetric key.
   bytes recipient_nonce = 10;
+
+  reserved 7;
 }
 
 message AuthorizeAccessResponse {

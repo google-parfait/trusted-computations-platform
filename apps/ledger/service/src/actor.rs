@@ -15,7 +15,7 @@
 use crate::fcp::confidentialcompute::*;
 use crate::ledger::{Ledger, LedgerService};
 
-use alloc::{boxed::Box, format, vec};
+use alloc::{boxed::Box, format};
 use prost::{bytes::Bytes, Message};
 use tcp_runtime::model::{Actor, ActorContext, ActorError, CommandOutcome, EventOutcome};
 
@@ -84,8 +84,9 @@ impl LedgerActor {
                         format!("attestation validation failed: {:?}", error),
                     )
                 })?;
-                // Empty out the attestation field
-                authorize_access_request.recipient_attestation = vec![];
+                // Empty out the attestation fields
+                authorize_access_request.recipient_attestation_evidence = None;
+                authorize_access_request.recipient_attestation_endorsements = None;
                 ledger_event::Event::AuthorizeAccess(authorize_access_request)
             }
             Some(ledger_request::Request::CreateKey(create_key_request)) => {
