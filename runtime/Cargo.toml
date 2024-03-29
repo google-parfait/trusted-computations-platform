@@ -17,7 +17,10 @@ slog-term = { version = "2.4.0", optional = true }
 spin = { version = "0.9.8" }
 tcp_proto = { path = "../proto" }
 micro_rpc = { workspace = true }
+oak_attestation = {workspace = true}
 oak_crypto = { workspace = true }
+oak_proto_rust = {workspace = true}
+oak_restricted_kernel_sdk = {workspace = true}
 mockall = { version = "0.11.4", optional = true }
 
 [dev-dependencies]
