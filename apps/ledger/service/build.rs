@@ -16,18 +16,24 @@ use std::io::Result;
 
 fn main() -> Result<()> {
     micro_rpc_build::compile(
+        &["proto/ledger_actor.proto"],
         &[
-            "proto/access_policy.proto",
-            "proto/blob_header.proto",
-            "proto/ledger.proto",
-            "proto/ledger_actor.proto",
+            "proto",
+            "../federated_compute/proto",
+            "../../../proto",
+            "../../../proto_stubs",
         ],
-        &["proto", "../../../proto", "../../../proto_stubs"],
         micro_rpc_build::CompileOptions {
-            extern_paths: vec![micro_rpc_build::ExternPath::new(
-                ".oak.attestation.v1",
-                "::oak_proto_rust::oak::attestation::v1",
-            )],
+            extern_paths: vec![
+                micro_rpc_build::ExternPath::new(
+                    ".oak.attestation.v1",
+                    "::oak_proto_rust::oak::attestation::v1",
+                ),
+                micro_rpc_build::ExternPath::new(
+                    ".fcp.confidentialcompute",
+                    "::federated_compute::proto",
+                ),
+            ],
             ..Default::default()
         },
     );

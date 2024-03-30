@@ -19,10 +19,11 @@ use alloc::{
     collections::{BTreeMap, BTreeSet},
     vec::Vec,
 };
+use core::time::Duration;
 
-use crate::fcp::confidentialcompute::{
-    access_budget::Kind as AccessBudgetKind, AccessBudget, BlobBudgetSnapshot, BudgetSnapshot,
-    DataAccessPolicy, PerPolicyBudgetSnapshot,
+use crate::ledger::service::{BlobBudgetSnapshot, BudgetSnapshot, PerPolicyBudgetSnapshot};
+use federated_compute::proto::{
+    access_budget::Kind as AccessBudgetKind, AccessBudget, DataAccessPolicy,
 };
 
 /// The remaining privacy budget for an individual blob.
@@ -176,6 +177,7 @@ impl BudgetTracker {
         policy: &DataAccessPolicy,
         policy_hash: &[u8],
         app: &Application,
+        now: Duration,
     ) -> Result<usize, micro_rpc::Status> {
         if self.consumed_budgets.contains(blob_id) {
             return Err(micro_rpc::Status::new_with_message(
@@ -186,7 +188,7 @@ impl BudgetTracker {
 
         let mut match_found = false;
         for (i, transform) in policy.transforms.iter().enumerate() {
-            if transform.src != node_id || !app.matches(&transform.application) {
+            if transform.src != node_id || !app.matches(&transform.application, now) {
                 continue;
             }
             match_found = true;
@@ -330,16 +332,19 @@ mod tests {
     use super::*;
 
     use crate::assert_err;
-    use crate::fcp::confidentialcompute::{
+    use alloc::{borrow::ToOwned, vec};
+    use federated_compute::proto::{
         access_budget::Kind as AccessBudgetKind, data_access_policy::Transform, AccessBudget,
         ApplicationMatcher,
     };
-    use alloc::{borrow::ToOwned, vec};
 
     #[test]
     fn test_find_matching_transform_success() {
         let tracker = BudgetTracker::default();
-        let app = Application { tag: "foo" };
+        let app = Application {
+            tag: "foo",
+            ..Default::default()
+        };
         let policy = DataAccessPolicy {
             transforms: vec![
                 // This transform won't match because the src index is wrong.
@@ -347,6 +352,7 @@ mod tests {
                     src: 0,
                     application: Some(ApplicationMatcher {
                         tag: Some(app.tag.to_owned()),
+                        ..Default::default()
                     }),
                     ..Default::default()
                 },
@@ -355,6 +361,7 @@ mod tests {
                     src: 1,
                     application: Some(ApplicationMatcher {
                         tag: Some("other".to_owned()),
+                        ..Default::default()
                     }),
                     ..Default::default()
                 },
@@ -363,6 +370,7 @@ mod tests {
                     src: 1,
                     application: Some(ApplicationMatcher {
                         tag: Some(app.tag.to_owned()),
+                        ..Default::default()
                     }),
                     ..Default::default()
                 },
@@ -371,6 +379,7 @@ mod tests {
                     src: 1,
                     application: Some(ApplicationMatcher {
                         tag: Some(app.tag.to_owned()),
+                        ..Default::default()
                     }),
                     ..Default::default()
                 },
@@ -384,7 +393,8 @@ mod tests {
                 /* node_id=*/ 1,
                 &policy,
                 b"policy-hash",
-                &app
+                &app,
+                Duration::default()
             ),
             Ok(2)
         );
@@ -400,6 +410,7 @@ mod tests {
                     src: 0,
                     application: Some(ApplicationMatcher {
                         tag: Some("tag1".to_owned()),
+                        ..Default::default()
                     }),
                     ..Default::default()
                 },
@@ -407,6 +418,7 @@ mod tests {
                     src: 1,
                     application: Some(ApplicationMatcher {
                         tag: Some("tag2".to_owned()),
+                        ..Default::default()
                     }),
                     ..Default::default()
                 },
@@ -422,7 +434,11 @@ mod tests {
                 /* node_id=*/ 1,
                 &policy,
                 policy_hash,
-                &Application { tag: "no-match" }
+                &Application {
+                    tag: "no-match",
+                    ..Default::default()
+                },
+                Duration::default()
             )
             .is_err());
         // A transform should not be found if the index doesn't match.
@@ -432,7 +448,11 @@ mod tests {
                 /* node_id=*/ 10,
                 &policy,
                 policy_hash,
-                &Application { tag: "tag1" }
+                &Application {
+                    tag: "tag1",
+                    ..Default::default()
+                },
+                Duration::default()
             )
             .is_err());
     }
@@ -440,7 +460,6 @@ mod tests {
     #[test]
     fn test_find_matching_transform_with_invalid_policy() {
         let tracker = BudgetTracker::default();
-        let app = Application { tag: "tag" };
         let policy = DataAccessPolicy {
             transforms: vec![Transform {
                 src: 0,
@@ -452,14 +471,20 @@ mod tests {
         };
 
         assert!(tracker
-            .find_matching_transform(&[], /* node_id=*/ 0, &policy, b"policy-hash", &app)
+            .find_matching_transform(
+                &[],
+                /* node_id=*/ 0,
+                &policy,
+                b"policy-hash",
+                &Application::default(),
+                Duration::default()
+            )
             .is_err());
     }
 
     #[test]
     fn test_update_budget() {
         let mut tracker = BudgetTracker::default();
-        let app = Application { tag: "tag" };
         let policy = DataAccessPolicy {
             transforms: vec![Transform {
                 src: 0,
@@ -474,7 +499,14 @@ mod tests {
         let blob_id = b"blob-id";
 
         let transform_index = tracker
-            .find_matching_transform(blob_id, /* node_id= */ 0, &policy, policy_hash, &app)
+            .find_matching_transform(
+                blob_id,
+                /* node_id= */ 0,
+                &policy,
+                policy_hash,
+                &Application::default(),
+                Duration::default(),
+            )
             .unwrap();
         assert_eq!(
             tracker.update_budget(blob_id, transform_index, &policy, policy_hash),
@@ -483,7 +515,14 @@ mod tests {
 
         // The remaining budget should now be 1, so the next access should also succeed.
         let transform_index = tracker
-            .find_matching_transform(blob_id, /* node_id= */ 0, &policy, policy_hash, &app)
+            .find_matching_transform(
+                blob_id,
+                /* node_id= */ 0,
+                &policy,
+                policy_hash,
+                &Application::default(),
+                Duration::default(),
+            )
             .unwrap();
         assert_eq!(
             tracker.update_budget(blob_id, transform_index, &policy, policy_hash),
@@ -497,7 +536,8 @@ mod tests {
                 /* node_id=*/ 0,
                 &policy,
                 policy_hash,
-                &app
+                &Application::default(),
+                Duration::default()
             ),
             Err(micro_rpc::Status::new_with_message(
                 micro_rpc::StatusCode::ResourceExhausted,
@@ -509,7 +549,6 @@ mod tests {
     #[test]
     fn test_update_budget_after_exhausted() {
         let mut tracker = BudgetTracker::default();
-        let app = Application { tag: "tag" };
         let policy = DataAccessPolicy {
             transforms: vec![Transform {
                 src: 0,
@@ -524,7 +563,14 @@ mod tests {
         let blob_id = b"blob-id";
 
         let transform_index = tracker
-            .find_matching_transform(blob_id, /* node_id= */ 0, &policy, policy_hash, &app)
+            .find_matching_transform(
+                blob_id,
+                /* node_id= */ 0,
+                &policy,
+                policy_hash,
+                &Application::default(),
+                Duration::default(),
+            )
             .unwrap();
         assert_eq!(
             tracker.update_budget(blob_id, transform_index, &policy, policy_hash),
@@ -600,7 +646,6 @@ mod tests {
     #[test]
     fn test_consume_budget() {
         let mut tracker = BudgetTracker::default();
-        let app = Application { tag: "tag" };
         let policy = DataAccessPolicy {
             transforms: vec![Transform {
                 src: 0,
@@ -619,7 +664,8 @@ mod tests {
                 /* node_id=*/ 0,
                 &policy,
                 policy_hash,
-                &app
+                &Application::default(),
+                Duration::default()
             ),
             Err(micro_rpc::Status::new_with_message(
                 micro_rpc::StatusCode::ResourceExhausted,
@@ -634,7 +680,8 @@ mod tests {
                 /* node_id=*/ 0,
                 &policy,
                 policy_hash,
-                &app
+                &Application::default(),
+                Duration::default()
             ),
             Ok(0)
         );
@@ -643,7 +690,6 @@ mod tests {
     #[test]
     fn test_shared_budgets() {
         let mut tracker = BudgetTracker::default();
-        let app = Application { tag: "tag" };
         let policy = DataAccessPolicy {
             transforms: vec![
                 Transform {
@@ -675,7 +721,8 @@ mod tests {
                 /* node_id=*/ 0,
                 &policy,
                 policy_hash,
-                &app
+                &Application::default(),
+                Duration::default()
             ),
             Ok(0)
         );
@@ -691,7 +738,8 @@ mod tests {
                 /* node_id=*/ 0,
                 &policy,
                 policy_hash,
-                &app
+                &Application::default(),
+                Duration::default()
             ),
             Ok(1)
         );
@@ -707,7 +755,8 @@ mod tests {
                 /* node_id=*/ 0,
                 &policy,
                 policy_hash,
-                &app
+                &Application::default(),
+                Duration::default()
             ),
             Err(micro_rpc::Status::new_with_message(
                 micro_rpc::StatusCode::ResourceExhausted,
@@ -723,7 +772,8 @@ mod tests {
                 /* node_id=*/ 0,
                 &policy,
                 policy_hash,
-                &app
+                &Application::default(),
+                Duration::default()
             ),
             Ok(0)
         );
@@ -732,12 +782,16 @@ mod tests {
     #[test]
     fn test_policy_isolation() {
         let mut tracker = BudgetTracker::default();
-        let app = Application { tag: "tag" };
+        let app = Application {
+            tag: "tag",
+            ..Default::default()
+        };
         let policy1 = DataAccessPolicy {
             transforms: vec![Transform {
                 src: 0,
                 access_budget: Some(AccessBudget {
                     kind: Some(AccessBudgetKind::Times(1)),
+                    ..Default::default()
                 }),
                 ..Default::default()
             }],
@@ -749,9 +803,11 @@ mod tests {
                 src: 0,
                 application: Some(ApplicationMatcher {
                     tag: Some(app.tag.to_owned()),
+                    ..Default::default()
                 }),
                 access_budget: Some(AccessBudget {
                     kind: Some(AccessBudgetKind::Times(1)),
+                    ..Default::default()
                 }),
                 ..Default::default()
             }],
@@ -764,7 +820,14 @@ mod tests {
         // malicious blob id collisions from causing incorrect tracking. If the budgets were
         // shared, the second access would fail.
         let transform_index = tracker
-            .find_matching_transform(blob_id, /* node_id=*/ 0, &policy1, policy_hash1, &app)
+            .find_matching_transform(
+                blob_id,
+                /* node_id=*/ 0,
+                &policy1,
+                policy_hash1,
+                &app,
+                Duration::default(),
+            )
             .unwrap();
         assert_eq!(
             tracker.update_budget(blob_id, transform_index, &policy1, policy_hash1),
@@ -772,7 +835,14 @@ mod tests {
         );
 
         let transform_index = tracker
-            .find_matching_transform(blob_id, /* node_id=*/ 0, &policy2, policy_hash2, &app)
+            .find_matching_transform(
+                blob_id,
+                /* node_id=*/ 0,
+                &policy2,
+                policy_hash2,
+                &app,
+                Duration::default(),
+            )
             .unwrap();
         assert_eq!(
             tracker.update_budget(blob_id, transform_index, &policy2, policy_hash2),
@@ -783,7 +853,6 @@ mod tests {
     #[test]
     fn test_updated_budget_snapshot() {
         let mut tracker = BudgetTracker::default();
-        let app = Application { tag: "tag" };
         let policy = DataAccessPolicy {
             transforms: vec![Transform {
                 src: 0,
@@ -798,7 +867,14 @@ mod tests {
         let blob_id = b"blob-id";
 
         let transform_index = tracker
-            .find_matching_transform(blob_id, /* node_id= */ 0, &policy, policy_hash, &app)
+            .find_matching_transform(
+                blob_id,
+                /* node_id= */ 0,
+                &policy,
+                policy_hash,
+                &Application::default(),
+                Duration::default(),
+            )
             .unwrap();
         assert_eq!(
             tracker.update_budget(blob_id, transform_index, &policy, policy_hash),
@@ -824,7 +900,6 @@ mod tests {
     #[test]
     fn test_consumed_budget_snapshot() {
         let mut tracker = BudgetTracker::default();
-        let app = Application { tag: "tag" };
         let policy = DataAccessPolicy {
             transforms: vec![Transform {
                 src: 0,
@@ -839,7 +914,14 @@ mod tests {
         let blob_id = b"blob-id";
 
         let transform_index = tracker
-            .find_matching_transform(blob_id, /* node_id= */ 0, &policy, policy_hash, &app)
+            .find_matching_transform(
+                blob_id,
+                /* node_id= */ 0,
+                &policy,
+                policy_hash,
+                &Application::default(),
+                Duration::default(),
+            )
             .unwrap();
         assert_eq!(
             tracker.update_budget(blob_id, transform_index, &policy, policy_hash),
@@ -901,7 +983,6 @@ mod tests {
     #[test]
     fn test_load_snapshot_replaces_state() {
         let mut tracker = BudgetTracker::default();
-        let app = Application { tag: "tag" };
         let policy = DataAccessPolicy {
             transforms: vec![Transform {
                 src: 0,
@@ -916,7 +997,14 @@ mod tests {
         let blob_id = b"blob-id";
 
         let transform_index = tracker
-            .find_matching_transform(blob_id, /* node_id= */ 0, &policy, policy_hash, &app)
+            .find_matching_transform(
+                blob_id,
+                /* node_id= */ 0,
+                &policy,
+                policy_hash,
+                &Application::default(),
+                Duration::default(),
+            )
             .unwrap();
         assert_eq!(
             tracker.update_budget(blob_id, transform_index, &policy, policy_hash),

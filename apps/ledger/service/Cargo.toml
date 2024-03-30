@@ -9,21 +9,30 @@ default = []
 std = ["tcp_runtime/std"]
 
 [dependencies]
+anyhow = { version = "*", default-features = false }
 byteorder = { version = "*", default-features = false }
+cfc_crypto = { path = "../cfc_crypto" }
+coset = { version = "*", default-features = false }
+federated_compute = { path = "../federated_compute" }
+hpke = { version = "*" }
 micro_rpc = { workspace = true }
 oak_proto_rust = { workspace = true }
+oak_attestation = { workspace = true }
+oak_attestation_verification = { workspace = true }
+oak_restricted_kernel_sdk = { workspace = true }
+p256 = { version = "*", default-features = false, features = ["ecdsa"] }
 prost = { version = "0.11", default-features = false, features = ["prost-derive"] }
 prost-types = { version = "*", default-features = false }
-sha2 = { version = "*", default-features = false }
-anyhow = { version = "*", default-features = false }
 rand = { version = "*", default-features = false, features = ["getrandom"] }
-cfc_crypto = { path = "../cfc_crypto" }
+sha2 = { version = "*", default-features = false }
 slog = { version = "2.2", default-features = false }
 tcp_runtime = { path = "../../../runtime" }
-hpke = { version = "*" }
 
 [dev-dependencies]
+googletest = "*"
 mockall = { version = "0.11.4" }
+oak_attestation = { workspace = true }
+oak_restricted_kernel_sdk = { workspace = true, features = ["testing"] }
 tcp_integration = { path = "../../../integration", features = ["std"] }
 tcp_proto = { path = "../../../proto" }
 

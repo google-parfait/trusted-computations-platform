@@ -22,7 +22,9 @@ extern crate tcp_runtime;
 
 use alloc::boxed::Box;
 use oak_restricted_kernel_sdk::{
+    attestation::InstanceEvidenceProvider,
     channel::{start_blocking_server, FileDescriptorChannel},
+    crypto::InstanceSigner,
     entrypoint,
     utils::{log, samplestore::StaticSampleStore},
 };
@@ -37,7 +39,12 @@ fn run_server() -> ! {
     log::set_max_level(log::LevelFilter::Warn);
 
     let mut invocation_stats = StaticSampleStore::<1000>::new().unwrap();
-    let service: ApplicationService<LedgerActor> = ApplicationService::new(LedgerActor::new());
+    let actor = LedgerActor::create(
+        Box::new(InstanceEvidenceProvider::create().unwrap()),
+        Box::new(InstanceSigner::create().unwrap()),
+    )
+    .expect("LedgerActor failed to create");
+    let service: ApplicationService<LedgerActor> = ApplicationService::new(actor);
     let server = EndpointServiceServer::new(service);
     start_blocking_server(
         Box::<FileDescriptorChannel>::default(),
