@@ -1656,6 +1656,22 @@ dependencies = [
 ]
 
 [[package]]
+name = "tcp_tablet_store_service"
+version = "0.1.0"
+dependencies = [
+ "hashbrown",
+ "micro_rpc_build",
+ "mockall",
+ "prost",
+ "prost-build",
+ "slog",
+ "slog-term",
+ "tcp_integration",
+ "tcp_proto",
+ "tcp_runtime",
+]
+
+[[package]]
 name = "tempfile"
 version = "3.8.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"

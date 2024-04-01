@@ -3,6 +3,7 @@ resolver = "2"
 members = [
     "apps/atomic_counter/*",
     "apps/ledger/*",
+    "apps/tablet_store/*",
     "integration",
     "runtime",
     "proto"
