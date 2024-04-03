@@ -22,7 +22,7 @@ extern crate slog;
 extern crate tcp_runtime;
 
 pub mod apps {
-    pub mod atomic_counter {
+    pub mod tablet_store {
         pub mod service {
             include!(concat!(env!("OUT_DIR"), "/apps.tablet_store.service.rs"));
         }

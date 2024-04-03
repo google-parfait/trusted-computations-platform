@@ -17,13 +17,234 @@ syntax = "proto3";
 package apps.tablet_store.service;
 
 // Request to the Tablet Store to propose an operation.
-message TabletStoreRequest {}
+message TabletStoreRequest {
+  // Serialized and encrypted contents of the tablets request.
+  bytes request_contents = 1;
+}
 
 // Event used to replicate and apply the Tablet Store operation.
 message TabletStoreEvent {}
 
 // Response from the Tablet Store with a result of an operation.
-message TabletStoreResponse {}
+message TabletStoreResponse {
+  // Serialized and encrypted contents of the tablets response.
+  bytes response_contents = 1;
+}
 
-// Configuration message for the Tablet Store.
-message TabletStoreConfig {}
+// Request containing a number of tablet ops to execute as a
+// single transaction.
+message TabletsRequest {
+  // Ops to execute as a single transaction.
+  repeated TabletOp tablet_ops = 1;
+}
+
+// Response containing exact number of tablet op results as in the request.
+message TabletsResponse {
+  // Overall status of the request processing. Results below contain individual
+  // results for each op.
+  TabletsRequestStatus status = 1;
+
+  // Results that correspond to each of the ops in the same order.
+  repeated TabletOpResult tablet_results = 2;
+}
+
+// Status of the tablets request processing.
+enum TabletsRequestStatus {
+  TABLETS_REQUEST_STATUS_UNSPECIFIED = 0;
+
+  TABLETS_REQUEST_STATUS_SUCCEEDED = 1;
+
+  TABLETS_REQUEST_STATUS_FAILED = 2;
+}
+
+// Op to execute against a table of the Tablet Store.
+message TabletOp {
+  // Name of the table to apply tablet op to.
+  string table_name = 1;
+
+  oneof op {
+    // List tablets that satisfy predicate.
+    ListTabletOp list_tablet = 2;
+    // Check current state of a tablet.
+    CheckTabletOp check_tablet = 3;
+    // Add new tablet.
+    AddTabletOp add_tablet = 4;
+    // Update existing tablet.
+    UpdateTabletOp update_tablet = 5;
+    // Remove existing tablet.
+    RemoveTabletOp remove_tablet = 6;
+  }
+}
+
+// Op to list tablets in the given range of the consistent hashing ring in
+// the Tablet Store.
+message ListTabletOp {
+  // Id on the consistent hashing ring to start looking tablets from clockwise.
+  // Inclusive.
+  uint32 tablet_id_from = 2;
+
+  // Id on the consistent hashing ring to end looking tablets to clockwise.
+  // Exclusive.
+  uint32 tablet_id_to = 3;
+}
+
+// Op to check that a tablet has given version in the Tablet Store.
+message CheckTabletOp {
+  // Id of the tablet to check.
+  uint32 tablet_id = 1;
+
+  // Expected version of the tablet to check.
+  uint32 tablet_version = 2;
+}
+
+// Op to add a tablet to the Tablet Store.
+message AddTabletOp {
+  // Metadata of the tablet to add.
+  TabletMetadata tablet_metadata = 1;
+}
+
+// Op to update a tablet metadata in the Tablet Store.
+message UpdateTabletOp {
+  // Metadata of the tablet to update.
+  TabletMetadata tablet_metadata = 1;
+}
+
+// Op to remove a tablet from the Tablet Store.
+message RemoveTabletOp {
+  // Id of the tablet to remove.
+  uint32 tablet_id = 1;
+
+  // Expected version of the tablet to remove.
+  uint32 tablet_version = 2;
+}
+
+// Result of an op execution.
+message TabletOpResult {
+  // Inidicates if tablet op has been successfully executed or not. Specific
+  // details are inside of the result.
+  TabletOpStatus status = 1;
+
+  oneof result {
+    ListTabletResult list_tablet = 2;
+    CheckTabletResult check_tablet = 3;
+    AddTabletResult add_tablet = 4;
+    UpdateTabletResult update_tablet = 5;
+    RemoveTabletResult remove_tablet = 6;
+  }
+}
+
+// Status of the tablet op processing.
+enum TabletOpStatus {
+  TABLET_ACTION_STATUS_UNSPECIFIED = 0;
+
+  TABLET_ACTION_STATUS_SUCCEEDED = 1;
+
+  TABLET_ACTION_STATUS_FAILED = 2;
+}
+
+// Result of listing tablets in a given consistent hashing ring of a table in
+// the Tablet Store.
+message ListTabletResult {
+  // Metadata for the tablets that belong to the requested consistent hashing
+  // ring region.
+  repeated TabletMetadata tablets = 1;
+}
+
+// Result of checking if tablet at the time of execution is of the same version.
+message CheckTabletResult {
+  // Current version of the tablet.
+  uint32 version = 1;
+}
+
+// Result of adding new tablet to the Tablet Store.
+message AddTabletResult {
+  // Fails if tablet with given id in a given table already exists. If the
+  // tablet op fails, the metadata of the existing tablet is included in the
+  // response.
+  TabletMetadata existing_tablet = 1;
+}
+
+// Result of updating existing tablet in the Tablet Store.
+message UpdateTabletResult {
+  // Fails if tablet with given id doesn't exist or if the version is different
+  // from provided one. If update failed contains most recent tablet metadata.
+  TabletMetadata existing_tablet = 1;
+}
+
+// Result of removing existing tablet from the Tablet Store.
+message RemoveTabletResult {
+  // Fails if tablet exist but its version is different from provided one.
+  TabletMetadata existing_tablet = 1;
+}
+
+// Configuration for the Tablet Store.
+message TabletStoreConfig {
+  // Configuration for the Tablet Store tables.
+  repeated TableConfig table_configs = 1;
+}
+
+// Configuration for a single table in Tablet Store.
+message TableConfig {
+  // Name of the table. Must be unique within Tablet Store.
+  string table_name = 1;
+
+  // Maximum size of the tablet blob in bytes. If tablet size grows beyond
+  // this size the system must split it. Used in Tablet Store maintenance to
+  // balance Tablet Data Storage load and io amplification.
+  uint32 max_tablet_size = 2;
+
+  // Minimum size of the tablet blob in bytes. If tablet size drops below this
+  // size the system combine it with another tablet. Used in Tablet Store
+  // maintenance to balance Tablet Data Storage load and io amplification.
+  uint32 min_tablet_size = 3;
+
+  // Number of tablets to create when the table is initialized.
+  uint32 initial_tablet_count = 4;
+}
+
+// Metadata describing tablet.
+message TabletMetadata {
+  // Randomly chosen tablet id. Used to place tablet on the consistent hashing
+  // ring of the table. Must be unique within table.
+  uint32 tablet_id = 1;
+
+  // Version of the tablet. Represents monotonic counter used for
+  // concurrency control.
+  uint32 tablet_version = 2;
+
+  // Indicator if this tablet has been deleted. If true none of the blob related
+  // fields are set.
+  bool deleted = 3;
+
+  // Symmetric encryption key used to encrypt tablet data stored in tablet data
+  // storage.
+  bytes blob_encryption_key = 4;
+
+  // Size of the tablet blob in bytes. The size of the tablet blob is captured
+  // after it has been encrypted. Used for tablet maintenance.
+  uint32 blob_size = 5;
+
+  // Hash of the tablet blob. The hash of the tablet blob is computed after it
+  // has been encrypted. Used for integrity checking.
+  bytes blob_hash = 6;
+
+  // Uri of the tablet blob stored in the Tablet Data Storage. The uri maybe
+  // empty if the tablet has just been initialized but not a single version
+  // has been created.
+  string blob_uri = 7;
+}
+
+// Snapshot of the Tablet Store state used for failure recovery.
+message TabletStoreSnapshot {
+  // Snapshots of all tables.
+  repeated TableSnapshot table_snapshots = 1;
+}
+
+// Snapshot of the table state in the Tablet Store for failure recovery.
+message TableSnapshot {
+  // Config of the table.
+  TableConfig table_config = 1;
+
+  // Tablets that constitue the table.
+  repeated TabletMetadata table_tablets = 2;
+}
