@@ -12,14 +12,16 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-use crate::fcp::confidentialcompute::*;
+use crate::ledger::service::*;
 use crate::ledger::{Ledger, LedgerService};
+use crate::micro_rpc_proto::Status as StatusProto;
 
-use alloc::{boxed::Box, format};
+use alloc::boxed::Box;
+use anyhow::anyhow;
+use oak_restricted_kernel_sdk::{attestation::EvidenceProvider, crypto::Signer};
 use prost::{bytes::Bytes, Message};
-use tcp_runtime::model::{Actor, ActorContext, ActorError, CommandOutcome, EventOutcome};
-
 use slog::{debug, error, warn};
+use tcp_runtime::model::{Actor, ActorContext, ActorError, CommandOutcome, EventOutcome};
 
 pub struct LedgerActor {
     context: Option<Box<dyn ActorContext>>,
@@ -27,18 +29,25 @@ pub struct LedgerActor {
 }
 
 impl LedgerActor {
-    pub fn new() -> Self {
-        LedgerActor {
+    pub fn create(
+        evidence_provider: Box<dyn EvidenceProvider>,
+        signer: Box<dyn Signer>,
+    ) -> anyhow::Result<Self> {
+        Ok(LedgerActor {
             context: None,
-            ledger: LedgerService::new(),
-        }
+            ledger: LedgerService::create(evidence_provider, signer)?,
+        })
     }
 
-    fn get_context(&mut self) -> &mut dyn ActorContext {
+    fn get_context(&mut self) -> &dyn ActorContext {
         self.context
-            .as_mut()
+            .as_ref()
             .expect("Context is initialized")
-            .as_mut()
+            .as_ref()
+    }
+
+    fn mut_ledger(&mut self) -> &mut LedgerService {
+        &mut self.ledger
     }
 
     // Handles the actor command and returns the command outcome or the status to be promptly
@@ -75,25 +84,19 @@ impl LedgerActor {
         }
 
         let event = match ledger_request.request {
-            Some(ledger_request::Request::AuthorizeAccess(mut authorize_access_request)) => {
-                // Special case for the AuthorizeAccess where the attestation is performed
-                // as prerequisite for executing the rest of the command.
-                LedgerService::verify_attestation(&authorize_access_request).map_err(|error| {
-                    micro_rpc::Status::new_with_message(
-                        micro_rpc::StatusCode::InvalidArgument,
-                        format!("attestation validation failed: {:?}", error),
-                    )
-                })?;
-                // Empty out the attestation fields
-                authorize_access_request.recipient_attestation_evidence = None;
-                authorize_access_request.recipient_attestation_endorsements = None;
-                ledger_event::Event::AuthorizeAccess(authorize_access_request)
+            Some(ledger_request::Request::AuthorizeAccess(authorize_access_request)) => {
+                // Attest and produce the event that contains all the data necessary to
+                // update the budget and rewrap the symmetric key when the event is later applied.
+                let authorize_access_event = self
+                    .mut_ledger()
+                    .attest_and_produce_authorize_access_event(authorize_access_request)?;
+                ledger_event::Event::AuthorizeAccess(authorize_access_event)
             }
             Some(ledger_request::Request::CreateKey(create_key_request)) => {
-                // Special case for the CreateKey where the public/private keypair
-                // has to be created in advance and replicated so that exactly the
-                // same keypair is stored on every replica.
-                let create_key_event = self.ledger.produce_create_key_event(create_key_request)?;
+                // Produce the event that contains the pregenerate public/private key pair.
+                let create_key_event = self
+                    .mut_ledger()
+                    .produce_create_key_event(create_key_request)?;
                 ledger_event::Event::CreateKey(create_key_event)
             }
             Some(ledger_request::Request::DeleteKey(delete_key_request)) => {
@@ -145,30 +148,33 @@ impl LedgerActor {
         );
 
         let response = match ledger_event.event {
-            Some(ledger_event::Event::AuthorizeAccess(authorize_access_request)) => {
-                let authorize_access_response =
-                    self.ledger.authorize_access(authorize_access_request)?;
+            Some(ledger_event::Event::AuthorizeAccess(authorize_access_event)) => {
+                let authorize_access_response = self
+                    .mut_ledger()
+                    .apply_authorize_access_event(authorize_access_event)?;
                 if !self.get_context().leader() {
                     return Ok(EventOutcome::None);
                 }
                 ledger_response::Response::AuthorizeAccess(authorize_access_response)
             }
             Some(ledger_event::Event::CreateKey(create_key_event)) => {
-                let create_key_response = self.ledger.apply_create_key_event(create_key_event)?;
+                let create_key_response =
+                    self.mut_ledger().apply_create_key_event(create_key_event)?;
                 if !self.get_context().leader() {
                     return Ok(EventOutcome::None);
                 }
                 ledger_response::Response::CreateKey(create_key_response)
             }
             Some(ledger_event::Event::DeleteKey(delete_key_request)) => {
-                let delete_key_response = self.ledger.delete_key(delete_key_request)?;
+                let delete_key_response = self.mut_ledger().delete_key(delete_key_request)?;
                 if !self.get_context().leader() {
                     return Ok(EventOutcome::None);
                 }
                 ledger_response::Response::DeleteKey(delete_key_response)
             }
             Some(ledger_event::Event::RevokeAccess(revoke_access_request)) => {
-                let revoke_access_response = self.ledger.revoke_access(revoke_access_request)?;
+                let revoke_access_response =
+                    self.mut_ledger().revoke_access(revoke_access_request)?;
                 if !self.get_context().leader() {
                     return Ok(EventOutcome::None);
                 }
@@ -223,7 +229,7 @@ impl LedgerEvent {
 impl LedgerResponse {
     fn with_error(error: micro_rpc::Status) -> Self {
         LedgerResponse {
-            response: Some(ledger_response::Response::Error(crate::micro_rpc::Status {
+            response: Some(ledger_response::Response::Error(StatusProto {
                 code: error.code as i32,
                 message: error.message.into(),
             })),
@@ -261,7 +267,7 @@ impl Actor for LedgerActor {
     /// is considered is unknown state and is destroyed.
     fn on_save_snapshot(&mut self) -> Result<Bytes, ActorError> {
         debug!(self.get_context().logger(), "LedgerActor: saving snapshot");
-        let snapshot = self.ledger.save_snapshot().map_err(|error| {
+        let snapshot = self.mut_ledger().save_snapshot().map_err(|error| {
             error!(
                 self.get_context().logger(),
                 "LedgerActor: failed to save snapshot: {}", error
@@ -282,7 +288,7 @@ impl Actor for LedgerActor {
             );
             ActorError::SnapshotLoading
         })?;
-        self.ledger.load_snapshot(snapshot).map_err(|error| {
+        self.mut_ledger().load_snapshot(snapshot).map_err(|error| {
             error!(
                 self.get_context().logger(),
                 "LedgerActor: failed to load snapshot: {}", error
@@ -320,6 +326,7 @@ impl Actor for LedgerActor {
 #[cfg(all(test, feature = "std"))]
 mod tests {
     use super::*;
+    use oak_restricted_kernel_sdk::testing::{MockEvidenceProvider, MockSigner};
     use tcp_runtime::logger::log::create_logger;
     use tcp_runtime::mock::MockActorContext;
 
@@ -332,7 +339,11 @@ mod tests {
             .expect_config()
             .return_const::<Bytes>(config.encode_to_vec().into());
 
-        let mut actor = LedgerActor::new();
+        let mut actor = LedgerActor::create(
+            Box::new(MockEvidenceProvider::create().unwrap()),
+            Box::new(MockSigner::create().unwrap()),
+        )
+        .unwrap();
         assert_eq!(actor.on_init(mock_context), Ok(()));
         actor
     }

@@ -12,22 +12,12 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-#![cfg_attr(not(feature = "std"), no_std)]
+#![no_std]
 #![feature(never_type)]
 
 extern crate alloc;
-extern crate federated_compute;
-extern crate prost;
-extern crate slog;
-extern crate tcp_runtime;
 
-pub mod micro_rpc_proto {
-    include!(concat!(env!("OUT_DIR"), "/micro_rpc_proto.rs"));
+pub mod proto {
+    #![allow(dead_code)]
+    include!(concat!(env!("OUT_DIR"), "/fcp.confidentialcompute.rs"));
 }
-
-pub mod actor;
-pub mod ledger;
-
-mod attestation;
-mod budget;
-mod test_util;

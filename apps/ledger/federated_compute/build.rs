@@ -12,22 +12,23 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-#![cfg_attr(not(feature = "std"), no_std)]
-#![feature(never_type)]
+use std::io::Result;
 
-extern crate alloc;
-extern crate federated_compute;
-extern crate prost;
-extern crate slog;
-extern crate tcp_runtime;
-
-pub mod micro_rpc_proto {
-    include!(concat!(env!("OUT_DIR"), "/micro_rpc_proto.rs"));
+fn main() -> Result<()> {
+    micro_rpc_build::compile(
+        &[
+            "proto/access_policy.proto",
+            "proto/blob_header.proto",
+            "proto/ledger.proto",
+        ],
+        &["proto", "../../../proto_stubs"],
+        micro_rpc_build::CompileOptions {
+            extern_paths: vec![micro_rpc_build::ExternPath::new(
+                ".oak.attestation.v1",
+                "::oak_proto_rust::oak::attestation::v1",
+            )],
+            ..Default::default()
+        },
+    );
+    Ok(())
 }
-
-pub mod actor;
-pub mod ledger;
-
-mod attestation;
-mod budget;
-mod test_util;

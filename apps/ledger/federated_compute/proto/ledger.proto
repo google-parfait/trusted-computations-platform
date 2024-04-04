@@ -48,22 +48,37 @@ message CreateKeyRequest {
 
 message CreateKeyResponse {
   // The serialized bytes of the public key.
+  //
+  // This field holds a CBOR Web Token (CWT; RFC 8392) signed by the application
+  // key in `attestation_evidence`. The CWT and COSE key (RFC 9052) will contain
+  // at least the following claims and parameters:
+  //
+  // CWT Claims (https://www.iana.org/assignments/cwt/cwt.xhtml)
+  //   -65537: COSE_Key containing the public key parameters (bstr)
+  //        4: Expiration Time (int)
+  //        6: Issued At (int)
+  //
+  // COSE Key Parameters (https://www.iana.org/assignments/cose/cose.xhtml)
+  //        1: Key Type (int)
+  //        2: Key ID (bstr)
+  //        3: Algorithm (int)
+  //
+  // Supported COSE Algorithms:
+  //   -65537: HPKE-Base-X25519-SHA256-AES128GCM
   bytes public_key = 1;
-
-  // A serialized PublicKeyDetails message providing additional information
-  // about the public key. This field is signed along with the public key in the
-  // attestation.
-  bytes public_key_details = 2;
 
   // The attestation evidence for the Ledger.
   oak.attestation.v1.Evidence attestation_evidence = 4;
 
-  reserved 3;
+  reserved 2, 3, 5;
 }
 
 message DeleteKeyRequest {
-  // The id of the public key to delete.
-  fixed32 public_key_id = 1;
+  // The public key CWT of the key to delete. This should match
+  // `CreateKeyResponse.public_key`.
+  bytes public_key = 2;
+
+  reserved 1;
 }
 
 message DeleteKeyResponse {}
@@ -87,10 +102,26 @@ message AuthorizeAccessRequest {
 
   // The blob's encrypted symmetric key, used to encrypt the blob data using
   // AEAD. This symmetric key should have been encrypted using the Ledger-owned
-  // public key indicated in the blob header.
+  // public key indicated in the blob header. The plaintext should be a COSE_Key
+  // structure (RFC 9052), but this is not enforced by this method.
   bytes encrypted_symmetric_key = 5;
 
   // The public key to use to encrypt the response.
+  //
+  // This field holds a CBOR Web Token (CWT) signed by the application key in
+  // `recipient_attestation_evidence`. The CWT and COSE key (RFC 9052) will
+  // contain at least the following claims and parameters:
+  //
+  // CWT Claims (https://www.iana.org/assignments/cwt/cwt.xhtml)
+  //   -65537: COSE_Key containing the public key parameters (bstr)
+  //   -65538: google.protobuf.Struct containing app-specific config properties
+  //
+  // COSE Key Parameters (https://www.iana.org/assignments/cose/cose.xhtml)
+  //        1: Key Type (int)
+  //        3: Algorithm (int)
+  //
+  // Supported COSE Algorithms:
+  //   -65537: HPKE-Base-X25519-SHA256-AES128GCM
   bytes recipient_public_key = 6;
 
   // The attestation evidence for the application requesting access.
@@ -125,20 +156,23 @@ message AuthorizeAccessResponse {
   // `AuthorizeAccessRequest::recipient_nonce`.
   bytes encrypted_symmetric_key = 2;
 
-  // If the application will be re-encrypting its output, the public key to use.
-  // Reusing the same public key as the input ensures that derived objects have
-  // the same expiration time as the original data. This key can be ignored if
-  // the application doesn't encrypt its outputs (e.g., because it produces
-  // anonymized aggregate results).
+  // If the application will be re-encrypting its output, the CWT for the public
+  // key to use. The CWT has the same required claims and parameters as
+  // `CreateKeyResponse.public_key`. Reusing the same public key as the input
+  // ensures that derived objects have the same expiration time as the original
+  // data. This key can be ignored if the application doesn't encrypt its
+  // outputs (e.g., because it produces anonymized aggregate results).
   bytes reencryption_public_key = 3;
 }
 
 message RevokeAccessRequest {
-  // The id of the public key used to encrypt the blob.
-  fixed32 public_key_id = 1;
+  // The COSE "kid" property (RFC 9052) of the key used to encrypt the blob.
+  bytes key_id = 3;
 
   // The id of the blob, matching the id in its header.
   bytes blob_id = 2;
+
+  reserved 1;
 }
 
 message RevokeAccessResponse {}
