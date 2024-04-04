@@ -386,6 +386,7 @@ mod test {
             replica_id_hint: 0,
             raft_config: None,
             app_config: Bytes::new(),
+            attestation_config: None,
         })
     }
 

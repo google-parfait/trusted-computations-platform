@@ -16,6 +16,10 @@ syntax = "proto3";
 
 package runtime.endpoint;
 
+import "proto/attestation/endorsement.proto";
+import "proto/attestation/evidence.proto";
+import "proto/attestation/reference_value.proto";
+
 // Messages coming from the Untrusted Launcher to the Trusted Host.
 message InMessage {
   oneof msg {
@@ -120,6 +124,9 @@ message StartReplicaRequest {
   RaftConfig raft_config = 3;
   // Serialized application configuration, accessible through the actor context.
   bytes app_config = 4;
+  // Attestation configuration for this raft replica. Used for verification during
+  // initial handshake with other raft peers.
+  AttestationConfig attestation_config = 5;
 }
 
 message StartReplicaResponse {
@@ -162,6 +169,16 @@ message RaftConfig {
     // the number of in flight snapshot chunks.
     uint32 max_pending_chunks = 3;
   }
+}
+
+message AttestationConfig {
+  // Endorsements associated with this replica. Supplied to other raft peers
+  // as part of the initial handshake.
+  oak.attestation.v1.Endorsements endorsements = 1;
+  // Oak ReferenceValues specifying the binaries running at each layer of
+  // the DICE attestation. These are used for verifying claims from other
+  // raft peers.
+  oak.attestation.v1.ReferenceValues reference_values = 2;
 }
 
 // Instructs the trusted application to stop the corresponding raft replica.
@@ -439,7 +456,13 @@ message SecureChannelHandshake {
       Attestation attestation = 1;
     }
 
-    message Attestation {}
+    message Attestation {
+     // Attestation evidence for replica instance.
+     oak.attestation.v1.Evidence evidence = 1;
+     // Endorsements associated with this replica instance as specified in
+     // the `AttestationConfig`.
+     oak.attestation.v1.Endorsements endorsements = 2;
+    }
   }
 }
 

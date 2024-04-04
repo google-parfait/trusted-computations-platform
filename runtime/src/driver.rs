@@ -1271,6 +1271,7 @@ mod test {
                 replica_id_hint,
                 raft_config: Some(raft_config),
                 app_config: app_config,
+                attestation_config: None,
             })),
         };
         envelope

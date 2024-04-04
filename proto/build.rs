@@ -17,7 +17,7 @@ use std::io::Result;
 fn main() -> Result<()> {
     micro_rpc_build::compile(
         &["src/endpoint.proto"],
-        &["src"],
+        &["src", "../proto_stubs"],
         micro_rpc_build::CompileOptions {
             bytes: vec![
                 ".runtime.endpoint.StartReplicaRequest".to_string(),
@@ -28,6 +28,10 @@ fn main() -> Result<()> {
                 ".runtime.endpoint.ExecuteProposalResponse".to_string(),
                 ".runtime.endpoint.Entry".to_string(),
             ],
+            extern_paths: vec![micro_rpc_build::ExternPath::new(
+                ".oak.attestation.v1",
+                "::oak_proto_rust::oak::attestation::v1",
+            )],
             ..Default::default()
         },
     );
