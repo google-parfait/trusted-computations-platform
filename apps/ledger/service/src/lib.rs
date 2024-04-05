@@ -26,8 +26,8 @@ pub mod micro_rpc_proto {
 }
 
 pub mod actor;
+pub mod attestation;
 pub mod ledger;
+pub mod test_util;
 
-mod attestation;
 mod budget;
-mod test_util;

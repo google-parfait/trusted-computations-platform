@@ -24,7 +24,7 @@ use coset::{
 use cfc_crypto::PrivateKey;
 use hpke::{Deserializable, Serializable};
 
-use crate::attestation::{self, Application};
+use crate::attestation;
 use crate::budget::{self, BudgetTracker};
 
 use crate::ledger::service::*;
@@ -299,7 +299,7 @@ impl LedgerService {
         })?;
 
         // Verify the attestation and compute the properties of the requesting application.
-        let (recipient_app, recipient_public_key) = attestation::verify_attestation(
+        let (recipient_app, _) = attestation::verify_attestation(
             &request.recipient_public_key,
             request.recipient_attestation_evidence.as_ref(),
             request.recipient_attestation_endorsements.as_ref(),

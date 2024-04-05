@@ -17,7 +17,6 @@ use crate::ledger::{Ledger, LedgerService};
 use crate::micro_rpc_proto::Status as StatusProto;
 
 use alloc::boxed::Box;
-use anyhow::anyhow;
 use oak_restricted_kernel_sdk::{attestation::EvidenceProvider, crypto::Signer};
 use prost::{bytes::Bytes, Message};
 use slog::{debug, error, warn};
