@@ -1,0 +1,26 @@
+[package]
+name = "tcp_tablet_cache_service"
+version = "0.1.0"
+edition = "2021"
+license = "Apache-2.0"
+
+[features]
+default = []
+std = ["slog-term", "slog/std"]
+
+[dependencies]
+prost = { version = "0.11", default-features = false, features = ["prost-derive"] }
+hashbrown = { version = "0.14.0" }
+slog = { version = "2.2", default-features = false }
+slog-term = { version = "2.4.0", optional = true }
+tcp_proto = { path = "../../../proto" }
+tcp_runtime = { path = "../../../runtime" }
+tcp_tablet_store_service = { path = "../../tablet_store/service" }
+
+[dev-dependencies]
+mockall = { version = "0.11.4" }
+tcp_integration = { path = "../../../integration", features = ["std"] }
+
+[build-dependencies]
+prost-build = { version = "0.11" }
+micro_rpc_build = { workspace = true }

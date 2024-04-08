@@ -1,0 +1,13 @@
+# Trusted Tablet Cache Application
+
+Tablet Cache is an ephemeral write through cache for the tablet data and metadata that also acts as a batching bridge between fine key level interface (comprising get and put key operations) and coarse tablet level interface (comprising read and write tablet transactions).
+
+Tablet Cache exposes a fine key level interface. In order to make the cache hit rate high and the cost amortization effective the requests are routed based on the keys. Tablet Cache maintains in memory metadata of the assigned tablets. Upon arriving requests are associated with corresponding tablets via consistent hashing and tablet metadata. Tablet Cache attempts to execute batched requests as coarse tablet updates.
+
+Tablet Cache maintains in memory tablet data and metadata that must be updated. If required tablet data is not present in memory, it is loaded from Tablet Data Storage and placed into an LRU cache (potentially evicting another tablet if the size of the cache goes above configured threshold). When executing a tablet update Tablet Cache first writes a new version of the tablet data into Tablet Data Storage and internal LRU cache, then tries to commit tablet metadata update into the Tablet Store. Depending on the outcome either the old (success) or new (failure) version of the tablet data is evicted and the corresponding blob in Tablet Data Storage is deleted.
+
+Table Cache is also tasked with performing periodic maintenance of the tablets. Overtime tablets may grow or shrink beyond the desirable threshold specified by table configuration or have orphaned tablet data in Tablet Data Storage. Tablets that are adjacent on the consistent hashing ring and jointly smaller than table specified threshold are merged together. One tablet is selected as a receiver where all data from donor tablets is inserted, then the receiver tablet is updated and donor tablets are removed in a single transaction. Tablets that are larger than the table specified threshold are split into multiple tablets. The data from the donor table is inserted into a newly created set of receiver tablets, then the donor tablet is updated and receiver tablets are added in a single transaction.
+
+Tablet Cache is ephemeral and doesn't affect the correctness of the system. Therefore Tablet Cache nodes are not replicated and upon restart recover the set of assigned tablets from the Tablet Store whereas internal cache is populated as requests come in.
+
+Tablet Cache maintains a secure channel with the Tablet Store. Secure channel handshake includes mutual attestation and end to end encryption.
