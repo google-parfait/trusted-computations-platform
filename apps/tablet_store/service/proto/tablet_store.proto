@@ -16,19 +16,18 @@ syntax = "proto3";
 
 package apps.tablet_store.service;
 
-// Request to the Tablet Store to propose an operation.
-message TabletStoreRequest {
-  // Serialized and encrypted contents of the tablets request.
-  bytes request_contents = 1;
+// Messages going into the Tablet Store.
+message TabletStoreInMessage {
+  oneof msg {
+    TabletsRequest tablets_request = 1;
+  }
 }
 
-// Event used to replicate and apply the Tablet Store operation.
-message TabletStoreEvent {}
-
-// Response from the Tablet Store with a result of an operation.
-message TabletStoreResponse {
-  // Serialized and encrypted contents of the tablets response.
-  bytes response_contents = 1;
+// Messages going from the Tablet Store.
+message TabletStoreOutMessage {
+  oneof msg {
+    TabletsResponse tablets_response = 1;
+  }
 }
 
 // Request containing a number of tablet ops to execute as a
@@ -248,3 +247,6 @@ message TableSnapshot {
   // Tablets that constitue the table.
   repeated TabletMetadata table_tablets = 2;
 }
+
+// Event used to replicate and apply the Tablet Store operation.
+message TabletStoreEvent {}

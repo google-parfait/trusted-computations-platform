@@ -1930,6 +1930,23 @@ dependencies = [
 ]
 
 [[package]]
+name = "tcp_tablet_cache_service"
+version = "0.1.0"
+dependencies = [
+ "hashbrown",
+ "micro_rpc_build",
+ "mockall",
+ "prost",
+ "prost-build",
+ "slog",
+ "slog-term",
+ "tcp_integration",
+ "tcp_proto",
+ "tcp_runtime",
+ "tcp_tablet_store_service",
+]
+
+[[package]]
 name = "tcp_tablet_store_service"
 version = "0.1.0"
 dependencies = [
