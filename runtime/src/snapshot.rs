@@ -481,7 +481,11 @@ impl SnapshotSenderState {
                         warn!(self.logger, "Rejecting delivery response: out of bounds");
                         false
                     } else {
-                        if payload.status == DeliverSnapshotStatus::SnapshotStatusAccepted.into() {
+                        if payload.status
+                            == <DeliverSnapshotStatus as Into<i32>>::into(
+                                DeliverSnapshotStatus::SnapshotStatusAccepted,
+                            )
+                        {
                             self.sent_chunk_count += 1;
                             true
                         } else {

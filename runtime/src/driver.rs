@@ -36,7 +36,7 @@ use prost::{bytes::Bytes, Message};
 use raft::{
     eraftpb::ConfChangeType as RaftConfigChangeType, eraftpb::ConfState as RaftConfigState,
     eraftpb::Entry as RaftEntry, eraftpb::EntryType as RaftEntryType,
-    eraftpb::Message as RaftMessage, eraftpb::MessageType as RaftMessageType,
+    eraftpb::Message as RaftMessage, eraftpb::MessageType as RaftMessageType, eraftpb::MessageType,
     eraftpb::Snapshot as RaftSnapshot, Error as RaftError, SnapshotStatus as RaftSnapshotStatus,
     Storage as RaftStorage,
 };
@@ -462,7 +462,9 @@ impl<
     fn send_raft_messages(&mut self, raft_messages: Vec<RaftMessage>) -> Result<(), PalError> {
         for raft_message in raft_messages {
             // Stash messages that contain snapshot to be sent out by the snapshot processor.
-            if raft_message.msg_type == RaftMessageType::MsgSnapshot.into() {
+            if raft_message.msg_type
+                == <MessageType as Into<i32>>::into(RaftMessageType::MsgSnapshot)
+            {
                 self.stash_snapshot(raft_message);
                 continue;
             }

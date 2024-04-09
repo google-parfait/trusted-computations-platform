@@ -20,11 +20,16 @@ extern crate alloc;
 #[cfg(feature = "std")]
 extern crate core;
 extern crate hashbrown;
+extern crate oak_attestation;
+extern crate oak_attestation_verification;
+extern crate oak_proto_rust;
+extern crate oak_restricted_kernel_sdk;
 extern crate prost;
 extern crate raft;
 extern crate slog;
 extern crate tcp_proto;
 
+pub mod attestation;
 pub mod communication;
 pub mod consensus;
 pub mod driver;

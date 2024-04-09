@@ -18,6 +18,7 @@ spin = { version = "0.9.8" }
 tcp_proto = { path = "../proto" }
 micro_rpc = { workspace = true }
 oak_attestation = {workspace = true}
+oak_attestation_verification = {workspace = true}
 oak_crypto = { workspace = true }
 oak_proto_rust = {workspace = true}
 oak_restricted_kernel_sdk = {workspace = true}
