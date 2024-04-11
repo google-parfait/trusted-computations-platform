@@ -9,7 +9,7 @@ default = []
 std = ["slog-term", "slog/std"]
 
 [dependencies]
-prost = { version = "0.11", default-features = false, features = ["prost-derive"] }
+prost = { workspace = true }
 hashbrown = { version = "0.14.0" }
 slog = { version = "2.2", default-features = false }
 slog-term = { version = "2.4.0", optional = true }
@@ -21,5 +21,5 @@ mockall = { version = "0.11.4" }
 tcp_integration = { path = "../../../integration", features = ["std"] }
 
 [build-dependencies]
-prost-build = { version = "0.11" }
+prost-build = { workspace = true }
 micro_rpc_build = { workspace = true }

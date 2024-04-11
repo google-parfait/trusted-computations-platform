@@ -101,11 +101,12 @@ message OutMessage {
     // that the replica that has accepted the proposal and the replica that has
     // responded to the proposal are not the same replica due failures.
     ExecuteProposalResponse execute_proposal = 7;
-    // Responds to the Untrusted Launcher with the current state of this replica.
+    // Responds to the Untrusted Launcher with the current state of this
+    // replica.
     GetReplicaStateResponse get_replica_state = 10;
     // Requests the Untrusted Launcher to deliver a handshake message to another
-    // replica (hosted on a different Trusted host) in order to establish a secure
-    // communication channel with it.
+    // replica (hosted on a different Trusted host) in order to establish a
+    // secure communication channel with it.
     SecureChannelHandshake secure_channel_handshake = 11;
   }
 }
@@ -124,8 +125,8 @@ message StartReplicaRequest {
   RaftConfig raft_config = 3;
   // Serialized application configuration, accessible through the actor context.
   bytes app_config = 4;
-  // Attestation configuration for this raft replica. Used for verification during
-  // initial handshake with other raft peers.
+  // Attestation configuration for this raft replica. Used for verification
+  // during initial handshake with other raft peers.
   AttestationConfig attestation_config = 5;
 }
 
@@ -165,8 +166,8 @@ message RaftConfig {
     // Size of each snapshot chunk.
     uint64 chunk_size = 2;
     // Maximum number of pending chunks in flight i.e. for which the leader has
-    // not received a response. This creates a back pressure mechanism to control
-    // the number of in flight snapshot chunks.
+    // not received a response. This creates a back pressure mechanism to
+    // control the number of in flight snapshot chunks.
     uint32 max_pending_chunks = 3;
   }
 }
@@ -457,11 +458,11 @@ message SecureChannelHandshake {
     }
 
     message Attestation {
-     // Attestation evidence for replica instance.
-     oak.attestation.v1.Evidence evidence = 1;
-     // Endorsements associated with this replica instance as specified in
-     // the `AttestationConfig`.
-     oak.attestation.v1.Endorsements endorsements = 2;
+      // Attestation evidence for replica instance.
+      oak.attestation.v1.Evidence evidence = 1;
+      // Endorsements associated with this replica instance as specified in
+      // the `AttestationConfig`.
+      oak.attestation.v1.Endorsements endorsements = 2;
     }
   }
 }
