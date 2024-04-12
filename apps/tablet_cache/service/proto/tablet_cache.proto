@@ -16,33 +16,49 @@ syntax = "proto3";
 
 package apps.tablet_cache.service;
 
-import "tablet_store.proto";
-
-// Messages going into the Tablet Cache.
+// Messages going into the Tablet Cache. Carried as contents of the deliver
+// application message.
 message TabletCacheInMessage {
   oneof msg {
     PutKeyRequest put_key_request = 1;
     GetKeyRequest get_key_request = 2;
-
+    // Response to tablet loading request. Tablet blob is carried as payload.
     LoadTabletResponse load_tablet_response = 3;
+    // Response to tablet storing request.
     StoreTabletResponse store_tablet_response = 4;
-
-    apps.tablet_store.service.TabletsResponse tablets_response = 5;
+    // Response to tablet operation request. Serialized and encrypted tablet
+    // response is carried as payload.
+    ExecuteTabletOpsResponse execute_tablet_ops_response = 5;
   }
 }
 
-// Messages going from the Tablet Cache.
+// Messages going from the Tablet Cache. Carried as contents of the deliver
+// application message.
 message TabletCacheOutMessage {
   oneof msg {
     PutKeyResponse put_key_response = 1;
     GetKeyResponse get_key_response = 2;
-
+    // Request to load tablet from Tablet Data Storage.
     LoadTabletRequest load_blob_request = 3;
+    // Request to store tablet in Tablet Data Storage. Tablet blob is carried as
+    // payload.
     StoreTabletRequest store_tablet_request = 4;
-
-    apps.tablet_store.service.TabletsRequest tablets_request = 6;
+    // Request to perform operations in Tablet Store. Serialized and encrypted
+    // tablet request is carried as payload.
+    ExecuteTabletOpsRequest execute_tablet_ops_request = 5;
   }
 }
+
+// Request from Tablet Cache to Tablet Store.
+message ExecuteTabletOpsRequest {
+  // The id of the node where leader of the Tablet Store runs.
+  uint64 recipient_node_id = 1;
+  // The node id of the sender.
+  uint64 sender_node_id = 2;
+}
+
+// Response from Tablet Store to Tablet Cache.
+message ExecuteTabletOpsResponse {}
 
 // Request from Tablet Cache to untrusted host to load tablet blob from Tablet
 // Data Storage.
@@ -54,16 +70,12 @@ message LoadTabletRequest {
 // Tablet Data Storage.
 message LoadTabletResponse {
   TabletDataStorageStatus status = 1;
-
-  bytes blob_contents = 2;
 }
 
 // Request from Tablet Cache to untrusted host to store tablet blob in Tablet
 // Data Storage.
 message StoreTabletRequest {
   string blob_uri = 1;
-
-  bytes blob_contents = 2;
 }
 
 // Response from untrusted host to Tablet Cache to store tablet blob.
@@ -82,25 +94,38 @@ enum TabletDataStorageStatus {
 
 // Request to put key value pair into the Key Value Store.
 message PutKeyRequest {
-  string key = 1;
-  string value = 2;
+  // Id that is used to correlate request and response.
+  uint64 request_id = 1;
+  // Key to put.
+  bytes key = 2;
+  // Value to put.
+  bytes value = 3;
 }
 
 // Request to get value from the Key Value Store.
 message GetKeyRequest {
-  string key = 1;
+  // Id that is used to correlate request and response.
+  uint64 request_id = 1;
+  // Key to get.
+  string key = 2;
 }
 
 // Response to put key value pair into the Key Value Store.
 message PutKeyResponse {
-  bool contains = 1;
+  // Id that is used to correlate request and response.
+  uint64 request_id = 1;
+  // Inidicates if key existed at the time the request has been executed.
+  bool existed = 2;
 }
 
 // Response to get value from the Key Value Store.
 message GetKeyResponse {
-  bool contains = 1;
-
-  string value = 2;
+  // Id that is used to correlate request and response.
+  uint64 request_id = 1;
+  // Inidicates if key existed at the time the request has been executed.
+  bool existed = 2;
+  // Value associated with the requested key.
+  bytes value = 3;
 }
 
 // Configuration for the Tablet Cache.

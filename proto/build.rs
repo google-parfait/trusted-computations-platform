@@ -26,6 +26,7 @@ fn main() -> Result<()> {
                 ".runtime.endpoint.DeliverSnapshotResponse".to_string(),
                 ".runtime.endpoint.ExecuteProposalRequest".to_string(),
                 ".runtime.endpoint.ExecuteProposalResponse".to_string(),
+                ".runtime.endpoint.DeliverAppMessage".to_string(),
                 ".runtime.endpoint.Entry".to_string(),
             ],
             extern_paths: vec![micro_rpc_build::ExternPath::new(

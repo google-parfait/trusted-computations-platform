@@ -43,7 +43,7 @@ message InMessage {
     // Requests the Trusted Host to deliver part of the Raft snapshot from
     // leader replica to the hosted replica.
     DeliverSnapshotRequest deliver_snapshot_request = 7;
-    // Request the Trusted Host to deliver snapshot response to the leader
+    // Requests the Trusted Host to deliver snapshot response to the leader
     // replica from the hosted replica.
     DeliverSnapshotResponse deliver_snapshot_response = 8;
     // Signifies that an attempt to deliver snapshot has failed.
@@ -58,6 +58,8 @@ message InMessage {
     // replica (hosted on a different Trusted host) in order to establish a
     // secure communication channel with it.
     SecureChannelHandshake secure_channel_handshake = 11;
+    // Requests the Trusted Host to deliver a message to the application.
+    DeliverAppMessage deliver_app_message = 12;
   }
 }
 
@@ -108,6 +110,8 @@ message OutMessage {
     // replica (hosted on a different Trusted host) in order to establish a
     // secure communication channel with it.
     SecureChannelHandshake secure_channel_handshake = 11;
+    // Requests the Untrsuted Launcher to handle a message from the application.
+    DeliverAppMessage deliver_app_message = 12;
   }
 }
 
@@ -465,6 +469,18 @@ message SecureChannelHandshake {
       oak.attestation.v1.Endorsements endorsements = 2;
     }
   }
+}
+
+// A message to and from an application.
+message DeliverAppMessage {
+  // Serialized but not encrypted contents of the application message header.
+  // Application driver in the Untrusted Host knows how to deserialize the
+  // message and handle its processing.
+  bytes message_header = 1;
+  // Serialized and encrypted payload of the application message. Application
+  // driver in the Untrusted Host doesn't process the payload, rather forwards
+  // it to another application.
+  bytes message_payload = 2;
 }
 
 service EndpointService {
