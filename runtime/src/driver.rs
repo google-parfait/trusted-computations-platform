@@ -1159,6 +1159,7 @@ impl<
                         in_message::Msg::SecureChannelHandshake(secure_channel_handshake) => {
                             self.process_secure_channel_handshake(secure_channel_handshake)
                         }
+                        in_message::Msg::DeliverAppMessage(_deliver_app_message) => todo!(),
                     }?;
                 }
             };

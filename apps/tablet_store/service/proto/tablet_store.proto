@@ -16,28 +16,54 @@ syntax = "proto3";
 
 package apps.tablet_store.service;
 
-// Messages going into the Tablet Store.
+import "endpoint.proto";
+
+// Messages going into the Tablet Store. Carried as contents of the deliver
+// application message.
 message TabletStoreInMessage {
   oneof msg {
-    TabletsRequest tablets_request = 1;
+    // Request to perform operation on tablets from Tablet Cache. Serialized and
+    // encrypted tablet request is carried as payload.
+    ExecuteTabletOpsRequest execute_tablet_ops_request = 1;
   }
 }
 
-// Messages going from the Tablet Store.
+// Messages going from the Tablet Store. Carried as contents of the deliver
+// application message.
 message TabletStoreOutMessage {
   oneof msg {
-    TabletsResponse tablets_response = 1;
+    // Response to perform operation on tablet to Tablet Cache. Serialized and
+    // encrypted tablet response is carried as payload.
+    ExecuteTabletOpsResponse execute_tablet_ops_response = 1;
   }
+}
+
+// Request from Tablet Cache to Tablet Store.
+message ExecuteTabletOpsRequest {
+  // The node id of the recipient.
+  uint64 recipient_node_id = 1;
+  // The node id of the Tablet Store sending the request.
+  uint64 sender_node_id = 2;
+}
+
+// Response from Tablet Store to Tablet Cache.
+message ExecuteTabletOpsResponse {
+  // Unique Id for the corresponding request.
+  runtime.endpoint.EntryId entry_id = 1;
+  // Indicates if request execution has completed or pending.
+  runtime.endpoint.ExecuteProposalStatus status = 2;
 }
 
 // Request containing a number of tablet ops to execute as a
-// single transaction.
+// single transaction. Carried as payload of the deliver
+// application message.
 message TabletsRequest {
   // Ops to execute as a single transaction.
   repeated TabletOp tablet_ops = 1;
 }
 
 // Response containing exact number of tablet op results as in the request.
+// Carried as payload of the deliver application message.
 message TabletsResponse {
   // Overall status of the request processing. Results below contain individual
   // results for each op.
