@@ -64,11 +64,17 @@ impl<A: Actor> FakeCluster<A> {
             .unwrap()
     }
 
-    pub fn send_proposal(&mut self, node_id: u64, proposal_contents: Bytes) {
+    pub fn send_app_message(
+        &mut self,
+        node_id: u64,
+        correlation_id: u64,
+        header: Bytes,
+        payload: Bytes,
+    ) {
         self.platforms
             .get_mut(&node_id)
             .unwrap()
-            .send_proposal(proposal_contents);
+            .send_app_message(correlation_id, header, payload);
     }
 
     pub fn start_node(&mut self, node_id: u64, leader: bool, actor: A) {
@@ -324,10 +330,12 @@ impl<A: Actor> FakePlatform<A> {
         });
     }
 
-    pub fn send_proposal(&mut self, proposal_contents: Bytes) {
+    pub fn send_app_message(&mut self, correlation_id: u64, header: Bytes, payload: Bytes) {
         self.append_message_in(InMessage {
-            msg: Some(in_message::Msg::ExecuteProposal(ExecuteProposalRequest {
-                proposal_contents,
+            msg: Some(in_message::Msg::DeliverAppMessage(DeliverAppMessage {
+                correlation_id,
+                message_header: header,
+                message_payload: payload,
             })),
         });
     }

@@ -20,12 +20,13 @@ extern crate tcp_proto;
 #[cfg(all(test, feature = "std"))]
 mod test {
 
+    use prost::bytes::Bytes;
     use prost::Message;
     use std::collections::BTreeMap;
     use tcp_atomic_counter_service::actor::CounterActor;
     use tcp_atomic_counter_service::apps::atomic_counter::service::*;
     use tcp_integration::harness::*;
-    use tcp_proto::runtime::endpoint::*;
+    use tcp_proto::runtime::endpoint::out_message;
 
     fn send_cas_counter_request(
         cluster: &mut FakeCluster<CounterActor>,
@@ -35,19 +36,28 @@ mod test {
         expected_value: i64,
         new_value: i64,
     ) {
-        let counter_request = CounterRequest {
-            id: request_id,
-            name: counter_name.to_string(),
-            op: Some(counter_request::Op::CompareAndSwap(
-                CounterCompareAndSwapRequest {
-                    expected_value,
-                    new_value,
+        let counter_request = AtomicCounterInMessage {
+            msg: Some(atomic_counter_in_message::Msg::CounterRequest(
+                CounterRequest {
+                    id: request_id,
+                    name: counter_name.to_string(),
+                    op: Some(counter_request::Op::CompareAndSwap(
+                        CounterCompareAndSwapRequest {
+                            expected_value,
+                            new_value,
+                        },
+                    )),
+                    ..Default::default()
                 },
             )),
-            ..Default::default()
         };
 
-        cluster.send_proposal(node_id, counter_request.encode_to_vec().into())
+        cluster.send_app_message(
+            node_id,
+            request_id,
+            counter_request.encode_to_vec().into(),
+            Bytes::new(),
+        )
     }
 
     fn advance_until_counter_response(
@@ -57,12 +67,17 @@ mod test {
         let mut counter_response_opt: Option<CounterResponse> = None;
         let response_messages =
             cluster.advance_until(&mut |envelope_out| match &envelope_out.msg {
-                Some(out_message::Msg::ExecuteProposal(response)) => {
-                    let counter_response =
-                        CounterResponse::decode(response.result_contents.as_ref()).unwrap();
-                    if counter_response.id == response_id {
-                        counter_response_opt = Some(counter_response);
-                        return true;
+                Some(out_message::Msg::DeliverAppMessage(message)) => {
+                    let out_message =
+                        AtomicCounterOutMessage::decode(message.message_header.as_ref()).unwrap();
+                    if let Some(atomic_counter_out_message::Msg::CounterResponse(
+                        counter_response,
+                    )) = out_message.msg
+                    {
+                        if counter_response.id == response_id {
+                            counter_response_opt = Some(counter_response);
+                            return true;
+                        }
                     }
                     false
                 }

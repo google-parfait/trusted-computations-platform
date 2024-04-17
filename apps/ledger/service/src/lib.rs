@@ -19,6 +19,7 @@ extern crate alloc;
 extern crate federated_compute;
 extern crate prost;
 extern crate slog;
+extern crate tcp_proto;
 extern crate tcp_runtime;
 
 pub mod micro_rpc_proto {

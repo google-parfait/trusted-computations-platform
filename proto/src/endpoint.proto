@@ -48,10 +48,6 @@ message InMessage {
     DeliverSnapshotResponse deliver_snapshot_response = 8;
     // Signifies that an attempt to deliver snapshot has failed.
     DeliverSnapshotFailure deliver_snapshot_failure = 9;
-    // Requests the Trusted Host to execute a proposal representing a client
-    // action or a query. Note that it is up to the application to interpret and
-    // execute that proposal.
-    ExecuteProposalRequest execute_proposal = 6;
     // Requests the Trusted Host to report the current state of this replica.
     GetReplicaStateRequest get_replica_state = 10;
     // Requests the Trusted Host to deliver a handshake message from another
@@ -61,6 +57,8 @@ message InMessage {
     // Requests the Trusted Host to deliver a message to the application.
     DeliverAppMessage deliver_app_message = 12;
   }
+
+  reserved 6;
 }
 
 // Messages coming from the Trusted Host to the Untrusted Launcher. The
@@ -96,13 +94,6 @@ message OutMessage {
     // Host.
     DeliverSnapshotResponse deliver_snapshot_response = 9;
     // Responds to the Untrusted Launcher with the proposal result in case of
-    // success or an error (for example, the replica which received the proposal
-    // is not the leader). Note that it may take some time for the Trusted
-    // Application to respond to the proposal (the execution of a proposal
-    // requires it to be committed to the replicated log). Also it is possible
-    // that the replica that has accepted the proposal and the replica that has
-    // responded to the proposal are not the same replica due failures.
-    ExecuteProposalResponse execute_proposal = 7;
     // Responds to the Untrusted Launcher with the current state of this
     // replica.
     GetReplicaStateResponse get_replica_state = 10;
@@ -113,6 +104,8 @@ message OutMessage {
     // Requests the Untrsuted Launcher to handle a message from the application.
     DeliverAppMessage deliver_app_message = 12;
   }
+
+  reserved 7;
 }
 
 // Instructs the trusted application to start by initializing its internal state
@@ -371,23 +364,6 @@ message DeliverSnapshotFailure {
   uint64 delivery_id = 1;
 }
 
-message ExecuteProposalRequest {
-  // Holds serialized proposal contents. It is up to the Trusted Application to
-  // interpret it.
-  bytes proposal_contents = 1;
-}
-
-message ExecuteProposalResponse {
-  // Unique Id for this proposal.
-  EntryId entry_id = 1;
-  // Holds serialized proposal response. It is up to the consumer to interpret
-  // it. This is only populated when status is
-  // EXECUTE_PROPOSAL_STATUS_COMPLETED.
-  bytes result_contents = 2;
-  // Indicates if proposal execution has completed or pending.
-  ExecuteProposalStatus status = 3;
-}
-
 // Represents composite id that uniquely identifies an entry within Raft
 // cluster.
 message EntryId {
@@ -403,14 +379,6 @@ message Entry {
   EntryId entry_id = 1;
   // Contents of the entry.
   bytes entry_contents = 2;
-}
-
-enum ExecuteProposalStatus {
-  PROPOSAL_STATUS_UNSPECIFIED = 0;
-  // Indicates that the proposal execution is still pending.
-  PROPOSAL_STATUS_PENDING = 1;
-  // Indicates that the proposal execution has completed.
-  PROPOSAL_STATUS_COMPLETED = 2;
 }
 
 // Request to get the current state of this replica.
@@ -473,14 +441,16 @@ message SecureChannelHandshake {
 
 // A message to and from an application.
 message DeliverAppMessage {
+  // Correlation id that actor may use to match request and response messages.
+  uint64 correlation_id = 1;
   // Serialized but not encrypted contents of the application message header.
   // Application driver in the Untrusted Host knows how to deserialize the
   // message and handle its processing.
-  bytes message_header = 1;
+  bytes message_header = 2;
   // Serialized and encrypted payload of the application message. Application
   // driver in the Untrusted Host doesn't process the payload, rather forwards
   // it to another application.
-  bytes message_payload = 2;
+  bytes message_payload = 3;
 }
 
 service EndpointService {

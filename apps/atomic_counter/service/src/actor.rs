@@ -13,9 +13,10 @@
 // limitations under the License.
 
 use crate::apps::atomic_counter::service::{
-    counter_request, counter_response, CounterCompareAndSwapRequest, CounterCompareAndSwapResponse,
-    CounterConfig, CounterRequest, CounterResponse, CounterSnapshot, CounterSnapshotValue,
-    CounterStatus,
+    atomic_counter_in_message, atomic_counter_out_message, counter_request, counter_response,
+    AtomicCounterInMessage, AtomicCounterOutMessage, CounterCompareAndSwapRequest,
+    CounterCompareAndSwapResponse, CounterConfig, CounterRequest, CounterResponse, CounterSnapshot,
+    CounterSnapshotValue, CounterStatus,
 };
 use alloc::{
     boxed::Box,
@@ -25,7 +26,9 @@ use alloc::{
 use hashbrown::HashMap;
 use prost::{bytes::Bytes, Message};
 use slog::{debug, warn};
-use tcp_runtime::model::{Actor, ActorContext, ActorError, CommandOutcome, EventOutcome};
+use tcp_runtime::model::{
+    Actor, ActorCommand, ActorContext, ActorError, ActorEvent, CommandOutcome, EventOutcome,
+};
 
 pub struct CounterValue {
     value: i64,
@@ -162,56 +165,80 @@ impl Actor for CounterActor {
         Ok(())
     }
 
-    fn on_process_command(&mut self, command: Bytes) -> Result<CommandOutcome, ActorError> {
+    fn on_process_command(&mut self, command: ActorCommand) -> Result<CommandOutcome, ActorError> {
         let mut response = CounterResponse {
             ..Default::default()
         };
         let mut status = CounterStatus::Success;
+        let mut id = 0;
 
-        match CounterRequest::decode(command.clone()) {
-            Ok(mut request) => {
-                debug!(
-                    self.get_context().logger(),
-                    "Processing #{} command", request.id
-                );
+        match AtomicCounterInMessage::decode(command.header.clone()) {
+            Ok(in_message) => match in_message.msg {
+                Some(msg) => {
+                    match msg {
+                        atomic_counter_in_message::Msg::CounterRequest(mut request) => {
+                            debug!(
+                                self.get_context().logger(),
+                                "Processing #{} command", request.id
+                            );
 
-                response.id = request.id;
-                if request.op.is_none() {
+                            id = request.id;
+                            if request.op.is_none() {
+                                status = CounterStatus::InvalidOperationError;
+
+                                warn!(
+                                    self.get_context().logger(),
+                                    "Rejecting #{} command: unknown op", request.id
+                                );
+                            }
+
+                            if !self.get_context().leader() {
+                                status = CounterStatus::Rejected;
+
+                                warn!(
+                                    self.get_context().logger(),
+                                    "Rejecting #{} command: not a leader", request.id
+                                );
+                            }
+
+                            if let CounterStatus::Success = status {
+                                // Clear out context so that it is not replicated.
+                                request.context = Bytes::new();
+                                return Ok(CommandOutcome::with_event(ActorEvent::with_proto(
+                                    command.correlation_id,
+                                    &request,
+                                )));
+                            }
+                        }
+                    }
+                }
+                None => {
                     status = CounterStatus::InvalidOperationError;
-
-                    warn!(
-                        self.get_context().logger(),
-                        "Rejecting #{} command: unknown op", request.id
-                    );
                 }
-
-                if !self.get_context().leader() {
-                    status = CounterStatus::Rejected;
-
-                    warn!(
-                        self.get_context().logger(),
-                        "Rejecting #{} command: not a leader", request.id
-                    );
-                }
-
-                // Clear out context so that it is not replicated.
-                request.context = Bytes::new();
-                if let CounterStatus::Success = status {
-                    return Ok(CommandOutcome::Event(request.encode_to_vec().into()));
-                }
-            }
+            },
             Err(e) => {
                 warn!(self.get_context().logger(), "Rejecting command: {}", e);
                 status = CounterStatus::InvalidOperationError;
             }
         }
 
+        response.id = id;
         response.status = status.into();
-        Ok(CommandOutcome::Response(response.encode_to_vec().into()))
+        Ok(CommandOutcome::with_command(ActorCommand::with_header(
+            command.correlation_id,
+            &AtomicCounterOutMessage {
+                msg: Some(atomic_counter_out_message::Msg::CounterResponse(response)),
+            },
+        )))
     }
 
-    fn on_apply_event(&mut self, index: u64, event: Bytes) -> Result<EventOutcome, ActorError> {
-        let request = CounterRequest::decode(event).map_err(|_| ActorError::Internal)?;
+    fn on_apply_event(
+        &mut self,
+        index: u64,
+        event: ActorEvent,
+    ) -> Result<EventOutcome, ActorError> {
+        let request =
+            CounterRequest::decode(event.contents.clone()).map_err(|_| ActorError::Internal)?;
 
         let op = request.op.unwrap();
 
@@ -227,9 +254,14 @@ impl Actor for CounterActor {
         };
 
         if self.get_context().leader() {
-            return Ok(EventOutcome::Response(response.encode_to_vec().into()));
+            return Ok(EventOutcome::with_command(ActorCommand::with_header(
+                event.correlation_id,
+                &AtomicCounterOutMessage {
+                    msg: Some(atomic_counter_out_message::Msg::CounterResponse(response)),
+                },
+            )));
         }
 
-        Ok(EventOutcome::None)
+        Ok(EventOutcome::with_none())
     }
 }

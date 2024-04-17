@@ -15,6 +15,7 @@
 #[cfg(all(test, feature = "std"))]
 
 mod test {
+    use prost::bytes::Bytes;
     use prost::Message;
     use std::format;
 
@@ -92,8 +93,12 @@ mod test {
         }
 
         fn send_request(&mut self, ledger_request: LedgerRequest) {
-            self.cluster
-                .send_proposal(self.leader_id(), ledger_request.encode_to_vec().into());
+            self.cluster.send_app_message(
+                self.leader_id(),
+                1,
+                ledger_request.encode_to_vec().into(),
+                Bytes::new(),
+            );
         }
 
         fn advance_until_response(&mut self) -> LedgerResponse {
@@ -101,18 +106,11 @@ mod test {
             let response_messages =
                 self.cluster
                     .advance_until(&mut |envelope_out| match &envelope_out.msg {
-                        Some(out_message::Msg::ExecuteProposal(response)) => {
-                            if response.status
-                                == ExecuteProposalStatus::ProposalStatusCompleted as i32
-                            {
-                                ledger_response = Some(
-                                    LedgerResponse::decode(response.result_contents.as_ref())
-                                        .unwrap(),
-                                );
-                                true
-                            } else {
-                                false
-                            }
+                        Some(out_message::Msg::DeliverAppMessage(message)) => {
+                            let response =
+                                LedgerResponse::decode(message.message_header.as_ref()).unwrap();
+                            ledger_response = Some(response);
+                            return true;
                         }
                         _ => false,
                     });

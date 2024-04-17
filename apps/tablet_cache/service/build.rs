@@ -17,12 +17,9 @@ use std::io::Result;
 fn main() -> Result<()> {
     micro_rpc_build::compile(
         &["proto/tablet_cache.proto"],
-        &["proto", "../../tablet_store/service/proto"],
+        &["proto"],
         micro_rpc_build::CompileOptions {
-            extern_paths: vec![micro_rpc_build::ExternPath::new(
-                ".apps.tablet_store.service",
-                "::tcp_tablet_store_service::apps::tablet_store::service",
-            )],
+            extern_paths: vec![],
             ..Default::default()
         },
     );

@@ -16,9 +16,7 @@ syntax = "proto3";
 
 package apps.tablet_store.service;
 
-import "endpoint.proto";
-
-// Messages going into the Tablet Store. Carried as contents of the deliver
+// Messages going into the Tablet Store. Carried as header of the deliver
 // application message.
 message TabletStoreInMessage {
   oneof msg {
@@ -28,13 +26,13 @@ message TabletStoreInMessage {
   }
 }
 
-// Messages going from the Tablet Store. Carried as contents of the deliver
+// Messages going from the Tablet Store. Carried as header of the deliver
 // application message.
 message TabletStoreOutMessage {
   oneof msg {
     // Response to perform operation on tablet to Tablet Cache. Serialized and
     // encrypted tablet response is carried as payload.
-    ExecuteTabletOpsResponse execute_tablet_ops_response = 1;
+    ExecuteTabletOpsResponse execute_tablet_ops_response = 2;
   }
 }
 
@@ -47,12 +45,7 @@ message ExecuteTabletOpsRequest {
 }
 
 // Response from Tablet Store to Tablet Cache.
-message ExecuteTabletOpsResponse {
-  // Unique Id for the corresponding request.
-  runtime.endpoint.EntryId entry_id = 1;
-  // Indicates if request execution has completed or pending.
-  runtime.endpoint.ExecuteProposalStatus status = 2;
-}
+message ExecuteTabletOpsResponse {}
 
 // Request containing a number of tablet ops to execute as a
 // single transaction. Carried as payload of the deliver
