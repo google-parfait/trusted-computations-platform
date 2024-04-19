@@ -17,19 +17,10 @@ use std::io::Result;
 fn main() -> Result<()> {
     micro_rpc_build::compile(
         &["proto/tablet_store.proto"],
-        &["proto", "../../../proto/src", "../../../proto_stubs"],
+        &["proto"],
         micro_rpc_build::CompileOptions {
             bytes: vec![],
-            extern_paths: vec![
-                micro_rpc_build::ExternPath::new(
-                    ".oak.attestation.v1",
-                    "::oak_proto_rust::oak::attestation::v1",
-                ),
-                micro_rpc_build::ExternPath::new(
-                    ".runtime.endpoint",
-                    "::tcp_proto::runtime::endpoint",
-                ),
-            ],
+            extern_paths: vec![],
             ..Default::default()
         },
     );

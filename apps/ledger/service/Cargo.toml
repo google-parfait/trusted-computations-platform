@@ -26,6 +26,7 @@ prost-types = { workspace = true }
 rand = { version = "*", default-features = false, features = ["getrandom"] }
 sha2 = { version = "*", default-features = false }
 slog = { version = "2.2", default-features = false }
+tcp_proto = { path = "../../../proto" }
 tcp_runtime = { path = "../../../runtime" }
 
 [dev-dependencies]
@@ -34,7 +35,6 @@ mockall = { version = "0.11.4" }
 oak_attestation = { workspace = true }
 oak_restricted_kernel_sdk = { workspace = true, features = ["testing"] }
 tcp_integration = { path = "../../../integration", features = ["std"] }
-tcp_proto = { path = "../../../proto" }
 
 [build-dependencies]
 micro_rpc_build = { workspace = true }

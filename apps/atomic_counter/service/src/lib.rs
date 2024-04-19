@@ -19,6 +19,7 @@ extern crate alloc;
 extern crate hashbrown;
 extern crate prost;
 extern crate slog;
+extern crate tcp_proto;
 extern crate tcp_runtime;
 
 pub mod apps {

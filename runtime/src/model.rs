@@ -14,10 +14,13 @@
 
 use crate::StdError;
 use alloc::boxed::Box;
+use alloc::vec;
+use alloc::vec::Vec;
 use core::fmt;
 use core::option::Option;
 use core::result::Result;
 use prost::bytes::Bytes;
+use prost::Message;
 use slog::Logger;
 
 /// Enumerates actor induced errors. Note that all errors indicate that
@@ -74,22 +77,120 @@ pub trait ActorContext {
     fn leader(&self) -> bool;
 }
 
-// Represents an outcome of command processing.
-pub enum CommandOutcome {
-    // Command has been processed immediately and resulted in serialized response.
-    Response(Bytes),
+/// Represents an application level command sent to or from an actor. Command is split
+/// into lightweight unencrypted header and typically more heavyweight encrypted payload.
+/// Command header is deserialized by actor or untrusted host to decide how to process
+/// the command. Command payload processing depends on the command header contents.
+#[derive(Default, PartialEq, Debug, Clone)]
+pub struct ActorCommand {
+    // Correlation id that actor may use to match request and response commands.
+    pub correlation_id: u64,
 
-    // Command will be processed once the serialized event is committed and applied.
-    Event(Bytes),
+    /// Serialized but not encrypted contents of the application command header.
+    pub header: Bytes,
+
+    /// Serialized and encrypted payload of the application command.
+    pub payload: Bytes,
 }
 
-// Represents an outcome of event application.
-pub enum EventOutcome {
-    // Response to the send to the consumer after event has been applied to the actor.
-    Response(Bytes),
+impl ActorCommand {
+    /// Creates actor message with only header populated with the serialized proto.
+    pub fn with_header<H: Message + Sized>(correlation_id: u64, header: &H) -> ActorCommand {
+        ActorCommand {
+            correlation_id,
+            header: header.encode_to_vec().into(),
+            payload: Bytes::new(),
+        }
+    }
+}
 
-    // Nothing to send.
-    None,
+/// Represents an application level replicated event.
+#[derive(Default, PartialEq, Debug, Clone)]
+pub struct ActorEvent {
+    pub correlation_id: u64,
+
+    /// Serialized contents of the event.
+    pub contents: Bytes,
+}
+
+impl ActorEvent {
+    pub fn with_bytes(correlation_id: u64, contents: Bytes) -> Self {
+        ActorEvent {
+            correlation_id,
+            contents,
+        }
+    }
+
+    pub fn with_proto<E: Message + Sized>(correlation_id: u64, proto: &E) -> Self {
+        ActorEvent {
+            correlation_id,
+            contents: proto.encode_to_vec().into(),
+        }
+    }
+}
+
+/// Represents an outcome of application command processing, which may result
+/// in a number of application commands requested to be sent out and an event
+/// requested to be replicated.
+#[derive(Default, PartialEq, Debug, Clone)]
+pub struct CommandOutcome {
+    /// Application messages that are requested to be sent out.
+    pub commands: Vec<ActorCommand>,
+    /// Event that is requested to be replicated.
+    pub event: Option<ActorEvent>,
+}
+
+impl CommandOutcome {
+    /// Creates an outcome with a single command to be sent out.
+    pub fn with_command(command: ActorCommand) -> CommandOutcome {
+        CommandOutcome {
+            commands: vec![command],
+            event: None,
+        }
+    }
+
+    /// Creates an outcome with an event to be replicated.
+    pub fn with_event(event: ActorEvent) -> CommandOutcome {
+        CommandOutcome {
+            commands: vec![],
+            event: Some(event),
+        }
+    }
+
+    /// Creates an outcome with a single command to be sent out and an event to be replicated.
+    pub fn with_message_and_event(command: ActorCommand, event: ActorEvent) -> CommandOutcome {
+        CommandOutcome {
+            commands: vec![command],
+            event: Some(event),
+        }
+    }
+}
+
+/// Represents an outcome of replicated event processing, which may result
+/// in a number of application commands requested to be sent out.
+#[derive(Default, PartialEq)]
+pub struct EventOutcome {
+    /// Application messages that are requested to be sent out.
+    pub commands: Vec<ActorCommand>,
+}
+
+impl EventOutcome {
+    /// Creates an outcome with no commands to be sent out.
+    pub fn with_none() -> EventOutcome {
+        EventOutcome::default()
+    }
+
+    /// Creates an outcome with a single command to be sent out.
+    pub fn with_command(command: ActorCommand) -> EventOutcome {
+        EventOutcome {
+            commands: vec![command],
+        }
+    }
+
+    /// Creates an outcome with a number of commands to be sent out.
+    pub fn with_commands(commands: Vec<ActorCommand>) -> EventOutcome {
+        EventOutcome { commands }
+    }
 }
 
 /// Represents a stateful actor backed by replicated state machine.
@@ -115,10 +216,11 @@ pub trait Actor {
     /// decide to immediately respond (e.g. the command validation failed and cannot be
     /// executed) or to propose an event for replication by the consensus module (e.g. the
     /// event to update actor state once replicated).
-    fn on_process_command(&mut self, command: Bytes) -> Result<CommandOutcome, ActorError>;
+    fn on_process_command(&mut self, command: ActorCommand) -> Result<CommandOutcome, ActorError>;
 
     /// Handles committed events by applying them to the actor state. Event represents
     /// a state transition of the actor and may result in messages being sent to the
     /// consumer (e.g. response to the command that generated this event).
-    fn on_apply_event(&mut self, index: u64, event: Bytes) -> Result<EventOutcome, ActorError>;
+    fn on_apply_event(&mut self, index: u64, event: ActorEvent)
+        -> Result<EventOutcome, ActorError>;
 }

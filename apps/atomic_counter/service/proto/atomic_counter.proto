@@ -16,6 +16,22 @@ syntax = "proto3";
 
 package apps.atomic_counter.service;
 
+// Messages going into the Atomic Counter. Carried as header of the deliver
+// application message.
+message AtomicCounterInMessage {
+  oneof msg {
+    CounterRequest counter_request = 1;
+  }
+}
+
+// Messages going from the Atomic Counter. Carried as header of the deliver
+// application message.
+message AtomicCounterOutMessage {
+  oneof msg {
+    CounterResponse counter_response = 2;
+  }
+}
+
 // Represents a request to execute an operation on a named counter.
 message CounterRequest {
   // The id that uniquely identifies this request. Needed for the response

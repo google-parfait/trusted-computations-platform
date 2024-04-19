@@ -16,7 +16,7 @@ syntax = "proto3";
 
 package apps.tablet_cache.service;
 
-// Messages going into the Tablet Cache. Carried as contents of the deliver
+// Messages going into the Tablet Cache. Carried as header of the deliver
 // application message.
 message TabletCacheInMessage {
   oneof msg {
@@ -32,7 +32,7 @@ message TabletCacheInMessage {
   }
 }
 
-// Messages going from the Tablet Cache. Carried as contents of the deliver
+// Messages going from the Tablet Cache. Carried as header of the deliver
 // application message.
 message TabletCacheOutMessage {
   oneof msg {

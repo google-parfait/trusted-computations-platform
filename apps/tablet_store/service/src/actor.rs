@@ -15,7 +15,9 @@
 use alloc::boxed::Box;
 use prost::bytes::Bytes;
 use slog::debug;
-use tcp_runtime::model::{Actor, ActorContext, ActorError, CommandOutcome, EventOutcome};
+use tcp_runtime::model::{
+    Actor, ActorCommand, ActorContext, ActorError, ActorEvent, CommandOutcome, EventOutcome,
+};
 
 pub struct TabletStoreActor {
     context: Option<Box<dyn ActorContext>>,
@@ -55,11 +57,15 @@ impl Actor for TabletStoreActor {
         Err(ActorError::Internal)
     }
 
-    fn on_process_command(&mut self, _command: Bytes) -> Result<CommandOutcome, ActorError> {
+    fn on_process_command(&mut self, _command: ActorCommand) -> Result<CommandOutcome, ActorError> {
         Err(ActorError::Internal)
     }
 
-    fn on_apply_event(&mut self, _index: u64, _event: Bytes) -> Result<EventOutcome, ActorError> {
+    fn on_apply_event(
+        &mut self,
+        _index: u64,
+        _event: ActorEvent,
+    ) -> Result<EventOutcome, ActorError> {
         Err(ActorError::Internal)
     }
 }

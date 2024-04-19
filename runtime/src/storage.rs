@@ -108,7 +108,7 @@ impl MemoryStorageCore {
         // Check that new entries do not overwrite previsouly compacted entries.
         if self.first_entry_index() > first_append_index {
             panic!(
-                "Overwriting compacted Raft logs, compacted index: {}, append idnex: {}",
+                "Overwriting compacted Raft logs, compacted index: {}, append index: {}",
                 self.first_entry_index() - 1,
                 first_append_index,
             );

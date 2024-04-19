@@ -17,6 +17,8 @@
 # Exit when any command fails
 set -e
 
+export RUST_BACKTRACE=1
+
 # Run build for no_std environment
 printf "\n// Running build for !std environment"
 printf "\n// cargo build --target x86_64-unknown-none\n\n"

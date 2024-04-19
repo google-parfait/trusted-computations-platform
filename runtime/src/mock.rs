@@ -21,7 +21,9 @@ use self::mockall::mock;
 use communication::CommunicationModule;
 use consensus;
 use consensus::{Raft, RaftLightReady, RaftReady, Store};
-use model::{Actor, ActorContext, ActorError, CommandOutcome, EventOutcome};
+use model::{
+    Actor, ActorCommand, ActorContext, ActorError, ActorEvent, CommandOutcome, EventOutcome,
+};
 use platform::{Attestation, Host, PalError};
 use prost::bytes::Bytes;
 use raft::{
@@ -53,9 +55,9 @@ mock! {
 
         fn on_load_snapshot(&mut self, snapshot: Bytes) -> Result<(), ActorError>;
 
-        fn on_process_command(&mut self, command: Bytes) -> Result<CommandOutcome, ActorError>;
+        fn on_process_command(&mut self, command: ActorCommand) -> Result<CommandOutcome, ActorError>;
 
-        fn on_apply_event(&mut self, index: u64, event: Bytes) -> Result<EventOutcome, ActorError>;
+        fn on_apply_event(&mut self, index: u64, event: ActorEvent) -> Result<EventOutcome, ActorError>;
     }
 }
 

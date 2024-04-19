@@ -53,7 +53,7 @@ message AuthorizeAccessEvent {
   // The serialized fcp.confidentialcompute.BlobHeader of the blob being
   // accessed.
   bytes blob_header = 4;
-  
+
   // Encapsulated HPKE secret key used (along with one of the Ledger's private
   // keys) to decrypt `encrypted_symmetric_key`. The encapsulated key will have
   // been produced as part of encrypting the blob's symmetric key using HPKE.
@@ -81,7 +81,7 @@ message AuthorizeAccessEvent {
   //
   // Supported COSE Algorithms:
   //   -65537: HPKE-Base-X25519-SHA256-AES128GCM
-  bytes recipient_public_key = 7;  
+  bytes recipient_public_key = 7;
 
   // Nonce used by the recipient to ensure the same AuthorizeAccessResponse
   // cannot be replayed multiple times by an unsealed portion of the stack to
@@ -89,7 +89,7 @@ message AuthorizeAccessEvent {
   // discard it after using it once as part of the associated data to decrypt
   // the symmetric key. This nonce must be appended to the associated data for
   // the symmetric key.
-  bytes recipient_nonce = 8;  
+  bytes recipient_nonce = 8;
 }
 
 // Request to the Trusted Ledger to propose an operation.

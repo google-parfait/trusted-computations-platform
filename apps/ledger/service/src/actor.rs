@@ -12,7 +12,9 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
+use crate::federated_compute::proto::*;
 use crate::ledger::service::*;
+use crate::ledger::service::{ledger_event::*, ledger_request::*, ledger_response::*};
 use crate::ledger::{Ledger, LedgerService};
 use crate::micro_rpc_proto::Status as StatusProto;
 
@@ -20,7 +22,9 @@ use alloc::boxed::Box;
 use oak_restricted_kernel_sdk::{attestation::EvidenceProvider, crypto::Signer};
 use prost::{bytes::Bytes, Message};
 use slog::{debug, error, warn};
-use tcp_runtime::model::{Actor, ActorContext, ActorError, CommandOutcome, EventOutcome};
+use tcp_runtime::model::{
+    Actor, ActorCommand, ActorContext, ActorError, ActorEvent, CommandOutcome, EventOutcome,
+};
 
 pub struct LedgerActor {
     context: Option<Box<dyn ActorContext>>,
@@ -38,21 +42,24 @@ impl LedgerActor {
         })
     }
 
-    fn get_context(&mut self) -> &dyn ActorContext {
+    fn get_context(&mut self) -> &mut dyn ActorContext {
         self.context
-            .as_ref()
+            .as_mut()
             .expect("Context is initialized")
-            .as_ref()
+            .as_mut()
     }
 
     fn mut_ledger(&mut self) -> &mut LedgerService {
         &mut self.ledger
     }
 
-    // Handles the actor command and returns the command outcome or the status to be promptly
+    // Handles the actor message and returns the message outcome or the status to be promptly
     // returned to the untrusted side.
-    fn handle_command(&mut self, command: Bytes) -> Result<CommandOutcome, micro_rpc::Status> {
-        let ledger_request = LedgerRequest::decode(command.clone()).map_err(|error| {
+    fn handle_command(
+        &mut self,
+        command: ActorCommand,
+    ) -> Result<CommandOutcome, micro_rpc::Status> {
+        let ledger_request = LedgerRequest::decode(command.header.clone()).map_err(|error| {
             warn!(
                 self.get_context().logger(),
                 "LedgerActor: request cannot be parsed: {}", error
@@ -83,28 +90,28 @@ impl LedgerActor {
         }
 
         let event = match ledger_request.request {
-            Some(ledger_request::Request::AuthorizeAccess(authorize_access_request)) => {
+            Some(Request::AuthorizeAccess(authorize_access_request)) => {
                 // Attest and produce the event that contains all the data necessary to
                 // update the budget and rewrap the symmetric key when the event is later applied.
                 let authorize_access_event = self
                     .mut_ledger()
                     .attest_and_produce_authorize_access_event(authorize_access_request)?;
-                ledger_event::Event::AuthorizeAccess(authorize_access_event)
+                Event::AuthorizeAccess(authorize_access_event)
             }
-            Some(ledger_request::Request::CreateKey(create_key_request)) => {
+            Some(Request::CreateKey(create_key_request)) => {
                 // Produce the event that contains the pregenerate public/private key pair.
                 let create_key_event = self
                     .mut_ledger()
                     .produce_create_key_event(create_key_request)?;
-                ledger_event::Event::CreateKey(create_key_event)
+                Event::CreateKey(create_key_event)
             }
-            Some(ledger_request::Request::DeleteKey(delete_key_request)) => {
+            Some(Request::DeleteKey(delete_key_request)) => {
                 // In this case the original request is replicated as the event.
-                ledger_event::Event::DeleteKey(delete_key_request)
+                Event::DeleteKey(delete_key_request)
             }
-            Some(ledger_request::Request::RevokeAccess(revoke_access_request)) => {
+            Some(Request::RevokeAccess(revoke_access_request)) => {
                 // In this case the original request is replicated as the event.
-                ledger_event::Event::RevokeAccess(revoke_access_request)
+                Event::RevokeAccess(revoke_access_request)
             }
             _ => {
                 warn!(
@@ -118,17 +125,18 @@ impl LedgerActor {
             }
         };
 
-        Ok(CommandOutcome::Event(
-            LedgerEvent { event: Some(event) }.encode_to_vec().into(),
-        ))
+        Ok(CommandOutcome::with_event(ActorEvent::with_proto(
+            command.correlation_id,
+            &LedgerEvent { event: Some(event) },
+        )))
     }
 
     fn handle_event(
         &mut self,
         index: u64,
-        event: Bytes,
+        event: ActorEvent,
     ) -> Result<EventOutcome, micro_rpc::Status> {
-        let ledger_event = LedgerEvent::decode(event.clone()).map_err(|error| {
+        let ledger_event = LedgerEvent::decode(event.contents.clone()).map_err(|error| {
             warn!(
                 self.get_context().logger(),
                 "LedgerActor: event cannot be parsed: {}", error
@@ -147,37 +155,37 @@ impl LedgerActor {
         );
 
         let response = match ledger_event.event {
-            Some(ledger_event::Event::AuthorizeAccess(authorize_access_event)) => {
+            Some(Event::AuthorizeAccess(authorize_access_event)) => {
                 let authorize_access_response = self
                     .mut_ledger()
                     .apply_authorize_access_event(authorize_access_event)?;
                 if !self.get_context().leader() {
-                    return Ok(EventOutcome::None);
+                    return Ok(EventOutcome::with_none());
                 }
-                ledger_response::Response::AuthorizeAccess(authorize_access_response)
+                Response::AuthorizeAccess(authorize_access_response)
             }
-            Some(ledger_event::Event::CreateKey(create_key_event)) => {
+            Some(Event::CreateKey(create_key_event)) => {
                 let create_key_response =
                     self.mut_ledger().apply_create_key_event(create_key_event)?;
                 if !self.get_context().leader() {
-                    return Ok(EventOutcome::None);
+                    return Ok(EventOutcome::with_none());
                 }
-                ledger_response::Response::CreateKey(create_key_response)
+                Response::CreateKey(create_key_response)
             }
-            Some(ledger_event::Event::DeleteKey(delete_key_request)) => {
+            Some(Event::DeleteKey(delete_key_request)) => {
                 let delete_key_response = self.mut_ledger().delete_key(delete_key_request)?;
                 if !self.get_context().leader() {
-                    return Ok(EventOutcome::None);
+                    return Ok(EventOutcome::with_none());
                 }
-                ledger_response::Response::DeleteKey(delete_key_response)
+                Response::DeleteKey(delete_key_response)
             }
             Some(ledger_event::Event::RevokeAccess(revoke_access_request)) => {
                 let revoke_access_response =
                     self.mut_ledger().revoke_access(revoke_access_request)?;
                 if !self.get_context().leader() {
-                    return Ok(EventOutcome::None);
+                    return Ok(EventOutcome::with_none());
                 }
-                ledger_response::Response::RevokeAccess(revoke_access_response)
+                Response::RevokeAccess(revoke_access_response)
             }
             _ => {
                 warn!(
@@ -191,23 +199,22 @@ impl LedgerActor {
             }
         };
 
-        Ok(EventOutcome::Response(
-            LedgerResponse {
+        Ok(EventOutcome::with_command(ActorCommand::with_header(
+            event.correlation_id,
+            &LedgerResponse {
                 response: Some(response),
-            }
-            .encode_to_vec()
-            .into(),
-        ))
+            },
+        )))
     }
 }
 
 impl LedgerRequest {
     fn name(self: &Self) -> &'static str {
         match self.request {
-            Some(ledger_request::Request::AuthorizeAccess(_)) => "AuthorizeAccess",
-            Some(ledger_request::Request::CreateKey(_)) => "CreateKey",
-            Some(ledger_request::Request::DeleteKey(_)) => "DeleteKey",
-            Some(ledger_request::Request::RevokeAccess(_)) => "RevokeAccess",
+            Some(Request::AuthorizeAccess(_)) => "AuthorizeAccess",
+            Some(Request::CreateKey(_)) => "CreateKey",
+            Some(Request::DeleteKey(_)) => "DeleteKey",
+            Some(Request::RevokeAccess(_)) => "RevokeAccess",
             _ => "Unknown",
         }
     }
@@ -216,19 +223,19 @@ impl LedgerRequest {
 impl LedgerEvent {
     fn name(self: &Self) -> &'static str {
         match self.event {
-            Some(ledger_event::Event::AuthorizeAccess(_)) => "AuthorizeAccess",
-            Some(ledger_event::Event::CreateKey(_)) => "CreateKey",
-            Some(ledger_event::Event::DeleteKey(_)) => "DeleteKey",
-            Some(ledger_event::Event::RevokeAccess(_)) => "RevokeAccess",
+            Some(Event::AuthorizeAccess(_)) => "AuthorizeAccess",
+            Some(Event::CreateKey(_)) => "CreateKey",
+            Some(Event::DeleteKey(_)) => "DeleteKey",
+            Some(Event::RevokeAccess(_)) => "RevokeAccess",
             _ => "Unknown",
         }
     }
 }
 
 impl LedgerResponse {
-    fn with_error(error: micro_rpc::Status) -> Self {
+    fn with_error(error: micro_rpc::Status) -> LedgerResponse {
         LedgerResponse {
-            response: Some(ledger_response::Response::Error(StatusProto {
+            response: Some(Response::Error(StatusProto {
                 code: error.code as i32,
                 message: error.message.into(),
             })),
@@ -302,22 +309,30 @@ impl Actor for LedgerActor {
     /// decide to immediately respond (e.g. the command validation failed and cannot be
     /// executed) or to propose an event for replication by the consensus module (e.g. the
     /// event to update actor state once replicated).
-    fn on_process_command(&mut self, command: Bytes) -> Result<CommandOutcome, ActorError> {
+    fn on_process_command(&mut self, command: ActorCommand) -> Result<CommandOutcome, ActorError> {
+        let correlation_id = command.correlation_id;
         self.handle_command(command).or_else(|err| {
-            Ok(CommandOutcome::Response(
-                LedgerResponse::with_error(err).encode_to_vec().into(),
-            ))
+            Ok(CommandOutcome::with_command(ActorCommand::with_header(
+                correlation_id,
+                &LedgerResponse::with_error(err),
+            )))
         })
     }
 
     /// Handles committed events by applying them to the actor state. Event represents
     /// a state transition of the actor and may result in messages being sent to the
     /// consumer (e.g. response to the command that generated this event).
-    fn on_apply_event(&mut self, index: u64, event: Bytes) -> Result<EventOutcome, ActorError> {
+    fn on_apply_event(
+        &mut self,
+        index: u64,
+        event: ActorEvent,
+    ) -> Result<EventOutcome, ActorError> {
+        let correlation_id: u64 = event.correlation_id;
         self.handle_event(index, event).or_else(|err| {
-            Ok(EventOutcome::Response(
-                LedgerResponse::with_error(err).encode_to_vec().into(),
-            ))
+            Ok(EventOutcome::with_command(ActorCommand::with_header(
+                correlation_id,
+                &LedgerResponse::with_error(err),
+            )))
         })
     }
 }

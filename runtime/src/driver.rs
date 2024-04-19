@@ -17,12 +17,11 @@ use crate::communication::CommunicationModule;
 use crate::consensus::{Raft, RaftState, Store};
 use crate::logger::log::create_remote_logger;
 use crate::logger::DrainOutput;
-use crate::model::{Actor, ActorContext, CommandOutcome, EventOutcome};
+use crate::model::{Actor, ActorCommand, ActorContext, ActorEvent};
 use crate::snapshot::{SnapshotError, SnapshotProcessor, SnapshotProcessorRole};
 use crate::util::raft::{
-    create_entry, create_entry_id, create_raft_config_change, create_raft_message,
-    deserialize_config_change, deserialize_raft_message, get_config_state, get_metadata,
-    serialize_raft_message,
+    create_entry, create_raft_config_change, create_raft_message, deserialize_config_change,
+    deserialize_raft_message, get_config_state, get_metadata, serialize_raft_message,
 };
 use alloc::boxed::Box;
 use alloc::rc::Rc;
@@ -145,9 +144,6 @@ struct DriverConfig {
 struct RaftProgress {
     // Index of the last committed entry that has been applied to the actor.
     applied_index: u64,
-    // Counter that is used to generate unique ids within this Raft instance.
-    // The counter must never go back.
-    next_entry_id: u64,
     // The lastest configuration of the cluster that has been committed.
     config_state: RaftConfigState,
 }
@@ -156,7 +152,6 @@ impl RaftProgress {
     fn new() -> RaftProgress {
         RaftProgress {
             applied_index: 0,
-            next_entry_id: 1,
             config_state: RaftConfigState::default(),
         }
     }
@@ -419,17 +414,22 @@ impl<
                     self.logger,
                     "Applying Raft entry #{}", committed_entry.index
                 );
-                // Recover the entry id so that execute proposal response can be correlated
+                // Recover the entry id so that original message can be correlated
                 let entry = Entry::decode(committed_entry.get_data()).map_err(|e| {
                     error!(self.logger, "Failed to deserialize Raft entry: {}", e);
                     // Failure to deserialize Raft config change must lead to termination.
                     return PalError::Raft;
                 })?;
 
+                let entry_id = entry.entry_id.unwrap();
+
                 // Pass committed entry to the actor to make effective.
-                match self
+                let event_outcome = self
                     .actor
-                    .on_apply_event(committed_entry.index, entry.entry_contents.clone())
+                    .on_apply_event(
+                        committed_entry.index,
+                        ActorEvent::with_bytes(entry_id.entry_id, entry.entry_contents),
+                    )
                     .map_err(|e| {
                         error!(
                             self.logger,
@@ -437,21 +437,14 @@ impl<
                         );
                         // Failure to apply committed event to actor state must lead to termination.
                         PalError::Actor
-                    })? {
-                    EventOutcome::Response(response) => {
-                        // Send follow up execute proposal response after the corresponding entry
-                        // has been committed and applied.
-                        self.stash_message(out_message::Msg::ExecuteProposal(
-                            ExecuteProposalResponse {
-                                entry_id: entry.entry_id,
-                                result_contents: response,
-                                status: ExecuteProposalStatus::ProposalStatusCompleted.into(),
-                            },
-                        ));
-                    }
-                    EventOutcome::None => {
-                        // There is nothing to send
-                    }
+                    })?;
+
+                for actor_command in event_outcome.commands {
+                    self.stash_message(out_message::Msg::DeliverAppMessage(DeliverAppMessage {
+                        correlation_id: actor_command.correlation_id,
+                        message_header: actor_command.header,
+                        message_payload: actor_command.payload,
+                    }));
                 }
             }
         }
@@ -978,45 +971,44 @@ impl<
         Ok(())
     }
 
-    fn process_execute_proposal(
+    fn process_deliver_app_message(
         &mut self,
-        execute_proposal_request: &mut ExecuteProposalRequest,
+        deliver_app_message: DeliverAppMessage,
     ) -> Result<(), PalError> {
         self.check_driver_started()?;
-        // Generate unique entry id that will be used to correlate pending execute proposal
-        // response and committed entry.
-        let entry_id = create_entry_id(self.id, self.raft_progress.next_entry_id);
-        self.raft_progress.next_entry_id += 1;
 
-        match self
+        let message_outcome = self
             .actor
-            .on_process_command(execute_proposal_request.proposal_contents.clone())
+            .on_process_command(ActorCommand {
+                correlation_id: deliver_app_message.correlation_id,
+                header: deliver_app_message.message_header,
+                payload: deliver_app_message.message_payload,
+            })
             .map_err(|e| {
                 error!(self.logger, "Failed to process actor command: {}", e);
 
                 // Failure to process actor command must lead to termination.
                 PalError::Actor
-            })? {
-            CommandOutcome::Response(response) => {
-                // The proposal has been executed and there will be no follow up response.
-                self.stash_message(out_message::Msg::ExecuteProposal(ExecuteProposalResponse {
-                    entry_id: Some(entry_id),
-                    result_contents: response,
-                    status: ExecuteProposalStatus::ProposalStatusCompleted.into(),
-                }));
-            }
-            CommandOutcome::Event(event) => {
-                // The proposal has been accepted and there will be a follow up response.
-                self.stash_message(out_message::Msg::ExecuteProposal(ExecuteProposalResponse {
-                    entry_id: Some(entry_id.clone()),
-                    status: ExecuteProposalStatus::ProposalStatusPending.into(),
-                    ..Default::default()
-                }));
+            })?;
 
-                let entry = create_entry(entry_id, event);
-                self.mut_core()
-                    .append_proposal(entry.encode_to_vec().into())
-            }
+        for actor_message in message_outcome.commands {
+            self.stash_message(out_message::Msg::DeliverAppMessage(DeliverAppMessage {
+                correlation_id: actor_message.correlation_id,
+                message_header: actor_message.header,
+                message_payload: actor_message.payload,
+            }));
+        }
+
+        if let Some(actor_event) = message_outcome.event {
+            let entry = create_entry(
+                EntryId {
+                    entry_id: actor_event.correlation_id,
+                    replica_id: self.id,
+                },
+                actor_event.contents,
+            );
+            self.mut_core()
+                .append_proposal(entry.encode_to_vec().into())
         }
 
         Ok(())
@@ -1150,16 +1142,15 @@ impl<
                         in_message::Msg::DeliverSnapshotFailure(deliver_snapshot_failure) => {
                             self.process_deliver_snapshot_failure(deliver_snapshot_failure)
                         }
-                        in_message::Msg::ExecuteProposal(ref mut execute_proposal_request) => {
-                            self.process_execute_proposal(execute_proposal_request)
-                        }
                         in_message::Msg::GetReplicaState(ref get_replica_state_request) => {
                             self.process_get_replica_state(get_replica_state_request)
                         }
                         in_message::Msg::SecureChannelHandshake(secure_channel_handshake) => {
                             self.process_secure_channel_handshake(secure_channel_handshake)
                         }
-                        in_message::Msg::DeliverAppMessage(_deliver_app_message) => todo!(),
+                        in_message::Msg::DeliverAppMessage(deliver_app_message) => {
+                            self.process_deliver_app_message(deliver_app_message)
+                        }
                     }?;
                 }
             };
@@ -1198,9 +1189,10 @@ mod test {
     use crate::{
         consensus::{RaftLightReady, RaftReady},
         mock::{MockSnapshotReceiver, MockSnapshotSender},
+        model::{CommandOutcome, EventOutcome},
         snapshot::DefaultSnapshotProcessor,
         util::raft::{
-            create_empty_raft_entry, create_raft_config_state, create_raft_entry,
+            create_empty_raft_entry, create_entry_id, create_raft_config_state, create_raft_entry,
             create_raft_message, create_raft_snapshot, create_raft_snapshot_metadata,
             serialize_config_change,
         },
@@ -1295,24 +1287,25 @@ mod test {
         out_message::Msg::StopReplica(StopReplicaResponse {})
     }
 
-    fn create_execute_proposal_request(proposal_contents: Bytes) -> InMessage {
+    fn create_in_deliver_app_message(correlation_id: u64, message_header: Bytes) -> InMessage {
         let envelope = InMessage {
-            msg: Some(in_message::Msg::ExecuteProposal(ExecuteProposalRequest {
-                proposal_contents,
+            msg: Some(in_message::Msg::DeliverAppMessage(DeliverAppMessage {
+                correlation_id,
+                message_header,
+                message_payload: Bytes::new(),
             })),
         };
         envelope
     }
 
-    fn create_execute_proposal_response(
-        entry_id: Option<EntryId>,
-        result_contents: Bytes,
-        status: ExecuteProposalStatus,
+    fn create_out_deliver_app_message(
+        correlation_id: u64,
+        message_header: Bytes,
     ) -> out_message::Msg {
-        out_message::Msg::ExecuteProposal(ExecuteProposalResponse {
-            entry_id,
-            result_contents: result_contents,
-            status: status.into(),
+        out_message::Msg::DeliverAppMessage(DeliverAppMessage {
+            correlation_id,
+            message_header,
+            message_payload: Bytes::new(),
         })
     }
 
@@ -1969,7 +1962,7 @@ mod test {
 
         fn expect_on_process_command(
             &mut self,
-            command: Bytes,
+            command: ActorCommand,
             result: Result<CommandOutcome, ActorError>,
         ) -> &mut DriverBuilder {
             self.mock_actor
@@ -2005,12 +1998,12 @@ mod test {
         fn expect_on_apply_event(
             &mut self,
             index: u64,
-            data: Bytes,
+            event: ActorEvent,
             result: Result<EventOutcome, ActorError>,
         ) -> &mut DriverBuilder {
             self.mock_actor
                 .expect_on_apply_event()
-                .with(eq(index), eq(data))
+                .with(eq(index), eq(event))
                 .return_once(|_, _| result);
 
             self
@@ -2172,28 +2165,25 @@ mod test {
         let (node_id, instant, raft_config) = create_default_parameters();
         let init_snapshot = Bytes::from(vec![2, 3, 4]);
         let proposal_contents_1 = Bytes::from(vec![1, 2, 3]);
+        let proposal_pending_1 = Bytes::from(vec![3, 4, 5]);
         let proposal_contents_2 = Bytes::from(vec![4, 5, 6]);
         let proposal_result_2 = vec![4, 4, 6];
-        let entry_id_1 = create_entry_id(node_id, 1);
-        let entry_id_2 = create_entry_id(node_id, 2);
+        let correlation_id_1 = 1;
+        let correlation_id_2 = 2;
+        let entry_id_1 = create_entry_id(node_id, correlation_id_1);
 
         let mut mock_host = MockHostBuilder::new()
             .expect_public_signing_key(vec![])
             .expect_send_messages(vec![create_start_replica_response(node_id)])
-            .expect_send_messages(vec![create_execute_proposal_response(
-                Some(entry_id_1.clone()),
-                Bytes::new(),
-                ExecuteProposalStatus::ProposalStatusPending,
-            )])
-            .expect_send_messages(vec![create_execute_proposal_response(
-                Some(entry_id_2),
+            .expect_send_messages(vec![])
+            .expect_send_messages(vec![create_out_deliver_app_message(
+                correlation_id_2,
                 proposal_result_2.clone().into(),
-                ExecuteProposalStatus::ProposalStatusCompleted,
             )])
             .take();
 
         let proposal_entry_1 = Entry {
-            entry_id: Some(entry_id_1),
+            entry_id: Some(entry_id_1.clone()),
             entry_contents: proposal_contents_1.clone().into(),
         };
 
@@ -2224,12 +2214,27 @@ mod test {
             .expect_on_init(|_| Ok(()))
             .expect_on_save_snapshot(Ok(init_snapshot.clone()))
             .expect_on_process_command(
-                proposal_contents_1.clone(),
-                Ok(CommandOutcome::Event(proposal_contents_1.clone().into())),
+                ActorCommand {
+                    correlation_id: correlation_id_1,
+                    header: proposal_contents_1.clone(),
+                    payload: Bytes::new(),
+                },
+                Ok(CommandOutcome::with_event(ActorEvent {
+                    correlation_id: correlation_id_1,
+                    contents: proposal_contents_1.clone().into(),
+                })),
             )
             .expect_on_process_command(
-                proposal_contents_2.clone(),
-                Ok(CommandOutcome::Response(proposal_result_2.into())),
+                ActorCommand {
+                    correlation_id: correlation_id_2,
+                    header: proposal_contents_2.clone(),
+                    payload: Bytes::new(),
+                },
+                Ok(CommandOutcome::with_command(ActorCommand {
+                    correlation_id: correlation_id_2,
+                    header: proposal_result_2.clone().into(),
+                    payload: Bytes::new(),
+                })),
             )
             .take(raft_builder, snapshot_builder, communication_builder);
 
@@ -2252,7 +2257,8 @@ mod test {
             driver.receive_message(
                 &mut mock_host,
                 instant + 10,
-                Some(create_execute_proposal_request(
+                Some(create_in_deliver_app_message(
+                    correlation_id_1,
                     proposal_contents_1.clone().into()
                 )),
             )
@@ -2263,7 +2269,8 @@ mod test {
             driver.receive_message(
                 &mut mock_host,
                 instant + 10,
-                Some(create_execute_proposal_request(
+                Some(create_in_deliver_app_message(
+                    correlation_id_2,
                     proposal_contents_2.clone().into()
                 )),
             )
@@ -2527,11 +2534,7 @@ mod test {
                 out_message::Msg::SecureChannelHandshake(create_secure_channel_handshake(
                     node_id, peer_id,
                 )),
-                create_execute_proposal_response(
-                    Some(entry_id.clone()),
-                    proposal_result.clone().into(),
-                    ExecuteProposalStatus::ProposalStatusCompleted,
-                ),
+                create_out_deliver_app_message(entry_id.entry_id, proposal_result.clone().into()),
             ])
             .take();
 
@@ -2572,8 +2575,15 @@ mod test {
             .expect_on_load_snapshot(snapshot.data.into(), Ok(()))
             .expect_on_apply_event(
                 committed_normal_entry.index,
-                entry.entry_contents.into(),
-                Ok(EventOutcome::Response(proposal_result.into())),
+                ActorEvent {
+                    correlation_id: entry_id.entry_id,
+                    contents: entry.entry_contents.into(),
+                },
+                Ok(EventOutcome::with_command(ActorCommand {
+                    correlation_id: entry_id.entry_id,
+                    header: proposal_result.into(),
+                    payload: Bytes::new(),
+                })),
             )
             .take(raft_builder, snapshot_builder, communication_builder);
 
@@ -2774,10 +2784,9 @@ mod test {
         let mut mock_host = MockHostBuilder::new()
             .expect_public_signing_key(vec![])
             .expect_send_messages(vec![create_start_replica_response(node_id)])
-            .expect_send_messages(vec![create_execute_proposal_response(
-                Some(entry_id.clone()),
+            .expect_send_messages(vec![create_out_deliver_app_message(
+                entry_id.entry_id,
                 proposal_result.clone().into(),
-                ExecuteProposalStatus::ProposalStatusCompleted,
             )])
             .expect_send_messages(vec![create_get_replica_state_response(
                 committed_normal_entry.index,
@@ -2834,8 +2843,15 @@ mod test {
             .expect_on_save_snapshot(Ok(init_snapshot.clone()))
             .expect_on_apply_event(
                 committed_normal_entry.index,
-                entry.entry_contents,
-                Ok(EventOutcome::Response(proposal_result.into())),
+                ActorEvent {
+                    correlation_id: entry_id.entry_id,
+                    contents: entry.entry_contents,
+                },
+                Ok(EventOutcome::with_command(ActorCommand {
+                    correlation_id: entry_id.entry_id,
+                    header: proposal_result.into(),
+                    payload: Bytes::new(),
+                })),
             )
             .expect_on_save_snapshot(Ok(snapshot.clone()))
             .take(raft_builder, snapshot_builder, communication_builder);
