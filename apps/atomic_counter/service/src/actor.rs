@@ -27,7 +27,8 @@ use hashbrown::HashMap;
 use prost::{bytes::Bytes, Message};
 use slog::{debug, warn};
 use tcp_runtime::model::{
-    Actor, ActorCommand, ActorContext, ActorError, ActorEvent, CommandOutcome, EventOutcome,
+    Actor, ActorCommand, ActorContext, ActorError, ActorEvent, ActorEventContext, CommandOutcome,
+    EventOutcome,
 };
 
 pub struct CounterValue {
@@ -234,7 +235,7 @@ impl Actor for CounterActor {
 
     fn on_apply_event(
         &mut self,
-        index: u64,
+        context: ActorEventContext,
         event: ActorEvent,
     ) -> Result<EventOutcome, ActorError> {
         let request =
@@ -245,7 +246,7 @@ impl Actor for CounterActor {
         let response = match op {
             counter_request::Op::CompareAndSwap(ref compare_and_swap_request) => self
                 .apply_compare_and_swap(
-                    index,
+                    context.index,
                     request.id,
                     &request.name,
                     compare_and_swap_request,
@@ -253,7 +254,7 @@ impl Actor for CounterActor {
                 ),
         };
 
-        if self.get_context().leader() {
+        if context.owned {
             return Ok(EventOutcome::with_command(ActorCommand::with_header(
                 event.correlation_id,
                 &AtomicCounterOutMessage {

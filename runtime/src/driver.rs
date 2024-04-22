@@ -17,7 +17,7 @@ use crate::communication::CommunicationModule;
 use crate::consensus::{Raft, RaftState, Store};
 use crate::logger::log::create_remote_logger;
 use crate::logger::DrainOutput;
-use crate::model::{Actor, ActorCommand, ActorContext, ActorEvent};
+use crate::model::{Actor, ActorCommand, ActorContext, ActorEvent, ActorEventContext};
 use crate::snapshot::{SnapshotError, SnapshotProcessor, SnapshotProcessorRole};
 use crate::util::raft::{
     create_entry, create_raft_config_change, create_raft_message, deserialize_config_change,
@@ -427,7 +427,10 @@ impl<
                 let event_outcome = self
                     .actor
                     .on_apply_event(
-                        committed_entry.index,
+                        ActorEventContext {
+                            index: committed_entry.index,
+                            owned: entry_id.replica_id == self.id,
+                        },
                         ActorEvent::with_bytes(entry_id.entry_id, entry.entry_contents),
                     )
                     .map_err(|e| {
@@ -463,11 +466,13 @@ impl<
             }
 
             self.communication
-                .process_out_message(out_message::Msg::DeliverMessage(DeliverMessage {
-                    recipient_replica_id: raft_message.to,
-                    sender_replica_id: self.id,
-                    message_contents: serialize_raft_message(&raft_message).unwrap(),
-                }))?;
+                .process_out_message(out_message::Msg::DeliverSystemMessage(
+                    DeliverSystemMessage {
+                        recipient_replica_id: raft_message.to,
+                        sender_replica_id: self.id,
+                        message_contents: serialize_raft_message(&raft_message).unwrap(),
+                    },
+                ))?;
         }
 
         Ok(())
@@ -770,16 +775,21 @@ impl<
         Ok(())
     }
 
-    fn process_deliver_message(&mut self, deliver_message: DeliverMessage) -> Result<(), PalError> {
+    fn process_deliver_system_message(
+        &mut self,
+        deliver_system_message: DeliverSystemMessage,
+    ) -> Result<(), PalError> {
         self.check_driver_started()?;
 
         let message = self
             .communication
-            .process_in_message(in_message::Msg::DeliverMessage(deliver_message))?
+            .process_in_message(in_message::Msg::DeliverSystemMessage(
+                deliver_system_message,
+            ))?
             .unwrap();
 
         match message {
-            in_message::Msg::DeliverMessage(m) => self.make_raft_step(
+            in_message::Msg::DeliverSystemMessage(m) => self.make_raft_step(
                 m.sender_replica_id,
                 m.recipient_replica_id,
                 m.message_contents,
@@ -1130,8 +1140,8 @@ impl<
                         in_message::Msg::CheckCluster(ref check_cluster_request) => {
                             self.process_check_cluster(check_cluster_request)
                         }
-                        in_message::Msg::DeliverMessage(deliver_message) => {
-                            self.process_deliver_message(deliver_message)
+                        in_message::Msg::DeliverSystemMessage(deliver_system_message) => {
+                            self.process_deliver_system_message(deliver_system_message)
                         }
                         in_message::Msg::DeliverSnapshotRequest(deliver_snapshot_request) => {
                             self.process_deliver_snapshot_request(deliver_snapshot_request)
@@ -1371,19 +1381,21 @@ mod test {
         }
     }
 
-    fn create_deliver_message_request(raft_message: &RaftMessage) -> InMessage {
+    fn create_deliver_system_message_request(raft_message: &RaftMessage) -> InMessage {
         let envelope = InMessage {
-            msg: Some(in_message::Msg::DeliverMessage(DeliverMessage {
-                recipient_replica_id: raft_message.to,
-                sender_replica_id: raft_message.from,
-                message_contents: serialize_raft_message(raft_message).unwrap(),
-            })),
+            msg: Some(in_message::Msg::DeliverSystemMessage(
+                DeliverSystemMessage {
+                    recipient_replica_id: raft_message.to,
+                    sender_replica_id: raft_message.from,
+                    message_contents: serialize_raft_message(raft_message).unwrap(),
+                },
+            )),
         };
         envelope
     }
 
-    fn create_deliver_message_response(raft_message: &RaftMessage) -> out_message::Msg {
-        out_message::Msg::DeliverMessage(DeliverMessage {
+    fn create_deliver_system_message_response(raft_message: &RaftMessage) -> out_message::Msg {
+        out_message::Msg::DeliverSystemMessage(DeliverSystemMessage {
             recipient_replica_id: raft_message.to,
             sender_replica_id: raft_message.from,
             message_contents: serialize_raft_message(raft_message).unwrap(),
@@ -1997,13 +2009,13 @@ mod test {
 
         fn expect_on_apply_event(
             &mut self,
-            index: u64,
+            context: ActorEventContext,
             event: ActorEvent,
             result: Result<EventOutcome, ActorError>,
         ) -> &mut DriverBuilder {
             self.mock_actor
                 .expect_on_apply_event()
-                .with(eq(index), eq(event))
+                .with(eq(context), eq(event))
                 .return_once(|_, _| result);
 
             self
@@ -2561,8 +2573,8 @@ mod test {
         let communication_builder = CommunicationBuilder::new()
             .expect_init(node_id)
             .expect_take_out_messages(Vec::new())
-            .expect_process_out_message(create_deliver_message_response(&message_a), Ok(()))
-            .expect_process_out_message(create_deliver_message_response(&message_b), Ok(()))
+            .expect_process_out_message(create_deliver_system_message_response(&message_a), Ok(()))
+            .expect_process_out_message(create_deliver_system_message_response(&message_b), Ok(()))
             .expect_take_out_messages(vec![OutMessage {
                 msg: Some(out_message::Msg::SecureChannelHandshake(
                     create_secure_channel_handshake(node_id, peer_id),
@@ -2574,7 +2586,10 @@ mod test {
             .expect_on_save_snapshot(Ok(init_snapshot.clone()))
             .expect_on_load_snapshot(snapshot.data.into(), Ok(()))
             .expect_on_apply_event(
-                committed_normal_entry.index,
+                ActorEventContext {
+                    index: committed_normal_entry.index,
+                    owned: true,
+                },
                 ActorEvent {
                     correlation_id: entry_id.entry_id,
                     contents: entry.entry_contents.into(),
@@ -2710,9 +2725,13 @@ mod test {
             )
             .expect_take_out_messages(Vec::new())
             .expect_process_in_message(
-                create_deliver_message_request(&message_a).msg.unwrap(),
+                create_deliver_system_message_request(&message_a)
+                    .msg
+                    .unwrap(),
                 Ok(Some(
-                    create_deliver_message_request(&message_a).msg.unwrap(),
+                    create_deliver_system_message_request(&message_a)
+                        .msg
+                        .unwrap(),
                 )),
             )
             .expect_take_out_messages(Vec::new());
@@ -2754,7 +2773,7 @@ mod test {
             driver.receive_message(
                 &mut mock_host,
                 instant + 20,
-                Some(create_deliver_message_request(&message_a)),
+                Some(create_deliver_system_message_request(&message_a)),
             )
         );
     }
@@ -2842,7 +2861,10 @@ mod test {
             .expect_on_init(|_| Ok(()))
             .expect_on_save_snapshot(Ok(init_snapshot.clone()))
             .expect_on_apply_event(
-                committed_normal_entry.index,
+                ActorEventContext {
+                    index: committed_normal_entry.index,
+                    owned: true,
+                },
                 ActorEvent {
                     correlation_id: entry_id.entry_id,
                     contents: entry.entry_contents,

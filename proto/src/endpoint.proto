@@ -39,7 +39,7 @@ message InMessage {
     // time.
     CheckClusterRequest check_cluster = 4;
     // Requests the Trusted Host to deliver a Raft message to the replica.
-    DeliverMessage deliver_message = 5;
+    DeliverSystemMessage deliver_system_message = 5;
     // Requests the Trusted Host to deliver part of the Raft snapshot from
     // leader replica to the hosted replica.
     DeliverSnapshotRequest deliver_snapshot_request = 7;
@@ -85,7 +85,7 @@ message OutMessage {
     CheckClusterResponse check_cluster = 5;
     // Requests the Untrusted Launcher to deliver the Raft message to a Raft
     // replica hosted in a different Trusted Host.
-    DeliverMessage deliver_message = 6;
+    DeliverSystemMessage deliver_system_message = 6;
     // Requests the Untrusted Launcher to deliver part of the Raft snapshot from
     // hosted leader replica to another follower replica.
     DeliverSnapshotRequest deliver_snapshot_request = 8;
@@ -261,7 +261,7 @@ message CheckClusterResponse {
   bool has_pending_changes = 4;
 }
 
-message DeliverMessage {
+message DeliverSystemMessage {
   // The replica id of the recipient.
   uint64 recipient_replica_id = 1;
   // The replica id of the sender.

@@ -162,10 +162,10 @@ impl<A: Actor> FakeCluster<A> {
             let messages_out = platform.take_messages_out();
             for message_out in messages_out {
                 match message_out.msg {
-                    Some(out_message::Msg::DeliverMessage(deliver_message)) => {
+                    Some(out_message::Msg::DeliverSystemMessage(deliver_system_message)) => {
                         messages_in.push((
-                            deliver_message.recipient_replica_id,
-                            in_message::Msg::DeliverMessage(deliver_message),
+                            deliver_system_message.recipient_replica_id,
+                            in_message::Msg::DeliverSystemMessage(deliver_system_message),
                         ));
                     }
                     Some(out_message::Msg::DeliverSnapshotRequest(deliver_snapshot_request)) => {

@@ -16,7 +16,8 @@ use alloc::boxed::Box;
 use prost::bytes::Bytes;
 use slog::debug;
 use tcp_runtime::model::{
-    Actor, ActorCommand, ActorContext, ActorError, ActorEvent, CommandOutcome, EventOutcome,
+    Actor, ActorCommand, ActorContext, ActorError, ActorEvent, ActorEventContext, CommandOutcome,
+    EventOutcome,
 };
 
 pub struct TabletStoreActor {
@@ -63,7 +64,7 @@ impl Actor for TabletStoreActor {
 
     fn on_apply_event(
         &mut self,
-        _index: u64,
+        _context: ActorEventContext,
         _event: ActorEvent,
     ) -> Result<EventOutcome, ActorError> {
         Err(ActorError::Internal)

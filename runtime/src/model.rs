@@ -129,6 +129,18 @@ impl ActorEvent {
     }
 }
 
+/// Represents context of an application level replicated event. The context is meant
+/// to help decide actor how to properly apply it.
+#[derive(Default, PartialEq, Debug, Clone)]
+pub struct ActorEventContext {
+    /// Index of the committed event in the replicated log.
+    pub index: u64,
+    /// Value which indicates if the this actor replica has originally produced this
+    /// event or not. If the event has been produced by this actor replica then it
+    /// not apply the event but also produce any relevant results to be sent out.
+    pub owned: bool,
+}
+
 /// Represents an outcome of application command processing, which may result
 /// in a number of application commands requested to be sent out and an event
 /// requested to be replicated.
@@ -221,6 +233,9 @@ pub trait Actor {
     /// Handles committed events by applying them to the actor state. Event represents
     /// a state transition of the actor and may result in messages being sent to the
     /// consumer (e.g. response to the command that generated this event).
-    fn on_apply_event(&mut self, index: u64, event: ActorEvent)
-        -> Result<EventOutcome, ActorError>;
+    fn on_apply_event(
+        &mut self,
+        context: ActorEventContext,
+        event: ActorEvent,
+    ) -> Result<EventOutcome, ActorError>;
 }

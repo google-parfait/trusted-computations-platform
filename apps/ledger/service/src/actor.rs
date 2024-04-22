@@ -23,7 +23,8 @@ use oak_restricted_kernel_sdk::{attestation::EvidenceProvider, crypto::Signer};
 use prost::{bytes::Bytes, Message};
 use slog::{debug, error, warn};
 use tcp_runtime::model::{
-    Actor, ActorCommand, ActorContext, ActorError, ActorEvent, CommandOutcome, EventOutcome,
+    Actor, ActorCommand, ActorContext, ActorError, ActorEvent, ActorEventContext, CommandOutcome,
+    EventOutcome,
 };
 
 pub struct LedgerActor {
@@ -133,7 +134,7 @@ impl LedgerActor {
 
     fn handle_event(
         &mut self,
-        index: u64,
+        context: ActorEventContext,
         event: ActorEvent,
     ) -> Result<EventOutcome, micro_rpc::Status> {
         let ledger_event = LedgerEvent::decode(event.contents.clone()).map_err(|error| {
@@ -150,7 +151,7 @@ impl LedgerActor {
         debug!(
             self.get_context().logger(),
             "LedgerActor: handling event at index {}: {}",
-            index,
+            context.index,
             ledger_event.name()
         );
 
@@ -159,7 +160,7 @@ impl LedgerActor {
                 let authorize_access_response = self
                     .mut_ledger()
                     .apply_authorize_access_event(authorize_access_event)?;
-                if !self.get_context().leader() {
+                if !context.owned {
                     return Ok(EventOutcome::with_none());
                 }
                 Response::AuthorizeAccess(authorize_access_response)
@@ -167,14 +168,14 @@ impl LedgerActor {
             Some(Event::CreateKey(create_key_event)) => {
                 let create_key_response =
                     self.mut_ledger().apply_create_key_event(create_key_event)?;
-                if !self.get_context().leader() {
+                if !context.owned {
                     return Ok(EventOutcome::with_none());
                 }
                 Response::CreateKey(create_key_response)
             }
             Some(Event::DeleteKey(delete_key_request)) => {
                 let delete_key_response = self.mut_ledger().delete_key(delete_key_request)?;
-                if !self.get_context().leader() {
+                if !context.owned {
                     return Ok(EventOutcome::with_none());
                 }
                 Response::DeleteKey(delete_key_response)
@@ -182,7 +183,7 @@ impl LedgerActor {
             Some(ledger_event::Event::RevokeAccess(revoke_access_request)) => {
                 let revoke_access_response =
                     self.mut_ledger().revoke_access(revoke_access_request)?;
-                if !self.get_context().leader() {
+                if !context.owned {
                     return Ok(EventOutcome::with_none());
                 }
                 Response::RevokeAccess(revoke_access_response)
@@ -324,11 +325,11 @@ impl Actor for LedgerActor {
     /// consumer (e.g. response to the command that generated this event).
     fn on_apply_event(
         &mut self,
-        index: u64,
+        context: ActorEventContext,
         event: ActorEvent,
     ) -> Result<EventOutcome, ActorError> {
         let correlation_id: u64 = event.correlation_id;
-        self.handle_event(index, event).or_else(|err| {
+        self.handle_event(context, event).or_else(|err| {
             Ok(EventOutcome::with_command(ActorCommand::with_header(
                 correlation_id,
                 &LedgerResponse::with_error(err),

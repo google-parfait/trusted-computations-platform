@@ -22,7 +22,8 @@ use communication::CommunicationModule;
 use consensus;
 use consensus::{Raft, RaftLightReady, RaftReady, Store};
 use model::{
-    Actor, ActorCommand, ActorContext, ActorError, ActorEvent, CommandOutcome, EventOutcome,
+    Actor, ActorCommand, ActorContext, ActorError, ActorEvent, ActorEventContext, CommandOutcome,
+    EventOutcome,
 };
 use platform::{Attestation, Host, PalError};
 use prost::bytes::Bytes;
@@ -57,7 +58,7 @@ mock! {
 
         fn on_process_command(&mut self, command: ActorCommand) -> Result<CommandOutcome, ActorError>;
 
-        fn on_apply_event(&mut self, index: u64, event: ActorEvent) -> Result<EventOutcome, ActorError>;
+        fn on_apply_event(&mut self, context: ActorEventContext, event: ActorEvent) -> Result<EventOutcome, ActorError>;
     }
 }
 

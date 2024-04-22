@@ -101,8 +101,8 @@ impl CommunicationModule for DefaultCommunicationModule {
         self.check_initialized()?;
 
         let peer_replica_id = match &message {
-            out_message::Msg::DeliverMessage(deliver_message) => {
-                deliver_message.recipient_replica_id
+            out_message::Msg::DeliverSystemMessage(deliver_system_message) => {
+                deliver_system_message.recipient_replica_id
             }
             out_message::Msg::DeliverSnapshotRequest(deliver_snapshot_request) => {
                 deliver_snapshot_request.recipient_replica_id
@@ -137,7 +137,9 @@ impl CommunicationModule for DefaultCommunicationModule {
             in_message::Msg::SecureChannelHandshake(secure_channel_handshake) => {
                 secure_channel_handshake.sender_replica_id
             }
-            in_message::Msg::DeliverMessage(deliver_message) => deliver_message.sender_replica_id,
+            in_message::Msg::DeliverSystemMessage(deliver_system_message) => {
+                deliver_system_message.sender_replica_id
+            }
             in_message::Msg::DeliverSnapshotRequest(deliver_snapshot_request) => {
                 deliver_snapshot_request.sender_replica_id
             }
@@ -333,8 +335,11 @@ mod test {
     use prost::bytes::Bytes;
     use tcp_proto::runtime::endpoint::*;
 
-    fn create_deliver_message(sender_replica_id: u64, recipient_replica_id: u64) -> DeliverMessage {
-        DeliverMessage {
+    fn create_deliver_system_message(
+        sender_replica_id: u64,
+        recipient_replica_id: u64,
+    ) -> DeliverSystemMessage {
+        DeliverSystemMessage {
             recipient_replica_id,
             sender_replica_id,
             message_contents: Bytes::new(),
@@ -418,8 +423,8 @@ mod test {
         // Invoking `process_out_message` before `init` should fail.
         assert_eq!(
             Err(PalError::InvalidOperation),
-            communication_module.process_out_message(out_message::Msg::DeliverMessage(
-                create_deliver_message(self_replica_id, peer_replica_id_a)
+            communication_module.process_out_message(out_message::Msg::DeliverSystemMessage(
+                create_deliver_system_message(self_replica_id, peer_replica_id_a)
             ))
         );
 
@@ -427,8 +432,8 @@ mod test {
 
         assert_eq!(
             Ok(()),
-            communication_module.process_out_message(out_message::Msg::DeliverMessage(
-                create_deliver_message(self_replica_id, peer_replica_id_a)
+            communication_module.process_out_message(out_message::Msg::DeliverSystemMessage(
+                create_deliver_system_message(self_replica_id, peer_replica_id_a)
             ))
         );
         assert_eq!(
@@ -445,8 +450,8 @@ mod test {
         );
         assert_eq!(
             Ok(()),
-            communication_module.process_out_message(out_message::Msg::DeliverMessage(
-                create_deliver_message(self_replica_id, peer_replica_id_b)
+            communication_module.process_out_message(out_message::Msg::DeliverSystemMessage(
+                create_deliver_system_message(self_replica_id, peer_replica_id_b)
             ))
         );
         assert_eq!(
@@ -487,8 +492,8 @@ mod test {
         // Invoking `process_in_message` before `init` should fail.
         assert_eq!(
             Err(PalError::InvalidOperation),
-            communication_module.process_in_message(in_message::Msg::DeliverMessage(
-                create_deliver_message(peer_replica_id_a, self_replica_id)
+            communication_module.process_in_message(in_message::Msg::DeliverSystemMessage(
+                create_deliver_system_message(peer_replica_id_a, self_replica_id)
             ))
         );
 
@@ -501,11 +506,11 @@ mod test {
             ))
         );
         assert_eq!(
-            Ok(Some(in_message::Msg::DeliverMessage(
-                create_deliver_message(peer_replica_id_a, self_replica_id)
+            Ok(Some(in_message::Msg::DeliverSystemMessage(
+                create_deliver_system_message(peer_replica_id_a, self_replica_id)
             ))),
-            communication_module.process_in_message(in_message::Msg::DeliverMessage(
-                create_deliver_message(peer_replica_id_a, self_replica_id)
+            communication_module.process_in_message(in_message::Msg::DeliverSystemMessage(
+                create_deliver_system_message(peer_replica_id_a, self_replica_id)
             ))
         );
         assert_eq!(
@@ -556,7 +561,8 @@ mod test {
             recipient_replica_id: peer_replica_id_a,
             encryption: None,
         };
-        let deliver_message = create_deliver_message(peer_replica_id_a, peer_replica_id_b);
+        let deliver_system_message =
+            create_deliver_system_message(peer_replica_id_a, peer_replica_id_b);
         let deliver_snapshot_request =
             create_deliver_snapshot_request(peer_replica_id_a, peer_replica_id_b);
 
@@ -566,8 +572,9 @@ mod test {
         // Handshake initiated from a to b.
         assert_eq!(
             Ok(()),
-            communication_module_a
-                .process_out_message(out_message::Msg::DeliverMessage(deliver_message.clone()))
+            communication_module_a.process_out_message(out_message::Msg::DeliverSystemMessage(
+                deliver_system_message.clone()
+            ))
         );
         assert_eq!(
             vec![OutMessage {
@@ -616,7 +623,9 @@ mod test {
         assert_eq!(
             vec![
                 OutMessage {
-                    msg: Some(out_message::Msg::DeliverMessage(deliver_message.clone()))
+                    msg: Some(out_message::Msg::DeliverSystemMessage(
+                        deliver_system_message.clone()
+                    ))
                 },
                 OutMessage {
                     msg: Some(out_message::Msg::DeliverSnapshotRequest(
@@ -628,11 +637,12 @@ mod test {
         );
 
         assert_eq!(
-            Ok(Some(in_message::Msg::DeliverMessage(
-                deliver_message.clone()
+            Ok(Some(in_message::Msg::DeliverSystemMessage(
+                deliver_system_message.clone()
             ))),
-            communication_module_b
-                .process_in_message(in_message::Msg::DeliverMessage(deliver_message.clone()))
+            communication_module_b.process_in_message(in_message::Msg::DeliverSystemMessage(
+                deliver_system_message.clone()
+            ))
         );
     }
 
@@ -642,54 +652,56 @@ mod test {
         let mut communication_module_b = DefaultCommunicationModule::new();
         let peer_replica_id_a = 11111;
         let peer_replica_id_b = 22222;
-        let deliver_message_a_to_b = create_deliver_message(peer_replica_id_a, peer_replica_id_b);
-        let deliver_message_b_to_a = create_deliver_message(peer_replica_id_b, peer_replica_id_a);
+        let deliver_system_message_a_to_b =
+            create_deliver_system_message(peer_replica_id_a, peer_replica_id_b);
+        let deliver_system_message_b_to_a =
+            create_deliver_system_message(peer_replica_id_b, peer_replica_id_a);
 
         communication_module_a.init(peer_replica_id_a);
         communication_module_b.init(peer_replica_id_b);
 
         assert_eq!(
             Ok(()),
-            communication_module_a.process_out_message(out_message::Msg::DeliverMessage(
-                deliver_message_a_to_b.clone()
+            communication_module_a.process_out_message(out_message::Msg::DeliverSystemMessage(
+                deliver_system_message_a_to_b.clone()
             ))
         );
         assert_eq!(
             Err(PalError::Internal),
-            communication_module_b.process_in_message(in_message::Msg::DeliverMessage(
-                deliver_message_a_to_b.clone()
+            communication_module_b.process_in_message(in_message::Msg::DeliverSystemMessage(
+                deliver_system_message_a_to_b.clone()
             ))
         );
         assert_eq!(
             Err(PalError::Internal),
-            communication_module_a.process_in_message(in_message::Msg::DeliverMessage(
-                deliver_message_b_to_a.clone()
+            communication_module_a.process_in_message(in_message::Msg::DeliverSystemMessage(
+                deliver_system_message_b_to_a.clone()
             ))
         );
         // Both a and b are in Failed state, so receiving or sending any subsequent messages should
         // fail.
         assert_eq!(
             Err(PalError::Internal),
-            communication_module_a.process_in_message(in_message::Msg::DeliverMessage(
-                deliver_message_b_to_a.clone()
+            communication_module_a.process_in_message(in_message::Msg::DeliverSystemMessage(
+                deliver_system_message_b_to_a.clone()
             ))
         );
         assert_eq!(
             Err(PalError::Internal),
-            communication_module_b.process_in_message(in_message::Msg::DeliverMessage(
-                deliver_message_a_to_b.clone()
+            communication_module_b.process_in_message(in_message::Msg::DeliverSystemMessage(
+                deliver_system_message_a_to_b.clone()
             ))
         );
         assert_eq!(
             Err(PalError::Internal),
-            communication_module_a.process_out_message(out_message::Msg::DeliverMessage(
-                deliver_message_a_to_b.clone()
+            communication_module_a.process_out_message(out_message::Msg::DeliverSystemMessage(
+                deliver_system_message_a_to_b.clone()
             ))
         );
         assert_eq!(
             Err(PalError::Internal),
-            communication_module_b.process_out_message(out_message::Msg::DeliverMessage(
-                deliver_message_b_to_a.clone()
+            communication_module_b.process_out_message(out_message::Msg::DeliverSystemMessage(
+                deliver_system_message_b_to_a.clone()
             ))
         );
     }
