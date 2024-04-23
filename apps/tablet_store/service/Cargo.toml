@@ -6,7 +6,7 @@ license = "Apache-2.0"
 
 [features]
 default = []
-std = ["slog-term", "slog/std"]
+std = ["slog-term", "slog/std", "tcp_runtime/std"]
 
 [dependencies]
 prost = { workspace = true }

@@ -12,17 +12,13 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-use std::io::Result;
+extern crate prost;
+extern crate tcp_integration;
+extern crate tcp_proto;
+extern crate tcp_tablet_store_service;
 
-fn main() -> Result<()> {
-    micro_rpc_build::compile(
-        &["proto/tablet_store.proto"],
-        &["proto"],
-        micro_rpc_build::CompileOptions {
-            bytes: vec![".apps.tablet_store.service.TabletMetadata".to_string()],
-            extern_paths: vec![],
-            ..Default::default()
-        },
-    );
-    Ok(())
+#[cfg(all(test, feature = "std"))]
+mod test {
+    #[test]
+    fn integration() {}
 }

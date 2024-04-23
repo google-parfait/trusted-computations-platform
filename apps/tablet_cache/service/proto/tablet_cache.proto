@@ -53,8 +53,6 @@ message TabletCacheOutMessage {
 message ExecuteTabletOpsRequest {
   // The id of the node where leader of the Tablet Store runs.
   uint64 recipient_node_id = 1;
-  // The node id of the sender.
-  uint64 sender_node_id = 2;
 }
 
 // Response from Tablet Store to Tablet Cache.

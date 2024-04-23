@@ -102,6 +102,18 @@ impl ActorCommand {
             payload: Bytes::new(),
         }
     }
+
+    pub fn with_header_and_payload<H: Message + Sized>(
+        correlation_id: u64,
+        header: &H,
+        payload: Bytes,
+    ) -> ActorCommand {
+        ActorCommand {
+            correlation_id,
+            header: header.encode_to_vec().into(),
+            payload,
+        }
+    }
 }
 
 /// Represents an application level replicated event.

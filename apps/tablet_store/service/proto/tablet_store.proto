@@ -19,7 +19,7 @@ package apps.tablet_store.service;
 // Messages going into the Tablet Store. Carried as header of the deliver
 // application message.
 message TabletStoreInMessage {
-  oneof msg {
+  oneof in_msg {
     // Request to perform operation on tablets from Tablet Cache. Serialized and
     // encrypted tablet request is carried as payload.
     ExecuteTabletOpsRequest execute_tablet_ops_request = 1;
@@ -29,23 +29,38 @@ message TabletStoreInMessage {
 // Messages going from the Tablet Store. Carried as header of the deliver
 // application message.
 message TabletStoreOutMessage {
-  oneof msg {
+  oneof out_msg {
     // Response to perform operation on tablet to Tablet Cache. Serialized and
     // encrypted tablet response is carried as payload.
-    ExecuteTabletOpsResponse execute_tablet_ops_response = 2;
+    ExecuteTabletOpsResponse execute_tablet_ops_response = 1;
+    // Error to perform operation on tablet to Tablet Cache. Payload is empty.
+    ExecuteTabletOpsError execute_tablet_ops_error = 2;
   }
 }
 
 // Request from Tablet Cache to Tablet Store.
 message ExecuteTabletOpsRequest {
-  // The node id of the recipient.
-  uint64 recipient_node_id = 1;
   // The node id of the Tablet Store sending the request.
-  uint64 sender_node_id = 2;
+  uint64 sender_node_id = 1;
 }
 
 // Response from Tablet Store to Tablet Cache.
 message ExecuteTabletOpsResponse {}
+
+message ExecuteTabletOpsError {
+  ExecuteTabletOpsStatus status = 1;
+
+  string diagnostic_message = 2;
+}
+
+// Status of the tablets request processing.
+enum ExecuteTabletOpsStatus {
+  EXECUTE_TABLET_OPS_STATUS_UNSPECIFIED = 0;
+
+  EXECUTE_TABLET_OPS_STATUS_REJECT = 1;
+
+  EXECUTE_TABLET_OPS_STATUS_INVALID_OPERATION = 2;
+}
 
 // Request containing a number of tablet ops to execute as a
 // single transaction. Carried as payload of the deliver
@@ -73,6 +88,8 @@ enum TabletsRequestStatus {
   TABLETS_REQUEST_STATUS_SUCCEEDED = 1;
 
   TABLETS_REQUEST_STATUS_FAILED = 2;
+
+  TABLETS_REQUEST_STATUS_INVALID = 3;
 }
 
 // Op to execute against a table of the Tablet Store.
@@ -260,8 +277,8 @@ message TabletStoreSnapshot {
 
 // Snapshot of the table state in the Tablet Store for failure recovery.
 message TableSnapshot {
-  // Config of the table.
-  TableConfig table_config = 1;
+  // Name of the snapshotted table.
+  string table_name = 1;
 
   // Tablets that constitue the table.
   repeated TabletMetadata table_tablets = 2;
