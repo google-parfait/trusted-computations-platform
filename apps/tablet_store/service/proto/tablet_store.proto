@@ -57,7 +57,7 @@ message ExecuteTabletOpsError {
 enum ExecuteTabletOpsStatus {
   EXECUTE_TABLET_OPS_STATUS_UNSPECIFIED = 0;
 
-  EXECUTE_TABLET_OPS_STATUS_REJECT = 1;
+  EXECUTE_TABLET_OPS_STATUS_REJECTED = 1;
 
   EXECUTE_TABLET_OPS_STATUS_INVALID_OPERATION = 2;
 }
@@ -159,7 +159,7 @@ message TabletOpResult {
   // details are inside of the result.
   TabletOpStatus status = 1;
 
-  oneof result {
+  oneof op_result {
     ListTabletResult list_tablet = 2;
     CheckTabletResult check_tablet = 3;
     AddTabletResult add_tablet = 4;
@@ -170,11 +170,15 @@ message TabletOpResult {
 
 // Status of the tablet op processing.
 enum TabletOpStatus {
-  TABLET_ACTION_STATUS_UNSPECIFIED = 0;
+  TABLET_OP_STATUS_UNSPECIFIED = 0;
 
-  TABLET_ACTION_STATUS_SUCCEEDED = 1;
+  TABLET_OP_STATUS_SUCCEEDED = 1;
 
-  TABLET_ACTION_STATUS_FAILED = 2;
+  TABLET_OP_STATUS_FAILED = 2;
+
+  TABLET_OP_STATUS_ABORTED = 3;
+
+  TABLET_OP_STATUS_INVALID = 4;
 }
 
 // Result of listing tablets in a given consistent hashing ring of a table in
@@ -188,7 +192,7 @@ message ListTabletResult {
 // Result of checking if tablet at the time of execution is of the same version.
 message CheckTabletResult {
   // Current version of the tablet.
-  uint32 version = 1;
+  uint32 tablet_version = 1;
 }
 
 // Result of adding new tablet to the Tablet Store.
