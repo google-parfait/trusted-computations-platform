@@ -359,7 +359,15 @@ impl<C: TabletConfigurator> Actor for TabletStoreActor<C> {
         Ok(())
     }
 
-    fn on_process_command(&mut self, command: ActorCommand) -> Result<CommandOutcome, ActorError> {
+    fn on_process_command(
+        &mut self,
+        command: Option<ActorCommand>,
+    ) -> Result<CommandOutcome, ActorError> {
+        if command.is_none() {
+            return Ok(CommandOutcome::with_none());
+        }
+        let command = command.unwrap();
+
         if !self.get_context().leader() {
             return self.create_error_outcome(
                 "Rejecting command: not a leader".into(),
@@ -648,14 +656,14 @@ mod tests {
             .unwrap();
 
         let command_outcome = actor
-            .on_process_command(create_execute_tablet_ops_request(
+            .on_process_command(Some(create_execute_tablet_ops_request(
                 CORRELATION_ID_1,
                 vec![create_list_tablet_op(
                     TABLE_NAME.to_string(),
                     TABLET_ID_1 - 1,
                     TABLET_ID_2,
                 )],
-            ))
+            )))
             .unwrap();
 
         let event_outcome = actor
@@ -700,14 +708,14 @@ mod tests {
             .unwrap();
 
         let command_outcome = actor
-            .on_process_command(create_execute_tablet_ops_request(
+            .on_process_command(Some(create_execute_tablet_ops_request(
                 CORRELATION_ID_1,
                 vec![create_check_tablet_op(
                     TABLE_NAME.to_string(),
                     TABLET_ID_1,
                     TABLET_VERSION_1,
                 )],
-            ))
+            )))
             .unwrap();
 
         let event_outcome = actor
@@ -752,13 +760,13 @@ mod tests {
             .unwrap();
 
         let command_outcome = actor
-            .on_process_command(create_execute_tablet_ops_request(
+            .on_process_command(Some(create_execute_tablet_ops_request(
                 CORRELATION_ID_1,
                 vec![create_update_tablet_op(
                     TABLE_NAME.to_string(),
                     create_tablet_metadata(TABLET_ID_1, TABLET_VERSION_1 + 1),
                 )],
-            ))
+            )))
             .unwrap();
 
         let event_outcome = actor
@@ -803,7 +811,7 @@ mod tests {
             .unwrap();
 
         let command_outcome = actor
-            .on_process_command(create_execute_tablet_ops_request(
+            .on_process_command(Some(create_execute_tablet_ops_request(
                 CORRELATION_ID_1,
                 vec![
                     create_check_tablet_op(TABLE_NAME.to_string(), TABLET_ID_1, TABLET_VERSION_1),
@@ -812,7 +820,7 @@ mod tests {
                         create_tablet_metadata(TABLET_ID_1, TABLET_VERSION_1 + 1),
                     ),
                 ],
-            ))
+            )))
             .unwrap();
 
         let event_outcome = actor
@@ -860,7 +868,7 @@ mod tests {
             .unwrap();
 
         let command_outcome = actor
-            .on_process_command(create_execute_tablet_ops_request(
+            .on_process_command(Some(create_execute_tablet_ops_request(
                 CORRELATION_ID_1,
                 vec![
                     create_list_tablet_op(TABLE_NAME.to_string(), TABLET_ID_1 - 1, TABLET_ID_2),
@@ -874,7 +882,7 @@ mod tests {
                         create_tablet_metadata(TABLET_ID_1, TABLET_VERSION_1 - 1),
                     ),
                 ],
-            ))
+            )))
             .unwrap();
 
         let event_outcome = actor

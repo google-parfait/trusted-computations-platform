@@ -58,7 +58,10 @@ impl Actor for TabletCacheActor {
         Err(ActorError::Internal)
     }
 
-    fn on_process_command(&mut self, _command: ActorCommand) -> Result<CommandOutcome, ActorError> {
+    fn on_process_command(
+        &mut self,
+        _command: Option<ActorCommand>,
+    ) -> Result<CommandOutcome, ActorError> {
         Err(ActorError::Internal)
     }
 

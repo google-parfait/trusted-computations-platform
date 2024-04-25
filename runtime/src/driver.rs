@@ -983,17 +983,17 @@ impl<
 
     fn process_deliver_app_message(
         &mut self,
-        deliver_app_message: DeliverAppMessage,
+        deliver_app_message: Option<DeliverAppMessage>,
     ) -> Result<(), PalError> {
         self.check_driver_started()?;
 
         let message_outcome = self
             .actor
-            .on_process_command(ActorCommand {
-                correlation_id: deliver_app_message.correlation_id,
-                header: deliver_app_message.message_header,
-                payload: deliver_app_message.message_payload,
-            })
+            .on_process_command(deliver_app_message.map(|m| ActorCommand {
+                correlation_id: m.correlation_id,
+                header: m.message_header,
+                payload: m.message_payload,
+            }))
             .map_err(|e| {
                 error!(self.logger, "Failed to process actor command: {}", e);
 
@@ -1116,6 +1116,7 @@ impl<
         // dispatched for processing.
         self.preset_state_machine(instant);
 
+        let mut deliver_app_message_opt = None;
         // Dispatch incoming message for processing.
         if let Some(deserialized_message) = opt_message {
             match deserialized_message.msg {
@@ -1159,11 +1160,15 @@ impl<
                             self.process_secure_channel_handshake(secure_channel_handshake)
                         }
                         in_message::Msg::DeliverAppMessage(deliver_app_message) => {
-                            self.process_deliver_app_message(deliver_app_message)
+                            deliver_app_message_opt = Some(deliver_app_message);
+                            Ok(())
                         }
                     }?;
                 }
             };
+        }
+        if self.driver_state == DriverState::Started {
+            self.process_deliver_app_message(deliver_app_message_opt)?;
         }
 
         // Process snapshot transfer completion or failures.
@@ -1974,13 +1979,13 @@ mod test {
 
         fn expect_on_process_command(
             &mut self,
-            command: ActorCommand,
+            command: Option<ActorCommand>,
             result: Result<CommandOutcome, ActorError>,
         ) -> &mut DriverBuilder {
             self.mock_actor
                 .expect_on_process_command()
                 .with(eq(command))
-                .return_once(|_| result);
+                .returning(move |_| result.clone());
 
             self
         }
@@ -2096,6 +2101,7 @@ mod test {
         let mut driver = DriverBuilder::new()
             .expect_on_init(|_| Ok(()))
             .expect_on_save_snapshot(Ok(init_snapshot.clone()))
+            .expect_on_process_command(None, Ok(CommandOutcome::with_none()))
             .take(raft_builder, snapshot_builder, communication_builder);
 
         assert_eq!(
@@ -2145,6 +2151,7 @@ mod test {
         let mut driver = DriverBuilder::new()
             .expect_on_init(|_| Ok(()))
             .expect_on_save_snapshot(Ok(init_snapshot.clone()))
+            .expect_on_process_command(None, Ok(CommandOutcome::with_none()))
             .expect_on_shutdown(|| ())
             .take(raft_builder, snapshot_builder, communication_builder);
 
@@ -2225,23 +2232,24 @@ mod test {
         let mut driver = DriverBuilder::new()
             .expect_on_init(|_| Ok(()))
             .expect_on_save_snapshot(Ok(init_snapshot.clone()))
+            .expect_on_process_command(None, Ok(CommandOutcome::with_none()))
             .expect_on_process_command(
-                ActorCommand {
+                Some(ActorCommand {
                     correlation_id: correlation_id_1,
                     header: proposal_contents_1.clone(),
                     payload: Bytes::new(),
-                },
+                }),
                 Ok(CommandOutcome::with_event(ActorEvent {
                     correlation_id: correlation_id_1,
                     contents: proposal_contents_1.clone().into(),
                 })),
             )
             .expect_on_process_command(
-                ActorCommand {
+                Some(ActorCommand {
                     correlation_id: correlation_id_2,
                     header: proposal_contents_2.clone(),
                     payload: Bytes::new(),
-                },
+                }),
                 Ok(CommandOutcome::with_command(ActorCommand {
                     correlation_id: correlation_id_2,
                     header: proposal_result_2.clone().into(),
@@ -2328,6 +2336,7 @@ mod test {
                 Ok(())
             })
             .expect_on_save_snapshot(Ok(init_snapshot.clone()))
+            .expect_on_process_command(None, Ok(CommandOutcome::with_none()))
             .take(raft_builder, snapshot_builder, communication_builder);
 
         assert_eq!(
@@ -2385,6 +2394,7 @@ mod test {
         let mut driver = DriverBuilder::new()
             .expect_on_init(|_| Ok(()))
             .expect_on_save_snapshot(Ok(init_snapshot.clone()))
+            .expect_on_process_command(None, Ok(CommandOutcome::with_none()))
             .take(raft_builder, snapshot_builder, communication_builder);
 
         assert_eq!(
@@ -2457,6 +2467,7 @@ mod test {
         let mut driver = DriverBuilder::new()
             .expect_on_init(|_| Ok(()))
             .expect_on_save_snapshot(Ok(init_snapshot.clone()))
+            .expect_on_process_command(None, Ok(CommandOutcome::with_none()))
             .take(raft_builder, snapshot_builder, communication_builder);
 
         assert_eq!(
@@ -2585,6 +2596,7 @@ mod test {
             .expect_on_init(|_| Ok(()))
             .expect_on_save_snapshot(Ok(init_snapshot.clone()))
             .expect_on_load_snapshot(snapshot.data.into(), Ok(()))
+            .expect_on_process_command(None, Ok(CommandOutcome::with_none()))
             .expect_on_apply_event(
                 ActorEventContext {
                     index: committed_normal_entry.index,
@@ -2658,6 +2670,7 @@ mod test {
         let mut driver = DriverBuilder::new()
             .expect_on_init(|_| Ok(()))
             .expect_on_save_snapshot(Ok(init_snapshot.clone()))
+            .expect_on_process_command(None, Ok(CommandOutcome::with_none()))
             .take(raft_builder, snapshot_builder, communication_builder);
 
         assert_eq!(
@@ -2739,6 +2752,7 @@ mod test {
         let mut driver = DriverBuilder::new()
             .expect_on_init(|_| Ok(()))
             .expect_on_save_snapshot(Ok(init_snapshot.clone()))
+            .expect_on_process_command(None, Ok(CommandOutcome::with_none()))
             .take(raft_builder, snapshot_builder, communication_builder);
 
         assert_eq!(
@@ -2860,6 +2874,7 @@ mod test {
         let mut driver = DriverBuilder::new()
             .expect_on_init(|_| Ok(()))
             .expect_on_save_snapshot(Ok(init_snapshot.clone()))
+            .expect_on_process_command(None, Ok(CommandOutcome::with_none()))
             .expect_on_apply_event(
                 ActorEventContext {
                     index: committed_normal_entry.index,
@@ -2993,6 +3008,7 @@ mod test {
         let mut driver = DriverBuilder::new()
             .expect_on_init(|_| Ok(()))
             .expect_on_save_snapshot(Ok(init_snapshot.clone()))
+            .expect_on_process_command(None, Ok(CommandOutcome::with_none()))
             .take(raft_builder, snapshot_builder, communication_builder);
 
         assert_eq!(
@@ -3146,6 +3162,7 @@ mod test {
         let mut driver = DriverBuilder::new()
             .expect_on_init(|_| Ok(()))
             .expect_on_save_snapshot(Ok(init_snapshot.clone()))
+            .expect_on_process_command(None, Ok(CommandOutcome::with_none()))
             .take(raft_builder, snapshot_builder, communication_builder);
 
         assert_eq!(

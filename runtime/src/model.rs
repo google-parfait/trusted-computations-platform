@@ -25,7 +25,7 @@ use slog::Logger;
 
 /// Enumerates actor induced errors. Note that all errors indicate that
 /// actor cannot continue to operate and must be terminated.
-#[derive(Debug, PartialEq)]
+#[derive(Debug, PartialEq, Clone)]
 pub enum ActorError {
     /// An internal error.
     Internal,
@@ -165,6 +165,11 @@ pub struct CommandOutcome {
 }
 
 impl CommandOutcome {
+    /// Creates an outcome with nothing to be send out or replicated.
+    pub fn with_none() -> CommandOutcome {
+        CommandOutcome::default()
+    }
+
     /// Creates an outcome with a single command to be sent out.
     pub fn with_command(command: ActorCommand) -> CommandOutcome {
         CommandOutcome {
@@ -235,12 +240,16 @@ pub trait Actor {
     /// is considered is unknown state and is destroyed.
     fn on_load_snapshot(&mut self, snapshot: Bytes) -> Result<(), ActorError>;
 
-    /// Handles processing of a command by the actor. Command represents an intent of a
-    /// consumer (e.g. request to update actor state). The command processing logic may
-    /// decide to immediately respond (e.g. the command validation failed and cannot be
-    /// executed) or to propose an event for replication by the consensus module (e.g. the
-    /// event to update actor state once replicated).
-    fn on_process_command(&mut self, command: ActorCommand) -> Result<CommandOutcome, ActorError>;
+    /// Handles processing of a command by the actor. If not none the command represents
+    /// an intent of a consumer (e.g. request to update actor state). If none it
+    /// represents time advancement or tick. The command or tick processing logic may
+    /// decide to immediately respond (e.g. the command validation failed and cannot
+    /// be executed) or to propose an event for replication by the consensus module
+    /// (e.g. the event to update actor state once replicated).
+    fn on_process_command(
+        &mut self,
+        command: Option<ActorCommand>,
+    ) -> Result<CommandOutcome, ActorError>;
 
     /// Handles committed events by applying them to the actor state. Event represents
     /// a state transition of the actor and may result in messages being sent to the

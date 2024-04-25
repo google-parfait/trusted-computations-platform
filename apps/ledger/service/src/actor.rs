@@ -310,7 +310,14 @@ impl Actor for LedgerActor {
     /// decide to immediately respond (e.g. the command validation failed and cannot be
     /// executed) or to propose an event for replication by the consensus module (e.g. the
     /// event to update actor state once replicated).
-    fn on_process_command(&mut self, command: ActorCommand) -> Result<CommandOutcome, ActorError> {
+    fn on_process_command(
+        &mut self,
+        command: Option<ActorCommand>,
+    ) -> Result<CommandOutcome, ActorError> {
+        if command.is_none() {
+            return Ok(CommandOutcome::with_none());
+        }
+        let command = command.unwrap();
         let correlation_id = command.correlation_id;
         self.handle_command(command).or_else(|err| {
             Ok(CommandOutcome::with_command(ActorCommand::with_header(

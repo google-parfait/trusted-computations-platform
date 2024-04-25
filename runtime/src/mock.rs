@@ -56,7 +56,7 @@ mock! {
 
         fn on_load_snapshot(&mut self, snapshot: Bytes) -> Result<(), ActorError>;
 
-        fn on_process_command(&mut self, command: ActorCommand) -> Result<CommandOutcome, ActorError>;
+        fn on_process_command(&mut self, command: Option<ActorCommand>) -> Result<CommandOutcome, ActorError>;
 
         fn on_apply_event(&mut self, context: ActorEventContext, event: ActorEvent) -> Result<EventOutcome, ActorError>;
     }

@@ -166,7 +166,14 @@ impl Actor for CounterActor {
         Ok(())
     }
 
-    fn on_process_command(&mut self, command: ActorCommand) -> Result<CommandOutcome, ActorError> {
+    fn on_process_command(
+        &mut self,
+        command: Option<ActorCommand>,
+    ) -> Result<CommandOutcome, ActorError> {
+        if command.is_none() {
+            return Ok(CommandOutcome::with_none());
+        }
+        let command = command.unwrap();
         let mut response = CounterResponse {
             ..Default::default()
         };
