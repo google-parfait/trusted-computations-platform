@@ -2044,6 +2044,7 @@ dependencies = [
  "mockall",
  "prost 0.12.4",
  "prost-build 0.12.4",
+ "rand",
  "slog",
  "slog-term",
  "tcp_integration",

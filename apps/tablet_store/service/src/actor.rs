@@ -21,9 +21,11 @@ use alloc::format;
 use alloc::string::String;
 use alloc::string::ToString;
 use alloc::vec::Vec;
+use core::default;
 use core::mem::swap;
-use hashbrown::HashMap;
+use hashbrown::{HashMap, HashSet};
 use prost::{bytes::Bytes, Message};
+use rand::{rngs::OsRng, RngCore};
 use slog::{debug, warn};
 use tcp_runtime::model::{
     Actor, ActorCommand, ActorContext, ActorError, ActorEvent, ActorEventContext, CommandOutcome,
@@ -45,10 +47,22 @@ struct TableMetadata {
 }
 
 impl TableMetadata {
-    fn create(config: &TableConfig) -> TableMetadata {
+    fn create(config: &TableConfig, configurator: &mut dyn TabletConfigurator) -> TableMetadata {
+        let configured_tablets = configurator.generate(config.initial_tablet_count);
+        let mut tablets = HashMap::with_capacity(configured_tablets.len());
+        for tablet_id in configured_tablets {
+            tablets.insert(
+                tablet_id,
+                TabletMetadata {
+                    tablet_id,
+                    ..Default::default()
+                },
+            );
+        }
+
         TableMetadata {
             config: config.clone(),
-            tablets: HashMap::new(),
+            tablets,
         }
     }
 
@@ -154,15 +168,34 @@ impl TableMetadata {
     }
 }
 
-pub struct TabletStoreActor {
+pub trait TabletConfigurator {
+    fn generate(&mut self, initial_tablet_count: u32) -> Vec<u32>;
+}
+
+pub struct RandomTabletConfigurator {}
+
+impl TabletConfigurator for RandomTabletConfigurator {
+    fn generate(&mut self, initial_tablet_count: u32) -> Vec<u32> {
+        let tablet_count: usize = initial_tablet_count.try_into().unwrap();
+        let mut tablet_ids = HashSet::with_capacity(tablet_count);
+        while tablet_ids.len() < tablet_count {
+            tablet_ids.insert(OsRng.next_u32());
+        }
+        tablet_ids.into_iter().collect()
+    }
+}
+
+pub struct TabletStoreActor<C: TabletConfigurator> {
+    configurator: C,
     context: Option<Box<dyn ActorContext>>,
     config: TabletStoreConfig,
     tables: HashMap<String, TableMetadata>,
 }
 
-impl TabletStoreActor {
-    pub fn new() -> Self {
+impl<C: TabletConfigurator> TabletStoreActor<C> {
+    pub fn new(configurator: C) -> Self {
         TabletStoreActor {
+            configurator,
             context: None,
             config: TabletStoreConfig::default(),
             tables: HashMap::new(),
@@ -175,9 +208,7 @@ impl TabletStoreActor {
             .expect("Context is initialized")
             .as_mut()
     }
-}
 
-impl TabletStoreActor {
     fn create_error_outcome(
         &mut self,
         diagnostic_message: String,
@@ -279,7 +310,7 @@ impl TabletStoreActor {
     }
 }
 
-impl Actor for TabletStoreActor {
+impl<C: TabletConfigurator> Actor for TabletStoreActor<C> {
     fn on_init(&mut self, context: Box<dyn ActorContext>) -> Result<(), ActorError> {
         self.context = Some(context);
         self.config = TabletStoreConfig::decode(self.get_context().config().as_ref())
@@ -288,7 +319,7 @@ impl Actor for TabletStoreActor {
         for table_config in &self.config.table_configs {
             self.tables.insert(
                 table_config.table_name.clone(),
-                TableMetadata::create(table_config),
+                TableMetadata::create(table_config, &mut self.configurator),
             );
         }
 
@@ -394,8 +425,11 @@ impl Actor for TabletStoreActor {
 
 #[cfg(all(test, feature = "std"))]
 mod tests {
+    extern crate mockall;
+
     use super::*;
     use alloc::vec;
+    use mockall::{mock, predicate::*};
     use tcp_proto::runtime::endpoint::out_message;
     use tcp_runtime::logger::log::create_logger;
     use tcp_runtime::mock::MockActorContext;
@@ -405,8 +439,18 @@ mod tests {
     const TABLET_VERSION_1: u32 = 5;
     const TABLET_ID_2: u32 = 20;
     const TABLET_VERSION_2: u32 = 7;
+    const INITIAL_TABLET_COUNT: u32 = 3;
 
     const CORRELATION_ID_1: u64 = 11;
+
+    mock! {
+        TabletConfigurator {
+        }
+
+        impl TabletConfigurator for TabletConfigurator {
+            fn generate(&mut self, initial_tablet_count: u32) -> Vec<u32>;
+        }
+    }
 
     fn create_actor_config() -> TabletStoreConfig {
         TabletStoreConfig {
@@ -414,7 +458,7 @@ mod tests {
                 table_name: "A".to_string(),
                 max_tablet_size: 1024,
                 min_tablet_size: 512,
-                initial_tablet_count: 4,
+                initial_tablet_count: INITIAL_TABLET_COUNT,
             }],
         }
     }
@@ -547,7 +591,9 @@ mod tests {
         }
     }
 
-    fn create_actor(mut mock_context: MockActorContext) -> TabletStoreActor {
+    fn create_actor(
+        mut mock_context: MockActorContext,
+    ) -> TabletStoreActor<MockTabletConfigurator> {
         let config = create_actor_config();
         mock_context.expect_logger().return_const(create_logger());
         mock_context.expect_id().return_const(0u64);
@@ -555,7 +601,13 @@ mod tests {
             .expect_config()
             .return_const::<Bytes>(config.encode_to_vec().into());
 
-        let mut actor = TabletStoreActor::new();
+        let mut mock_tablet_configurator = MockTabletConfigurator::new();
+        mock_tablet_configurator
+            .expect_generate()
+            .with(eq(INITIAL_TABLET_COUNT))
+            .return_const(vec![1, 2, 3]);
+
+        let mut actor = TabletStoreActor::new(mock_tablet_configurator);
         assert_eq!(actor.on_init(Box::new(mock_context)), Ok(()));
         actor
     }

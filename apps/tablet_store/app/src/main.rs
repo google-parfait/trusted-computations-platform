@@ -28,7 +28,7 @@ use oak_restricted_kernel_sdk::{
 };
 use tcp_proto::runtime::endpoint::EndpointServiceServer;
 use tcp_runtime::service::ApplicationService;
-use tcp_tablet_store_service::actor::TabletStoreActor;
+use tcp_tablet_store_service::actor::{RandomTabletConfigurator, TabletStoreActor};
 
 #[entrypoint]
 fn run_server() -> ! {
@@ -37,8 +37,8 @@ fn run_server() -> ! {
     log::set_max_level(log::LevelFilter::Warn);
 
     let mut invocation_stats = StaticSampleStore::<1000>::new().unwrap();
-    let service: ApplicationService<TabletStoreActor> =
-        ApplicationService::new(TabletStoreActor::new());
+    let service: ApplicationService<TabletStoreActor<RandomTabletConfigurator>> =
+        ApplicationService::new(TabletStoreActor::new(RandomTabletConfigurator {}));
     let server = EndpointServiceServer::new(service);
     start_blocking_server(
         Box::<FileDescriptorChannel>::default(),
