@@ -178,6 +178,14 @@ impl CommandOutcome {
         }
     }
 
+    /// Creates an outcome with multiple commands to be sent out.
+    pub fn with_commands(commands: Vec<ActorCommand>) -> CommandOutcome {
+        CommandOutcome {
+            commands,
+            event: None,
+        }
+    }
+
     /// Creates an outcome with an event to be replicated.
     pub fn with_event(event: ActorEvent) -> CommandOutcome {
         CommandOutcome {
@@ -187,7 +195,7 @@ impl CommandOutcome {
     }
 
     /// Creates an outcome with a single command to be sent out and an event to be replicated.
-    pub fn with_message_and_event(command: ActorCommand, event: ActorEvent) -> CommandOutcome {
+    pub fn with_command_and_event(command: ActorCommand, event: ActorEvent) -> CommandOutcome {
         CommandOutcome {
             commands: vec![command],
             event: Some(event),

@@ -12,21 +12,41 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-use alloc::boxed::Box;
-use prost::bytes::Bytes;
+use crate::{
+    apps::tablet_cache::service::{
+        tablet_cache_in_message::*, tablet_cache_out_message::OutMsg, LoadTabletRequest,
+        LoadTabletResponse, PutKeyRequest, StoreTabletRequest, StoreTabletResponse,
+        TabletCacheConfig, TabletCacheInMessage, TabletCacheOutMessage,
+    },
+    store,
+    transaction::{self, TabletTransactionManager},
+};
+use alloc::{boxed::Box, rc::Rc, string::String, vec::Vec};
+use core::cell::RefCell;
+use prost::{bytes::Bytes, Message};
 use slog::debug;
 use tcp_runtime::model::{
     Actor, ActorCommand, ActorContext, ActorError, ActorEvent, ActorEventContext, CommandOutcome,
     EventOutcome,
 };
+use tcp_tablet_store_service::apps::tablet_store::service::{
+    ExecuteTabletOpsRequest, ExecuteTabletOpsResponse, TabletMetadata, TabletsRequest,
+    TabletsResponse,
+};
 
-pub struct TabletCacheActor {
+pub struct TabletCacheActor<T: transaction::TabletTransactionManager, S: store::KeyValueStore> {
+    transaction_manager: T,
+    key_value_store: S,
     context: Option<Box<dyn ActorContext>>,
 }
 
-impl TabletCacheActor {
-    pub fn new() -> Self {
-        TabletCacheActor { context: None }
+impl<T: transaction::TabletTransactionManager, S: store::KeyValueStore> TabletCacheActor<T, S> {
+    pub fn new(transaction_manager: T, key_value_store: S) -> Self {
+        TabletCacheActor {
+            transaction_manager,
+            key_value_store,
+            context: None,
+        }
     }
 
     fn get_context(&mut self) -> &mut dyn ActorContext {
@@ -35,34 +55,178 @@ impl TabletCacheActor {
             .expect("Context is initialized")
             .as_mut()
     }
+
+    fn command_with_proto<M: Message + Sized>(
+        correlation_id: u64,
+        out_header: OutMsg,
+        out_payload: M,
+    ) -> ActorCommand {
+        Self::command_with_bytes(
+            correlation_id,
+            out_header,
+            out_payload.encode_to_vec().into(),
+        )
+    }
+
+    fn command_with_bytes(
+        correlation_id: u64,
+        out_header: OutMsg,
+        out_payload: Bytes,
+    ) -> ActorCommand {
+        ActorCommand::with_header_and_payload(
+            correlation_id,
+            &TabletCacheOutMessage {
+                out_msg: Some(out_header),
+            },
+            out_payload,
+        )
+    }
 }
 
-impl Actor for TabletCacheActor {
-    fn on_init(&mut self, _context: Box<dyn ActorContext>) -> Result<(), ActorError> {
-        debug!(self.get_context().logger(), "Initializing");
+impl<T: transaction::TabletTransactionManager, S: store::KeyValueStore> Actor
+    for TabletCacheActor<T, S>
+{
+    fn on_init(&mut self, context: Box<dyn ActorContext>) -> Result<(), ActorError> {
+        self.context = Some(context);
 
-        Err(ActorError::Internal)
+        let config = TabletCacheConfig::decode(self.get_context().config().as_ref())
+            .map_err(|_| ActorError::ConfigLoading)?;
+
+        self.transaction_manager.init(config.tablet_cache_capacity);
+
+        debug!(self.get_context().logger(), "Initialized");
+
+        Ok(())
     }
 
     fn on_shutdown(&mut self) {}
 
     fn on_save_snapshot(&mut self) -> Result<Bytes, ActorError> {
-        debug!(self.get_context().logger(), "Saving snapshot");
-
-        Err(ActorError::Internal)
+        Ok(Bytes::new())
     }
 
     fn on_load_snapshot(&mut self, _snapshot: Bytes) -> Result<(), ActorError> {
-        debug!(self.get_context().logger(), "Loading snapshot");
-
-        Err(ActorError::Internal)
+        Ok(())
     }
 
     fn on_process_command(
         &mut self,
-        _command: Option<ActorCommand>,
+        command: Option<ActorCommand>,
     ) -> Result<CommandOutcome, ActorError> {
-        Err(ActorError::Internal)
+        if let Some(command) = command {
+            let in_header = match TabletCacheInMessage::decode(command.header.clone()) {
+                Ok(in_message) => in_message.in_msg,
+                Err(e) => {
+                    return Err(ActorError::Internal);
+                }
+            };
+
+            match in_header {
+                Some(oneof) => match oneof {
+                    InMsg::PutKeyRequest(request) => {
+                        self.key_value_store
+                            .process_request(store::KeyValueRequest::Put(
+                                command.correlation_id,
+                                request,
+                            ))
+                    }
+                    InMsg::GetKeyRequest(request) => {
+                        self.key_value_store
+                            .process_request(store::KeyValueRequest::Get(
+                                command.correlation_id,
+                                request,
+                            ))
+                    }
+                    InMsg::LoadTabletResponse(response) => self
+                        .transaction_manager
+                        .process_in_message(transaction::InMessage::LoadTabletResponse(
+                            command.correlation_id,
+                            response,
+                            command.payload,
+                        )),
+                    InMsg::StoreTabletResponse(response) => self
+                        .transaction_manager
+                        .process_in_message(transaction::InMessage::StoreTabletResponse(
+                            command.correlation_id,
+                            response,
+                        )),
+                    InMsg::ExecuteTabletOpsResponse(response) => {
+                        let tablets_response = TabletsResponse::decode(command.payload).unwrap();
+                        self.transaction_manager.process_in_message(
+                            transaction::InMessage::ExecuteTabletOpsResponse(
+                                command.correlation_id,
+                                response,
+                                tablets_response,
+                            ),
+                        )
+                    }
+                },
+                None => {
+                    return Err(ActorError::Internal);
+                }
+            };
+        }
+
+        let instant = self.get_context().instant();
+        self.key_value_store
+            .make_progress(instant, &mut self.transaction_manager);
+
+        let transaction_out_commands = self
+            .transaction_manager
+            .take_out_messages()
+            .into_iter()
+            .map(|m| match m {
+                transaction::OutMessage::LoadTabletRequest(correlation_id, load_tablet_request) => {
+                    Self::command_with_bytes(
+                        correlation_id,
+                        OutMsg::LoadTabletRequest(load_tablet_request),
+                        Bytes::new(),
+                    )
+                }
+                transaction::OutMessage::StoreTabletRequest(
+                    correlation_id,
+                    store_tablet_request,
+                    payload,
+                ) => Self::command_with_bytes(
+                    correlation_id,
+                    OutMsg::StoreTabletRequest(store_tablet_request),
+                    payload,
+                ),
+                transaction::OutMessage::ExecuteTabletOpsRequest(
+                    correlation_id,
+                    execute_tablet_ops_tequest,
+                    TabletsRequest,
+                ) => Self::command_with_proto(
+                    correlation_id,
+                    OutMsg::ExecuteTabletOpsRequest(execute_tablet_ops_tequest),
+                    TabletsRequest,
+                ),
+            });
+
+        let store_out_commands =
+            self.key_value_store
+                .take_responses()
+                .into_iter()
+                .map(|r| match r {
+                    store::KeyValueResponse::Put(correlation_id, put_response) => {
+                        Self::command_with_proto(
+                            correlation_id,
+                            OutMsg::PutKeyResponse(put_response),
+                            Bytes::new(),
+                        )
+                    }
+                    store::KeyValueResponse::Get(correlation_id, get_response) => {
+                        Self::command_with_proto(
+                            correlation_id,
+                            OutMsg::GetKeyResponse(get_response),
+                            Bytes::new(),
+                        )
+                    }
+                });
+
+        let mut out_commands = transaction_out_commands.chain(store_out_commands).collect();
+
+        Ok(CommandOutcome::with_commands(out_commands))
     }
 
     fn on_apply_event(
@@ -70,6 +234,6 @@ impl Actor for TabletCacheActor {
         _context: ActorEventContext,
         _event: ActorEvent,
     ) -> Result<EventOutcome, ActorError> {
-        Err(ActorError::Internal)
+        Ok(EventOutcome::with_none())
     }
 }

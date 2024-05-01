@@ -12,7 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-#![no_std]
+#![cfg_attr(not(feature = "std"), no_std)]
 #![feature(never_type)]
 
 extern crate alloc;
@@ -23,7 +23,7 @@ extern crate tcp_runtime;
 extern crate tcp_tablet_store_service;
 
 pub mod apps {
-    pub mod tablet_store {
+    pub mod tablet_cache {
         pub mod service {
             include!(concat!(env!("OUT_DIR"), "/apps.tablet_cache.service.rs"));
         }
@@ -31,3 +31,5 @@ pub mod apps {
 }
 
 pub mod actor;
+pub mod store;
+pub mod transaction;

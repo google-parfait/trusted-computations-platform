@@ -19,7 +19,7 @@ package apps.tablet_cache.service;
 // Messages going into the Tablet Cache. Carried as header of the deliver
 // application message.
 message TabletCacheInMessage {
-  oneof msg {
+  oneof in_msg {
     PutKeyRequest put_key_request = 1;
     GetKeyRequest get_key_request = 2;
     // Response to tablet loading request. Tablet blob is carried as payload.
@@ -35,11 +35,11 @@ message TabletCacheInMessage {
 // Messages going from the Tablet Cache. Carried as header of the deliver
 // application message.
 message TabletCacheOutMessage {
-  oneof msg {
+  oneof out_msg {
     PutKeyResponse put_key_response = 1;
     GetKeyResponse get_key_response = 2;
     // Request to load tablet from Tablet Data Storage.
-    LoadTabletRequest load_blob_request = 3;
+    LoadTabletRequest load_tablet_request = 3;
     // Request to store tablet in Tablet Data Storage. Tablet blob is carried as
     // payload.
     StoreTabletRequest store_tablet_request = 4;
@@ -127,4 +127,7 @@ message GetKeyResponse {
 }
 
 // Configuration for the Tablet Cache.
-message TabletCacheConfig {}
+message TabletCacheConfig {
+  // Maximum size in bytes of the tablet cache capacity.
+  uint64 tablet_cache_capacity = 1;
+}
