@@ -26,6 +26,7 @@ use crate::util::raft::{
 use alloc::boxed::Box;
 use alloc::rc::Rc;
 use alloc::vec::Vec;
+use core::convert::TryFrom;
 use core::{
     cell::{RefCell, RefMut},
     cmp, mem,
@@ -738,13 +739,12 @@ impl<
     ) -> Result<(), PalError> {
         self.check_driver_started()?;
 
-        let change_status = match ChangeClusterType::from_i32(change_cluster_request.change_type) {
-            Some(ChangeClusterType::ChangeTypeAddReplica) => self
-                .make_raft_config_change_proposal(
-                    change_cluster_request.replica_id,
-                    RaftConfigChangeType::AddNode,
-                )?,
-            Some(ChangeClusterType::ChangeTypeRemoveReplica) => self
+        let change_status = match ChangeClusterType::try_from(change_cluster_request.change_type) {
+            Ok(ChangeClusterType::ChangeTypeAddReplica) => self.make_raft_config_change_proposal(
+                change_cluster_request.replica_id,
+                RaftConfigChangeType::AddNode,
+            )?,
+            Ok(ChangeClusterType::ChangeTypeRemoveReplica) => self
                 .make_raft_config_change_proposal(
                     change_cluster_request.replica_id,
                     RaftConfigChangeType::RemoveNode,
@@ -1127,11 +1127,9 @@ impl<
                 }
                 Some(mut message) => {
                     match message {
-                        in_message::Msg::StartReplica(ref mut start_node_request) => self
-                            .process_start_node(
-                                start_node_request,
-                                host.get_self_attestation().public_signing_key(),
-                            ),
+                        in_message::Msg::StartReplica(ref mut start_node_request) => {
+                            self.process_start_node(start_node_request, host.public_signing_key())
+                        }
                         in_message::Msg::StopReplica(ref stop_node_request) => {
                             self.process_stop_node(stop_node_request)
                         }
@@ -1215,9 +1213,7 @@ mod test {
 
     use self::mockall::predicate::{always, eq};
     use super::*;
-    use mock::{
-        MockActor, MockAttestation, MockCommunicationModule, MockHost, MockRaft, MockStore,
-    };
+    use mock::{MockActor, MockCommunicationModule, MockHost, MockRaft, MockStore};
     use model::ActorError;
     use raft::eraftpb::{
         ConfChange as RaftConfigChange, EntryType as RaftEntryType, MessageType as RaftMessageType,
@@ -1488,14 +1484,12 @@ mod test {
     const DELIVERY_2: u64 = 2;
 
     struct MockHostBuilder {
-        mock_attestation: MockAttestation,
         mock_host: MockHost,
     }
 
     impl MockHostBuilder {
         fn new() -> MockHostBuilder {
             MockHostBuilder {
-                mock_attestation: MockAttestation::new(),
                 mock_host: MockHost::new(),
             }
         }
@@ -1504,7 +1498,7 @@ mod test {
             &mut self,
             public_signing_key: Vec<u8>,
         ) -> &mut MockHostBuilder {
-            self.mock_attestation
+            self.mock_host
                 .expect_public_signing_key()
                 .return_once(move || public_signing_key);
             self
@@ -1523,18 +1517,7 @@ mod test {
         }
 
         fn take(&mut self) -> MockHost {
-            let mock_attestation = mem::take(&mut self.mock_attestation);
-            let mut mock_host = mem::take(&mut self.mock_host);
-
-            mock_host
-                .expect_get_self_attestation()
-                .return_once(move || Box::new(mock_attestation));
-
-            mock_host
-                .expect_get_self_config()
-                .return_const(create_actor_config());
-
-            mock_host
+            mem::take(&mut self.mock_host)
         }
     }
 

@@ -25,7 +25,7 @@ use model::{
     Actor, ActorCommand, ActorContext, ActorError, ActorEvent, ActorEventContext, CommandOutcome,
     EventOutcome,
 };
-use platform::{Attestation, Host, PalError};
+use platform::{Host, PalError};
 use prost::bytes::Bytes;
 use raft::{
     eraftpb::ConfChange as RaftConfigChange, eraftpb::ConfState as RaftConfigState,
@@ -83,29 +83,7 @@ mock! {
     }
 
     impl Host for Host {
-        fn get_self_attestation(&self) -> Box<dyn Attestation>;
-
-        fn get_self_config(&self) -> Vec<u8>;
-
         fn send_messages(&mut self, messages: Vec<OutMessage>);
-
-        fn verify_peer_attestation(
-            &self,
-            peer_attestation: &[u8],
-        ) -> Result<Box<dyn Attestation>, PalError>;
-    }
-}
-
-mock! {
-    pub Attestation {
-    }
-
-    impl Attestation for Attestation {
-        fn serialize(&self) -> Result<Vec<u8>, PalError>;
-
-        fn sign(&self, data: &[u8]) -> Result<Vec<u8>, PalError>;
-
-        fn verify(&self, data: &[u8], signature: &[u8]) -> Result<(), PalError>;
 
         fn public_signing_key(&self) -> Vec<u8>;
     }

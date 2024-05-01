@@ -19,7 +19,7 @@ extern crate tcp_proto;
 
 use crate::communication::DefaultCommunicationModule;
 use crate::model::Actor;
-use crate::platform::{Application, Attestation, Host, PalError};
+use crate::platform::{Application, Host};
 use crate::snapshot::{DefaultSnapshotReceiver, DefaultSnapshotSender};
 use crate::{
     consensus::RaftSimple, driver::Driver, snapshot::DefaultSnapshotProcessor,
@@ -50,36 +50,8 @@ impl ApplicationHost {
 }
 
 impl Host for ApplicationHost {
-    fn get_self_attestation(&self) -> Box<dyn Attestation> {
-        Box::new(ApplicationAttestation {})
-    }
-
-    fn get_self_config(&self) -> Vec<u8> {
-        Vec::new()
-    }
-
     fn send_messages(&mut self, mut messages: Vec<OutMessage>) {
         self.messages.append(&mut messages)
-    }
-
-    fn verify_peer_attestation(&self, _: &[u8]) -> Result<Box<dyn Attestation>, PalError> {
-        todo!()
-    }
-}
-
-struct ApplicationAttestation {}
-
-impl Attestation for ApplicationAttestation {
-    fn serialize(&self) -> Result<Vec<u8>, PalError> {
-        todo!()
-    }
-
-    fn sign(&self, _data: &[u8]) -> Result<Vec<u8>, PalError> {
-        todo!()
-    }
-
-    fn verify(&self, _data: &[u8], _signature: &[u8]) -> Result<(), PalError> {
-        todo!()
     }
 
     fn public_signing_key(&self) -> Vec<u8> {

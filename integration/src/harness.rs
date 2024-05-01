@@ -25,7 +25,7 @@ use tcp_runtime::communication::DefaultCommunicationModule;
 use tcp_runtime::driver::Driver;
 use tcp_runtime::logger::log::create_logger;
 use tcp_runtime::model::Actor;
-use tcp_runtime::platform::{Application, Attestation, Host, PalError};
+use tcp_runtime::platform::{Application, Host};
 use tcp_runtime::snapshot::{
     DefaultSnapshotProcessor, DefaultSnapshotReceiver, DefaultSnapshotSender,
 };
@@ -391,39 +391,8 @@ impl FakeHost {
 }
 
 impl Host for FakeHost {
-    fn get_self_attestation(&self) -> Box<dyn Attestation> {
-        Box::new(FakeAttestation {})
-    }
-
-    fn get_self_config(&self) -> Vec<u8> {
-        self.config.clone().into()
-    }
-
     fn send_messages(&mut self, mut messages: Vec<OutMessage>) {
         self.messages_out.append(&mut messages);
-    }
-
-    fn verify_peer_attestation(
-        &self,
-        _peer_attestation: &[u8],
-    ) -> Result<Box<dyn Attestation>, PalError> {
-        todo!()
-    }
-}
-
-struct FakeAttestation {}
-
-impl Attestation for FakeAttestation {
-    fn serialize(&self) -> Result<Vec<u8>, PalError> {
-        todo!()
-    }
-
-    fn sign(&self, _data: &[u8]) -> Result<Vec<u8>, PalError> {
-        todo!()
-    }
-
-    fn verify(&self, _data: &[u8], _signature: &[u8]) -> Result<(), PalError> {
-        todo!()
     }
 
     fn public_signing_key(&self) -> Vec<u8> {
