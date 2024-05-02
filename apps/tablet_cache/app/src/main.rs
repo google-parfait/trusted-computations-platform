@@ -28,7 +28,10 @@ use oak_restricted_kernel_sdk::{
 };
 use tcp_proto::runtime::endpoint::EndpointServiceServer;
 use tcp_runtime::service::ApplicationService;
-use tcp_tablet_cache_service::actor::TabletCacheActor;
+use tcp_tablet_cache_service::{
+    actor::TabletCacheActor, store::SimpleKeyValueStore,
+    transaction::SimpleTabletTransactionManager,
+};
 
 #[entrypoint]
 fn run_server() -> ! {
@@ -37,8 +40,12 @@ fn run_server() -> ! {
     log::set_max_level(log::LevelFilter::Warn);
 
     let mut invocation_stats = StaticSampleStore::<1000>::new().unwrap();
-    let service: ApplicationService<TabletCacheActor> =
-        ApplicationService::new(TabletCacheActor::new());
+    let service: ApplicationService<
+        TabletCacheActor<SimpleTabletTransactionManager, SimpleKeyValueStore>,
+    > = ApplicationService::new(TabletCacheActor::new(
+        SimpleTabletTransactionManager::new(),
+        SimpleKeyValueStore::new(),
+    ));
     let server = EndpointServiceServer::new(service);
     start_blocking_server(
         Box::<FileDescriptorChannel>::default(),
