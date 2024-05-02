@@ -18,7 +18,6 @@ package ledger.service;
 
 import "google/protobuf/timestamp.proto";
 import "ledger.proto";
-import "micro_rpc/messages.proto";
 
 // This message contains details about the created public/private keypair
 // that haven't been committed yet. The goal to ensure that the key is
@@ -129,6 +128,12 @@ message LedgerEvent {
 
 // Response from the Trusted Ledger with a result of an operation.
 message LedgerResponse {
+  // Error status similar to google.rpc.Status.
+  message Status {
+    int32 code = 1;
+    string message = 2;
+  }
+
   oneof response {
     // Response for CreateKeyRequest.
     fcp.confidentialcompute.CreateKeyResponse create_key = 1;
@@ -139,7 +144,7 @@ message LedgerResponse {
     // Response for RevokeAccessRequest.
     fcp.confidentialcompute.RevokeAccessResponse revoke_access = 4;
     // Error response for all requests.
-    micro_rpc_proto.Status error = 5;
+    Status error = 5;
   }
 }
 

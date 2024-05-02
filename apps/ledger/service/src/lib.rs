@@ -22,10 +22,6 @@ extern crate slog;
 extern crate tcp_proto;
 extern crate tcp_runtime;
 
-pub mod micro_rpc_proto {
-    include!(concat!(env!("OUT_DIR"), "/micro_rpc_proto.rs"));
-}
-
 pub mod actor;
 pub mod attestation;
 pub mod ledger;

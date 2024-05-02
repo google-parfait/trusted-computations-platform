@@ -15,7 +15,6 @@
 use crate::ledger::service::*;
 use crate::ledger::service::{ledger_event::*, ledger_request::*, ledger_response::*};
 use crate::ledger::{Ledger, LedgerService};
-use crate::micro_rpc_proto::Status as StatusProto;
 
 use alloc::boxed::Box;
 use oak_restricted_kernel_sdk::{attestation::EvidenceProvider, crypto::Signer};
@@ -235,7 +234,7 @@ impl LedgerEvent {
 impl LedgerResponse {
     fn with_error(error: micro_rpc::Status) -> LedgerResponse {
         LedgerResponse {
-            response: Some(Response::Error(StatusProto {
+            response: Some(Response::Error(ledger_response::Status {
                 code: error.code as i32,
                 message: error.message.into(),
             })),
