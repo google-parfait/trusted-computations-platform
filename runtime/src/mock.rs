@@ -21,6 +21,7 @@ use self::mockall::mock;
 use communication::CommunicationModule;
 use consensus;
 use consensus::{Raft, RaftLightReady, RaftReady, Store};
+use handshake::{HandshakeSession, HandshakeSessionProvider, Role};
 use model::{
     Actor, ActorCommand, ActorContext, ActorError, ActorEvent, ActorEventContext, CommandOutcome,
     EventOutcome,
@@ -40,7 +41,7 @@ use snapshot::{
 };
 use tcp_proto::runtime::endpoint::{
     in_message, out_message, raft_config::SnapshotConfig, DeliverSnapshotRequest,
-    DeliverSnapshotResponse, OutMessage,
+    DeliverSnapshotResponse, OutMessage, SecureChannelHandshake,
 };
 
 mock! {
@@ -251,5 +252,32 @@ mock! {
         ) -> Result<Option<in_message::Msg>, PalError>;
 
         fn take_out_messages(&mut self) -> Vec<OutMessage>;
+    }
+}
+
+mock! {
+    pub HandshakeSessionProvider {
+    }
+
+    impl HandshakeSessionProvider for HandshakeSessionProvider {
+        fn get(
+            &self,
+            self_replica_id: u64,
+            peer_replica_id: u64,
+            role: Role,
+        ) -> Box<dyn HandshakeSession>;
+    }
+}
+
+mock! {
+    pub HandshakeSession {
+    }
+
+    impl HandshakeSession for HandshakeSession {
+        fn process_message(&mut self, message: &SecureChannelHandshake) -> Result<(), PalError>;
+
+        fn take_out_message(&mut self) -> Option<SecureChannelHandshake>;
+
+        fn is_completed(&self) -> bool;
     }
 }

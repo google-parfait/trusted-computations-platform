@@ -18,6 +18,7 @@ extern crate prost;
 extern crate tcp_proto;
 
 use crate::communication::DefaultCommunicationModule;
+use crate::handshake::DefaultHandshakeSessionProvider;
 use crate::model::Actor;
 use crate::platform::{Application, Host};
 use crate::snapshot::{DefaultSnapshotReceiver, DefaultSnapshotSender};
@@ -80,7 +81,7 @@ impl<A: Actor> ApplicationService<A> {
                     Box::new(DefaultSnapshotReceiver::new()),
                 ),
                 actor,
-                DefaultCommunicationModule::new(),
+                DefaultCommunicationModule::new(Box::new(DefaultHandshakeSessionProvider {})),
             ),
         }
     }

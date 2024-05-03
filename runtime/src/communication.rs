@@ -14,9 +14,13 @@
 
 use core::mem;
 
-use crate::{logger::log::create_logger, platform::PalError};
-use alloc::vec;
+use crate::{
+    handshake::{HandshakeSession, HandshakeSessionProvider, Role},
+    logger::log::create_logger,
+    platform::PalError,
+};
 use alloc::vec::Vec;
+use alloc::{boxed::Box, vec};
 use hashbrown::HashMap;
 use slog::{warn, Logger};
 use tcp_proto::runtime::endpoint::*;
@@ -73,14 +77,16 @@ pub struct DefaultCommunicationModule {
     replicas: HashMap<u64, CommunicationState>,
     // Self replica_id.
     replica_id: u64,
+    handshake_session_provider: Box<dyn HandshakeSessionProvider>,
 }
 
 impl DefaultCommunicationModule {
-    pub fn new() -> Self {
+    pub fn new(handshake_session_provider: Box<dyn HandshakeSessionProvider>) -> Self {
         Self {
             logger: create_logger(),
             replicas: HashMap::new(),
             replica_id: 0,
+            handshake_session_provider,
         }
     }
 
@@ -116,14 +122,18 @@ impl CommunicationModule for DefaultCommunicationModule {
             }
         };
 
-        let replica_state =
-            self.replicas
-                .entry(peer_replica_id)
-                .or_insert(CommunicationState::new(
-                    self.logger.clone(),
-                    self.replica_id,
-                    peer_replica_id,
-                ));
+        // We need to store references in local variables below to avoid immutably borrowing "self"
+        // in the closure passed to "or_insert_with". "self" is mutably borrowed in
+        // "self.replicas.entry(...)" so it cannot be immutably borrowed in the closure again.
+        let logger = &self.logger;
+        let handshake_provider = &self.handshake_session_provider;
+        let replica_id = self.replica_id;
+        let replica_state = self.replicas.entry(peer_replica_id).or_insert_with(|| {
+            CommunicationState::new(
+                logger.clone(),
+                handshake_provider.get(replica_id, peer_replica_id, Role::Initiator),
+            )
+        });
         replica_state.process_out_message(message)
     }
 
@@ -152,14 +162,18 @@ impl CommunicationModule for DefaultCommunicationModule {
             }
         };
 
-        let replica_state =
-            self.replicas
-                .entry(peer_replica_id)
-                .or_insert(CommunicationState::new(
-                    self.logger.clone(),
-                    self.replica_id,
-                    peer_replica_id,
-                ));
+        // We need to store references in local variables below to avoid immutably borrowing "self"
+        // in the closure passed to "or_insert_with". "self" is mutably borrowed in
+        // "self.replicas.entry(...)" so it cannot be immutably borrowed in the closure again.
+        let logger = &self.logger;
+        let handshake_provider = &self.handshake_session_provider;
+        let replica_id = self.replica_id;
+        let replica_state = self.replicas.entry(peer_replica_id).or_insert_with(|| {
+            CommunicationState::new(
+                logger.clone(),
+                handshake_provider.get(replica_id, peer_replica_id, Role::Recipient),
+            )
+        });
         replica_state.process_in_message(message)
     }
 
@@ -175,10 +189,9 @@ impl CommunicationModule for DefaultCommunicationModule {
 // Manages communication with a given peer replica.
 pub struct CommunicationState {
     logger: Logger,
-    peer_replica_id: u64,
-    self_replica_id: u64,
     handshake_state: HandshakeState,
     pending_handshake_message: Option<SecureChannelHandshake>,
+    handshake_session: Box<dyn HandshakeSession>,
     // Unencrypted stashed messages that will be encrypted and sent out once
     // handshake completes.
     unencrypted_messages: Vec<OutMessage>,
@@ -199,51 +212,36 @@ enum HandshakeState {
 impl CommunicationState {
     // Create the ReplicaCommunicationState. This happens the first time a
     // message is sent to or received from a peer replica.
-    fn new(logger: Logger, self_replica_id: u64, peer_replica_id: u64) -> Self {
+    fn new(logger: Logger, handshake_session: Box<dyn HandshakeSession>) -> Self {
         Self {
             logger,
-            self_replica_id,
-            peer_replica_id,
             handshake_state: HandshakeState::Unknown,
             pending_handshake_message: None,
+            handshake_session,
             unencrypted_messages: Vec::new(),
-        }
-    }
-
-    fn set_handshake_message(&mut self) {
-        if self.pending_handshake_message == None {
-            self.pending_handshake_message = Some(SecureChannelHandshake {
-                recipient_replica_id: self.peer_replica_id,
-                sender_replica_id: self.self_replica_id,
-                encryption: None,
-            });
         }
     }
 
     fn process_out_message(&mut self, message: out_message::Msg) -> Result<(), PalError> {
         match &self.handshake_state {
             HandshakeState::Unknown => {
-                self.set_handshake_message();
+                self.pending_handshake_message = self.handshake_session.take_out_message();
+                if self.pending_handshake_message.is_none() {
+                    warn!(self.logger, "No initial handshake message found.");
+                    return Err(PalError::Internal);
+                }
                 self.unencrypted_messages
                     .push(OutMessage { msg: Some(message) });
                 self.handshake_state = HandshakeState::Initiated;
                 Ok(())
             }
-            HandshakeState::Initiated => {
-                self.unencrypted_messages
-                    .push(OutMessage { msg: Some(message) });
-                Ok(())
-            }
-            HandshakeState::Completed => {
+            HandshakeState::Initiated | HandshakeState::Completed => {
                 self.unencrypted_messages
                     .push(OutMessage { msg: Some(message) });
                 Ok(())
             }
             HandshakeState::Failed => {
-                warn!(
-                    self.logger,
-                    "Handshake failed with peer {}", self.peer_replica_id
-                );
+                warn!(self.logger, "HandshakeState Failed.");
                 return Err(PalError::Internal);
             }
         }
@@ -254,40 +252,23 @@ impl CommunicationState {
         message: in_message::Msg,
     ) -> Result<Option<in_message::Msg>, PalError> {
         match &self.handshake_state {
-            HandshakeState::Unknown => {
+            HandshakeState::Unknown | HandshakeState::Initiated => {
                 match message {
-                    // First message must be a handshake message.
-                    in_message::Msg::SecureChannelHandshake(_) => {
-                        // TODO: Verify attestation report.
-                        self.set_handshake_message();
-                        // Transition from Unknown->Completed state on the recipient side
-                        // since a handshake request was successfully received and verified,
-                        // and a handshake response has been set to be sent back to the sender.
-                        self.handshake_state = HandshakeState::Completed;
+                    // Messages in Unknown/Initiated state must be handshake messages.
+                    in_message::Msg::SecureChannelHandshake(handshake_message) => {
+                        self.handshake_session.process_message(&handshake_message)?;
+                        self.pending_handshake_message = self.handshake_session.take_out_message();
+                        if self.handshake_session.is_completed() {
+                            self.handshake_state = HandshakeState::Completed;
+                        } else {
+                            self.handshake_state = HandshakeState::Initiated;
+                        }
                         Ok(None)
                     }
                     _ => {
                         warn!(
                             self.logger,
-                            "First message must be SecureChannelHandshake but found {:?}", message
-                        );
-                        self.handshake_state = HandshakeState::Failed;
-                        return Err(PalError::Internal);
-                    }
-                }
-            }
-            HandshakeState::Initiated => {
-                match message {
-                    // First message must be a handshake message.
-                    in_message::Msg::SecureChannelHandshake(_) => {
-                        // TODO: Verify attestation report.
-                        self.handshake_state = HandshakeState::Completed;
-                        Ok(None)
-                    }
-                    _ => {
-                        warn!(
-                            self.logger,
-                            "First message must be SecureChannelHandshake but found {:?}", message
+                            "Message must be SecureChannelHandshake but found {:?}", message
                         );
                         self.handshake_state = HandshakeState::Failed;
                         return Err(PalError::Internal);
@@ -299,10 +280,7 @@ impl CommunicationState {
                 Ok(Some(message))
             }
             HandshakeState::Failed => {
-                warn!(
-                    self.logger,
-                    "Handshake failed with peer {}", self.peer_replica_id
-                );
+                warn!(self.logger, "HandshakeState Failed.");
                 return Err(PalError::Internal);
             }
         }
@@ -326,14 +304,20 @@ impl CommunicationState {
 
 #[cfg(all(test, feature = "std"))]
 mod test {
+    extern crate mockall;
+
+    use self::mockall::predicate::eq;
     use crate::{
         communication::{CommunicationModule, DefaultCommunicationModule},
         platform::PalError,
     };
     use alloc::vec;
     use alloc::vec::Vec;
+    use communication::mem;
+    use handshake::Role;
+    use mock::{MockHandshakeSession, MockHandshakeSessionProvider};
     use prost::bytes::Bytes;
-    use tcp_proto::runtime::endpoint::*;
+    use tcp_proto::runtime::endpoint::{secure_channel_handshake::NoiseProtocol, *};
 
     fn create_deliver_system_message(
         sender_replica_id: u64,
@@ -395,30 +379,115 @@ mod test {
         })
     }
 
+    struct HandshakeSessionProviderBuilder {
+        mock_handshake_session_provider: MockHandshakeSessionProvider,
+    }
+
+    impl HandshakeSessionProviderBuilder {
+        fn new() -> HandshakeSessionProviderBuilder {
+            HandshakeSessionProviderBuilder {
+                mock_handshake_session_provider: MockHandshakeSessionProvider::new(),
+            }
+        }
+
+        fn expect_get(
+            mut self,
+            self_replica_id: u64,
+            peer_replica_id: u64,
+            role: Role,
+            mock_handshake_session: MockHandshakeSession,
+        ) -> HandshakeSessionProviderBuilder {
+            self.mock_handshake_session_provider
+                .expect_get()
+                .with(eq(self_replica_id), eq(peer_replica_id), eq(role))
+                .return_once(move |_, _, _| Box::new(mock_handshake_session));
+            self
+        }
+
+        fn take(mut self) -> MockHandshakeSessionProvider {
+            mem::take(&mut self.mock_handshake_session_provider)
+        }
+    }
+
+    struct HandshakeSessionBuilder {
+        mock_handshake_session: MockHandshakeSession,
+    }
+
+    impl HandshakeSessionBuilder {
+        fn new() -> HandshakeSessionBuilder {
+            HandshakeSessionBuilder {
+                mock_handshake_session: MockHandshakeSession::new(),
+            }
+        }
+
+        fn expect_process_message(
+            mut self,
+            message: SecureChannelHandshake,
+            result: Result<(), PalError>,
+        ) -> HandshakeSessionBuilder {
+            self.mock_handshake_session
+                .expect_process_message()
+                .with(eq(message))
+                .return_once(move |_| result);
+            self
+        }
+
+        fn expect_take_out_message(
+            mut self,
+            message: Option<SecureChannelHandshake>,
+        ) -> HandshakeSessionBuilder {
+            self.mock_handshake_session
+                .expect_take_out_message()
+                .once()
+                .return_const(message);
+
+            self
+        }
+
+        fn expect_is_completed(mut self, is_completed: bool) -> HandshakeSessionBuilder {
+            self.mock_handshake_session
+                .expect_is_completed()
+                .once()
+                .return_const(is_completed);
+            self
+        }
+
+        fn take(mut self) -> MockHandshakeSession {
+            mem::take(&mut self.mock_handshake_session)
+        }
+    }
+
     #[test]
     fn test_process_out_message() {
-        let mut communication_module = DefaultCommunicationModule::new();
         let self_replica_id = 11111;
         let peer_replica_id_a = 88888;
         let peer_replica_id_b = 99999;
-        let handshake_message_a = OutMessage {
-            msg: Some(out_message::Msg::SecureChannelHandshake(
-                SecureChannelHandshake {
-                    recipient_replica_id: peer_replica_id_a,
-                    sender_replica_id: self_replica_id,
-                    encryption: None,
-                },
-            )),
-        };
-        let handshake_message_b = OutMessage {
-            msg: Some(out_message::Msg::SecureChannelHandshake(
-                SecureChannelHandshake {
-                    recipient_replica_id: peer_replica_id_b,
-                    sender_replica_id: self_replica_id,
-                    encryption: None,
-                },
-            )),
-        };
+        let handshake_message_a =
+            create_secure_channel_handshake(self_replica_id, peer_replica_id_a);
+        let handshake_message_b =
+            create_secure_channel_handshake(self_replica_id, peer_replica_id_b);
+        let mock_handshake_session_a = HandshakeSessionBuilder::new()
+            .expect_take_out_message(Some(handshake_message_a.clone()))
+            .take();
+        let mock_handshake_session_b = HandshakeSessionBuilder::new()
+            .expect_take_out_message(Some(handshake_message_b.clone()))
+            .take();
+        let mock_handshake_session_provider = HandshakeSessionProviderBuilder::new()
+            .expect_get(
+                self_replica_id,
+                peer_replica_id_a,
+                Role::Initiator,
+                mock_handshake_session_a,
+            )
+            .expect_get(
+                self_replica_id,
+                peer_replica_id_b,
+                Role::Initiator,
+                mock_handshake_session_b,
+            )
+            .take();
+        let mut communication_module =
+            DefaultCommunicationModule::new(Box::new(mock_handshake_session_provider));
 
         // Invoking `process_out_message` before `init` should fail.
         assert_eq!(
@@ -459,35 +528,57 @@ mod test {
             communication_module.process_out_message(create_unsupported_out_message())
         );
         assert_eq!(
-            vec![handshake_message_a, handshake_message_b],
+            vec![
+                OutMessage {
+                    msg: Some(out_message::Msg::SecureChannelHandshake(
+                        handshake_message_a.clone()
+                    ))
+                },
+                OutMessage {
+                    msg: Some(out_message::Msg::SecureChannelHandshake(
+                        handshake_message_b.clone()
+                    ))
+                }
+            ],
             communication_module.take_out_messages()
         );
     }
 
     #[test]
     fn test_process_in_message() {
-        let mut communication_module = DefaultCommunicationModule::new();
         let peer_replica_id_a = 11111;
         let peer_replica_id_b = 22222;
         let self_replica_id = 88888;
-        let handshake_message_a = OutMessage {
-            msg: Some(out_message::Msg::SecureChannelHandshake(
-                SecureChannelHandshake {
-                    recipient_replica_id: peer_replica_id_a,
-                    sender_replica_id: self_replica_id,
-                    encryption: None,
-                },
-            )),
-        };
-        let handshake_message_b = OutMessage {
-            msg: Some(out_message::Msg::SecureChannelHandshake(
-                SecureChannelHandshake {
-                    recipient_replica_id: peer_replica_id_b,
-                    sender_replica_id: self_replica_id,
-                    encryption: None,
-                },
-            )),
-        };
+        let handshake_message_a =
+            create_secure_channel_handshake(peer_replica_id_a, self_replica_id);
+        let handshake_message_b =
+            create_secure_channel_handshake(peer_replica_id_b, self_replica_id);
+        let mock_handshake_session_a = HandshakeSessionBuilder::new()
+            .expect_process_message(handshake_message_a.clone(), Ok(()))
+            .expect_take_out_message(Some(handshake_message_a.clone()))
+            .expect_is_completed(true)
+            .take();
+        let mock_handshake_session_b = HandshakeSessionBuilder::new()
+            .expect_process_message(handshake_message_b.clone(), Ok(()))
+            .expect_take_out_message(Some(handshake_message_b.clone()))
+            .expect_is_completed(true)
+            .take();
+        let mock_handshake_session_provider = HandshakeSessionProviderBuilder::new()
+            .expect_get(
+                self_replica_id,
+                peer_replica_id_a,
+                Role::Recipient,
+                mock_handshake_session_a,
+            )
+            .expect_get(
+                self_replica_id,
+                peer_replica_id_b,
+                Role::Recipient,
+                mock_handshake_session_b,
+            )
+            .take();
+        let mut communication_module =
+            DefaultCommunicationModule::new(Box::new(mock_handshake_session_provider));
 
         // Invoking `process_in_message` before `init` should fail.
         assert_eq!(
@@ -502,7 +593,7 @@ mod test {
         assert_eq!(
             Ok(None),
             communication_module.process_in_message(in_message::Msg::SecureChannelHandshake(
-                create_secure_channel_handshake(peer_replica_id_a, self_replica_id)
+                handshake_message_a.clone()
             ))
         );
         assert_eq!(
@@ -532,7 +623,7 @@ mod test {
         assert_eq!(
             Ok(None),
             communication_module.process_in_message(in_message::Msg::SecureChannelHandshake(
-                create_secure_channel_handshake(peer_replica_id_b, self_replica_id)
+                handshake_message_b.clone()
             ))
         );
         assert_eq!(
@@ -540,27 +631,62 @@ mod test {
             communication_module.process_in_message(create_unsupported_in_message())
         );
         assert_eq!(
-            vec![handshake_message_a, handshake_message_b],
+            vec![
+                OutMessage {
+                    msg: Some(out_message::Msg::SecureChannelHandshake(
+                        handshake_message_a.clone()
+                    ))
+                },
+                OutMessage {
+                    msg: Some(out_message::Msg::SecureChannelHandshake(
+                        handshake_message_b.clone()
+                    ))
+                }
+            ],
             communication_module.take_out_messages()
         );
     }
 
     #[test]
     fn test_mutual_handshake_success() {
-        let mut communication_module_a = DefaultCommunicationModule::new();
-        let mut communication_module_b = DefaultCommunicationModule::new();
         let peer_replica_id_a = 11111;
         let peer_replica_id_b = 22222;
-        let handshake_message_a_to_b = SecureChannelHandshake {
-            sender_replica_id: peer_replica_id_a,
-            recipient_replica_id: peer_replica_id_b,
-            encryption: None,
-        };
-        let handshake_message_b_to_a = SecureChannelHandshake {
-            sender_replica_id: peer_replica_id_b,
-            recipient_replica_id: peer_replica_id_a,
-            encryption: None,
-        };
+        let handshake_message_a_to_b =
+            create_secure_channel_handshake(peer_replica_id_a, peer_replica_id_b);
+        let handshake_message_b_to_a =
+            create_secure_channel_handshake(peer_replica_id_b, peer_replica_id_a);
+        let mock_handshake_session_a = HandshakeSessionBuilder::new()
+            .expect_take_out_message(Some(handshake_message_a_to_b.clone()))
+            .expect_process_message(handshake_message_b_to_a.clone(), Ok(()))
+            .expect_take_out_message(None)
+            .expect_is_completed(true)
+            .take();
+        let mock_handshake_session_b = HandshakeSessionBuilder::new()
+            .expect_process_message(handshake_message_a_to_b.clone(), Ok(()))
+            .expect_take_out_message(Some(handshake_message_b_to_a.clone()))
+            .expect_is_completed(true)
+            .take();
+        let mock_handshake_session_provider_a = HandshakeSessionProviderBuilder::new()
+            .expect_get(
+                peer_replica_id_a,
+                peer_replica_id_b,
+                Role::Initiator,
+                mock_handshake_session_a,
+            )
+            .take();
+        let mock_handshake_session_provider_b = HandshakeSessionProviderBuilder::new()
+            .expect_get(
+                peer_replica_id_b,
+                peer_replica_id_a,
+                Role::Recipient,
+                mock_handshake_session_b,
+            )
+            .take();
+        let mut communication_module_a =
+            DefaultCommunicationModule::new(Box::new(mock_handshake_session_provider_a));
+        let mut communication_module_b =
+            DefaultCommunicationModule::new(Box::new(mock_handshake_session_provider_b));
+
         let deliver_system_message =
             create_deliver_system_message(peer_replica_id_a, peer_replica_id_b);
         let deliver_snapshot_request =
@@ -648,10 +774,36 @@ mod test {
 
     #[test]
     fn test_invalid_handshake_message_fails() {
-        let mut communication_module_a = DefaultCommunicationModule::new();
-        let mut communication_module_b = DefaultCommunicationModule::new();
         let peer_replica_id_a = 11111;
         let peer_replica_id_b = 22222;
+        let mock_handshake_session_a = HandshakeSessionBuilder::new()
+            .expect_take_out_message(Some(create_secure_channel_handshake(
+                peer_replica_id_a,
+                peer_replica_id_b,
+            )))
+            .take();
+        let mock_handshake_session_b = HandshakeSessionBuilder::new().take();
+        let mock_handshake_session_provider_a = HandshakeSessionProviderBuilder::new()
+            .expect_get(
+                peer_replica_id_a,
+                peer_replica_id_b,
+                Role::Initiator,
+                mock_handshake_session_a,
+            )
+            .take();
+        let mock_handshake_session_provider_b = HandshakeSessionProviderBuilder::new()
+            .expect_get(
+                peer_replica_id_b,
+                peer_replica_id_a,
+                Role::Recipient,
+                mock_handshake_session_b,
+            )
+            .take();
+        let mut communication_module_a =
+            DefaultCommunicationModule::new(Box::new(mock_handshake_session_provider_a));
+        let mut communication_module_b =
+            DefaultCommunicationModule::new(Box::new(mock_handshake_session_provider_b));
+
         let deliver_system_message_a_to_b =
             create_deliver_system_message(peer_replica_id_a, peer_replica_id_b);
         let deliver_system_message_b_to_a =

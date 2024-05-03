@@ -23,6 +23,7 @@ use tcp_proto::runtime::endpoint::raft_config::SnapshotConfig;
 use tcp_proto::runtime::endpoint::*;
 use tcp_runtime::communication::DefaultCommunicationModule;
 use tcp_runtime::driver::Driver;
+use tcp_runtime::handshake::DefaultHandshakeSessionProvider;
 use tcp_runtime::logger::log::create_logger;
 use tcp_runtime::model::Actor;
 use tcp_runtime::platform::{Application, Host};
@@ -275,7 +276,7 @@ impl<A: Actor> FakePlatform<A> {
                     Box::new(DefaultSnapshotReceiver::new()),
                 ),
                 actor,
-                DefaultCommunicationModule::new(),
+                DefaultCommunicationModule::new(Box::new(DefaultHandshakeSessionProvider {})),
             )),
             host: RefCell::new(FakeHost::new(app_config)),
         }
