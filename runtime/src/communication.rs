@@ -317,7 +317,7 @@ mod test {
     use handshake::Role;
     use mock::{MockHandshakeSession, MockHandshakeSessionProvider};
     use prost::bytes::Bytes;
-    use tcp_proto::runtime::endpoint::{secure_channel_handshake::NoiseProtocol, *};
+    use tcp_proto::runtime::endpoint::*;
 
     fn create_deliver_system_message(
         sender_replica_id: u64,
@@ -428,6 +428,7 @@ mod test {
             self.mock_handshake_session
                 .expect_process_message()
                 .with(eq(message))
+                .once()
                 .return_once(move |_| result);
             self
         }
@@ -648,7 +649,7 @@ mod test {
     }
 
     #[test]
-    fn test_mutual_handshake_success() {
+    fn test_mutual_handshake_single_roundtrip_success() {
         let peer_replica_id_a = 11111;
         let peer_replica_id_b = 22222;
         let handshake_message_a_to_b =
@@ -740,6 +741,159 @@ mod test {
                 handshake_message_b_to_a.clone()
             ))
         );
+        assert_eq!(
+            Ok(()),
+            communication_module_a.process_out_message(out_message::Msg::DeliverSnapshotRequest(
+                deliver_snapshot_request.clone()
+            ))
+        );
+        assert_eq!(
+            vec![
+                OutMessage {
+                    msg: Some(out_message::Msg::DeliverSystemMessage(
+                        deliver_system_message.clone()
+                    ))
+                },
+                OutMessage {
+                    msg: Some(out_message::Msg::DeliverSnapshotRequest(
+                        deliver_snapshot_request.clone()
+                    ))
+                }
+            ],
+            communication_module_a.take_out_messages()
+        );
+
+        assert_eq!(
+            Ok(Some(in_message::Msg::DeliverSystemMessage(
+                deliver_system_message.clone()
+            ))),
+            communication_module_b.process_in_message(in_message::Msg::DeliverSystemMessage(
+                deliver_system_message.clone()
+            ))
+        );
+    }
+
+    #[test]
+    fn test_mutual_handshake_multiple_roundtrips_success() {
+        let peer_replica_id_a = 11111;
+        let peer_replica_id_b = 22222;
+        let handshake_message_a_to_b =
+            create_secure_channel_handshake(peer_replica_id_a, peer_replica_id_b);
+        let handshake_message_b_to_a =
+            create_secure_channel_handshake(peer_replica_id_b, peer_replica_id_a);
+        let mock_handshake_session_a = HandshakeSessionBuilder::new()
+            .expect_take_out_message(Some(handshake_message_a_to_b.clone()))
+            .expect_process_message(handshake_message_b_to_a.clone(), Ok(()))
+            .expect_take_out_message(Some(handshake_message_a_to_b.clone()))
+            .expect_is_completed(false)
+            .expect_process_message(handshake_message_b_to_a.clone(), Ok(()))
+            .expect_take_out_message(None)
+            .expect_is_completed(true)
+            .take();
+        let mock_handshake_session_b = HandshakeSessionBuilder::new()
+            .expect_process_message(handshake_message_a_to_b.clone(), Ok(()))
+            .expect_take_out_message(Some(handshake_message_b_to_a.clone()))
+            .expect_is_completed(false)
+            .expect_process_message(handshake_message_a_to_b.clone(), Ok(()))
+            .expect_take_out_message(Some(handshake_message_b_to_a.clone()))
+            .expect_is_completed(true)
+            .take();
+        let mock_handshake_session_provider_a = HandshakeSessionProviderBuilder::new()
+            .expect_get(
+                peer_replica_id_a,
+                peer_replica_id_b,
+                Role::Initiator,
+                mock_handshake_session_a,
+            )
+            .take();
+        let mock_handshake_session_provider_b = HandshakeSessionProviderBuilder::new()
+            .expect_get(
+                peer_replica_id_b,
+                peer_replica_id_a,
+                Role::Recipient,
+                mock_handshake_session_b,
+            )
+            .take();
+        let mut communication_module_a =
+            DefaultCommunicationModule::new(Box::new(mock_handshake_session_provider_a));
+        let mut communication_module_b =
+            DefaultCommunicationModule::new(Box::new(mock_handshake_session_provider_b));
+
+        let deliver_system_message =
+            create_deliver_system_message(peer_replica_id_a, peer_replica_id_b);
+        let deliver_snapshot_request =
+            create_deliver_snapshot_request(peer_replica_id_a, peer_replica_id_b);
+
+        communication_module_a.init(peer_replica_id_a);
+        communication_module_b.init(peer_replica_id_b);
+
+        // First round trip of handshake messages.
+        assert_eq!(
+            Ok(()),
+            communication_module_a.process_out_message(out_message::Msg::DeliverSystemMessage(
+                deliver_system_message.clone()
+            ))
+        );
+        assert_eq!(
+            vec![OutMessage {
+                msg: Some(out_message::Msg::SecureChannelHandshake(
+                    handshake_message_a_to_b.clone()
+                ))
+            }],
+            communication_module_a.take_out_messages()
+        );
+        assert_eq!(
+            Ok(None),
+            communication_module_b.process_in_message(in_message::Msg::SecureChannelHandshake(
+                handshake_message_a_to_b.clone()
+            ))
+        );
+        assert_eq!(
+            vec![OutMessage {
+                msg: Some(out_message::Msg::SecureChannelHandshake(
+                    handshake_message_b_to_a.clone()
+                ))
+            }],
+            communication_module_b.take_out_messages()
+        );
+        assert_eq!(
+            Ok(None),
+            communication_module_a.process_in_message(in_message::Msg::SecureChannelHandshake(
+                handshake_message_b_to_a.clone()
+            ))
+        );
+
+        // Second roundtrip of handshake messages.
+        assert_eq!(
+            vec![OutMessage {
+                msg: Some(out_message::Msg::SecureChannelHandshake(
+                    handshake_message_a_to_b.clone()
+                ))
+            }],
+            communication_module_a.take_out_messages()
+        );
+        assert_eq!(
+            Ok(None),
+            communication_module_b.process_in_message(in_message::Msg::SecureChannelHandshake(
+                handshake_message_a_to_b.clone()
+            ))
+        );
+        assert_eq!(
+            vec![OutMessage {
+                msg: Some(out_message::Msg::SecureChannelHandshake(
+                    handshake_message_b_to_a.clone()
+                ))
+            }],
+            communication_module_b.take_out_messages()
+        );
+        assert_eq!(
+            Ok(None),
+            communication_module_a.process_in_message(in_message::Msg::SecureChannelHandshake(
+                handshake_message_b_to_a.clone()
+            ))
+        );
+
+        // Handshake complete so previously stashed messages can be sent out.
         assert_eq!(
             Ok(()),
             communication_module_a.process_out_message(out_message::Msg::DeliverSnapshotRequest(
