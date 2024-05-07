@@ -58,6 +58,10 @@ pub trait TabletTransactionManager: TabletTransactionContext {
     // Initializes transaction manager with tablet cache capacity.
     fn init(&mut self, cache_capacity: u64);
 
+    // Advances internal state machine of the transaction manager. Essentially
+    // it tries to make progress on all pending tablet resolutions and transactions.
+    fn make_progress(&mut self, instant: u64);
+
     // Processes incoming message, which maybe load or store tablet
     // result, outcome of the tablet ops execution.
     fn process_in_message(&mut self, message: InMessage);
@@ -67,18 +71,16 @@ pub trait TabletTransactionManager: TabletTransactionContext {
     fn take_out_messages(&mut self) -> Vec<OutMessage>;
 }
 
+pub type ResolveHandler = dyn FnMut(Vec<(TableQuery, TabletDescriptor)>) -> ();
+
 // Provides ability to map keys to tablets and initiate tablet transactions.
 pub trait TabletTransactionContext {
     // Requests to map keys in a given table to corresponding tablets.
     // Provided handler will be called once resolution is complete.
-    fn resolve(
-        &mut self,
-        query: TableQuery,
-        handler: Box<dyn FnMut(Vec<(TableQuery, TabletDescriptor)>) -> ()>,
-    );
+    fn resolve(&mut self, queries: Vec<TableQuery>, handler: Box<ResolveHandler>);
 
     // Starts a new transaction. Multiple concurrent transactions may coexist.
-    fn start_transaction(&mut self) -> TabletTransaction;
+    fn start_transaction(&mut self) -> Box<dyn TabletTransaction>;
 }
 
 // Provides succint tablet metadata and contents. Enables transaction to
@@ -87,37 +89,66 @@ pub trait TabletTransactionContext {
 // changed. If tablet contens has been updated, transaction manager
 // will produce an update tablet operation.
 #[derive(Default, PartialEq, Debug, Clone)]
-pub struct Tablet {}
+pub struct Tablet {
+    tablet_id: u32,
+    tablet_contents: Bytes,
+    is_dirty: bool,
+}
 
 impl Tablet {
+    pub fn create(tablet_id: u32, tablet_contents: Bytes) -> Tablet {
+        Tablet {
+            tablet_id,
+            tablet_contents,
+            is_dirty: false,
+        }
+    }
+
     // Gets tablet id.
     pub fn get_id(&self) -> u32 {
-        todo!()
+        self.tablet_id
     }
 
     // Gets tablet contents.
     pub fn get_contents(&self) -> Bytes {
-        todo!()
+        self.tablet_contents.clone()
     }
 
     // Updates tablet contents.
-    pub fn set_contents(&mut self, blob: Bytes) {
-        todo!()
+    pub fn set_contents(&mut self, contents: Bytes) {
+        self.tablet_contents = contents;
+        self.is_dirty = true;
+    }
+
+    // Indicates if tablet contents has been updated.
+    pub fn is_dirty(&self) -> bool {
+        self.is_dirty
     }
 }
 
 // Provides short description of tablet. Used during key to tablet mapping.
-struct TabletDescriptor {}
+#[derive(Default, PartialEq, Debug, Clone)]
+pub struct TabletDescriptor {
+    tablet_id: u32,
+    cache_ready: bool,
+}
 
 impl TabletDescriptor {
+    pub fn create(tablet_id: u32, cache_ready: bool) -> TabletDescriptor {
+        TabletDescriptor {
+            tablet_id,
+            cache_ready,
+        }
+    }
+
     // Gets tablet id.
     pub fn get_id(&self) -> u32 {
-        todo!()
+        self.tablet_id
     }
 
     // Gets indicator suggesting if tablet contents is currently in cache.
     pub fn cache_ready(&self) -> bool {
-        todo!()
+        self.cache_ready
     }
 }
 
@@ -126,73 +157,73 @@ impl TabletDescriptor {
 // tablet data must be loaded trhough the cache and passed to the transaction
 // for processing.
 #[derive(Default, PartialEq, Debug, Clone)]
-pub struct TableQuery {}
+pub struct TableQuery {
+    query_id: u64,
+    table_name: String,
+    key_hashes: HashSet<u32>,
+}
 
 impl TableQuery {
-    pub fn create(table_name: String, key_hashes: Vec<u32>) -> TableQuery {
-        todo!()
+    pub fn create(query_id: u64, table_name: String, key_hashes: Vec<u32>) -> TableQuery {
+        let mut key_hash_set = HashSet::with_capacity(key_hashes.len());
+        for key_hash in key_hashes {
+            key_hash_set.insert(key_hash);
+        }
+        TableQuery {
+            query_id,
+            table_name,
+            key_hashes: key_hash_set,
+        }
+    }
+
+    pub fn get_id(&self) -> u64 {
+        self.query_id
     }
 
     // Gets name of the table to query.
-    pub fn get_name(&self) -> &String {
-        todo!()
+    pub fn get_table_name(&self) -> &String {
+        &self.table_name
     }
 
     // Gets set of key hashes to query.
     pub fn get_key_hashes(&self) -> &HashSet<u32> {
-        todo!()
+        &self.key_hashes
     }
 }
+
+pub type ProcessHandler = dyn FnMut(u64, Vec<(TableQuery, &mut Tablet)>) -> ();
 
 // Represents a tablet processing transaction. Transaction records reads and writes
 // made to a set of tablets and then on commit turns them into set of check and
 // update tablet ops. Once created the consumer may request several times to
 // process tablets where processing may result in updated tablet data. Updated
 // tablet will result in an update tablet op, otherwise check tablet op.
-#[derive(Default, PartialEq, Debug, Clone)]
-pub struct TabletTransaction {}
+pub trait TabletTransaction {
+    fn get_id(&self) -> u64;
 
-impl TabletTransaction {
     // Requests to process tablets covered by the given query. Essentially the
     // contents for the covered tabelts must be loaded into cache. Once available
     // provided handler can be called to allow consumer read and write tablet data.
-    pub fn process(
-        &mut self,
-        queries: Vec<TableQuery>,
-        handler: Box<dyn FnMut(Vec<(TableQuery, Tablet)>) -> ()>,
-    ) {
-        todo!()
-    }
+    fn process(&mut self, queries: Vec<TableQuery>, handler: Box<ProcessHandler>);
+
+    // Indicates if transaction has any pending process requests.
+    fn has_pending_process(&self) -> bool;
 
     // Requests to commit transaction. Essentially all reads and writes recorded
     // during transaction are conveted into tablet ops that will be sent out to
     // the tablet store for execution.
-    pub fn commit(self) -> TabletTransactionCommit {
-        todo!()
-    }
+    fn commit(self: Box<Self>) -> Box<dyn TabletTransactionCommit>;
 
     // Requests to abort transaction. Essentially uncommitted changes including new
     // versions of tablets must be discarded.
-    pub fn abort(self) {
-        todo!()
-    }
-
-    // Indicates if transaction has any pending process requests.
-    pub fn has_pending_process(&self) -> bool {
-        todo!()
-    }
+    fn abort(self: Box<Self>);
 }
 
 // Represents transaction commit handle. Can be used to check status.
-#[derive(Default, PartialEq, Debug, Clone)]
-pub struct TabletTransactionCommit {}
-
-impl TabletTransactionCommit {
+pub trait TabletTransactionCommit {
     // Checks the status of the transaction. Return none if no
     // outcome is known and the outcome otherwise.
-    pub fn check_result(&mut self) -> Option<TabletTransactionOutcome> {
-        todo!()
-    }
+    fn check_result(&mut self) -> Option<TabletTransactionOutcome>;
 }
 
 pub enum TabletTransactionOutcome {
@@ -211,19 +242,23 @@ impl SimpleTabletTransactionManager {
 impl TabletTransactionContext for SimpleTabletTransactionManager {
     fn resolve(
         &mut self,
-        query: TableQuery,
+        queries: Vec<TableQuery>,
         handler: Box<dyn FnMut(Vec<(TableQuery, TabletDescriptor)>) -> ()>,
     ) {
         todo!()
     }
 
-    fn start_transaction(&mut self) -> TabletTransaction {
+    fn start_transaction(&mut self) -> Box<dyn TabletTransaction> {
         todo!()
     }
 }
 
 impl TabletTransactionManager for SimpleTabletTransactionManager {
     fn init(&mut self, capacity: u64) {
+        todo!()
+    }
+
+    fn make_progress(&mut self, instant: u64) {
         todo!()
     }
 
