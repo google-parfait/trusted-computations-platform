@@ -6,9 +6,10 @@ license = "Apache-2.0"
 
 [features]
 default = []
-std = ["slog-term", "slog/std"]
+std = ["slog-term", "slog/std", "mockall"]
 
 [dependencies]
+ahash = { workspace = true }
 prost = { workspace = true }
 hashbrown = { version = "0.14.0" }
 slog = { version = "2.2", default-features = false }
@@ -16,9 +17,9 @@ slog-term = { version = "2.4.0", optional = true }
 tcp_proto = { path = "../../../proto" }
 tcp_runtime = { path = "../../../runtime" }
 tcp_tablet_store_service = { path = "../../tablet_store/service" }
+mockall = { version = "0.11.4", optional = true }
 
 [dev-dependencies]
-mockall = { version = "0.11.4" }
 tcp_integration = { path = "../../../integration", features = ["std"] }
 
 [build-dependencies]

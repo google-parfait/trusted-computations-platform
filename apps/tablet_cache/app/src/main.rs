@@ -20,7 +20,7 @@ extern crate alloc;
 extern crate tcp_proto;
 extern crate tcp_runtime;
 
-use alloc::boxed::Box;
+use alloc::{boxed::Box, string::ToString};
 use oak_restricted_kernel_sdk::{
     channel::{start_blocking_server, FileDescriptorChannel},
     entrypoint,
@@ -44,7 +44,7 @@ fn run_server() -> ! {
         TabletCacheActor<SimpleTabletTransactionManager, SimpleKeyValueStore>,
     > = ApplicationService::new(TabletCacheActor::new(
         SimpleTabletTransactionManager::new(),
-        SimpleKeyValueStore::new(),
+        SimpleKeyValueStore::create("map".to_string(), 100, 100),
     ));
     let server = EndpointServiceServer::new(service);
     start_blocking_server(

@@ -95,7 +95,7 @@ message PutKeyRequest {
   // Id that is used to correlate request and response.
   uint64 request_id = 1;
   // Key to put.
-  bytes key = 2;
+  string key = 2;
   // Value to put.
   bytes value = 3;
 }
@@ -130,4 +130,10 @@ message GetKeyResponse {
 message TabletCacheConfig {
   // Maximum size in bytes of the tablet cache capacity.
   uint64 tablet_cache_capacity = 1;
+}
+
+// Content of a single tablet.
+message TabletContents {
+  // Keys mapped to values.
+  map<string, bytes> dictionary = 1;
 }

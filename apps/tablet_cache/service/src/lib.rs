@@ -31,5 +31,7 @@ pub mod apps {
 }
 
 pub mod actor;
+#[cfg(feature = "std")]
+pub mod mock;
 pub mod store;
 pub mod transaction;
