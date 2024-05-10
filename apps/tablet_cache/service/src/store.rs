@@ -672,10 +672,14 @@ mod tests {
     const TABLET_ID_1: u32 = 1;
     const CORRELATION_ID_1: u64 = 1;
     const CORRELATION_ID_2: u64 = 2;
+    const CORRELATION_ID_3: u64 = 3;
     const REQUEST_ID_1: u64 = 1;
     const REQUEST_ID_2: u64 = 2;
+    const REQUEST_ID_3: u64 = 1;
     const KEY_1: &'static str = "key 1";
     const KEY_2: &'static str = "key 2";
+    const KEY_3: &'static str = "key 3";
+    const VALUE_0: &'static str = "value 0";
     const VALUE_1: &'static str = "value 1";
     const VALUE_2: &'static str = "value 2";
 
@@ -740,6 +744,20 @@ mod tests {
 
     fn create_tablet_descriptor(tablet_id: u32) -> transaction::TabletDescriptor {
         transaction::TabletDescriptor::create(tablet_id, false)
+    }
+
+    fn create_tablet(tablet_id: u32, tablet_contents: &TabletContents) -> transaction::Tablet {
+        transaction::Tablet::create(tablet_id, tablet_contents.encode_to_vec().into())
+    }
+
+    fn create_tablet_contents(key_values: Vec<(String, String)>) -> TabletContents {
+        let mut tablet_contents = TabletContents::default();
+        for (key, value) in key_values {
+            tablet_contents
+                .dictionary
+                .insert(key, Bytes::copy_from_slice(value.as_bytes()));
+        }
+        tablet_contents
     }
 
     struct TabletTransactinoContextBuilder {
@@ -821,7 +839,15 @@ mod tests {
         fn expect_has_pending_process(&mut self, has_pending_process: bool) -> &mut Self {
             self.mock_transaction
                 .expect_has_pending_process()
+                .times(1)
                 .return_const(has_pending_process);
+            self
+        }
+
+        fn expect_commit(&mut self, transaction_commit: MockTabletTransactionCommit) -> &mut Self {
+            self.mock_transaction
+                .expect_commit()
+                .return_once_st(move || Box::new(transaction_commit));
             self
         }
 
@@ -836,27 +862,61 @@ mod tests {
         }
     }
 
+    struct TabletTransactionCommitBuilder {
+        mock_transaction_commit: MockTabletTransactionCommit,
+    }
+
+    impl TabletTransactionCommitBuilder {
+        fn new() -> Self {
+            Self {
+                mock_transaction_commit: MockTabletTransactionCommit::new(),
+            }
+        }
+
+        fn expect_check_result(
+            &mut self,
+            transaction_outcome: Option<transaction::TabletTransactionOutcome>,
+        ) -> &mut Self {
+            self.mock_transaction_commit
+                .expect_check_result()
+                .times(1)
+                .return_once_st(move || transaction_outcome);
+            self
+        }
+
+        fn take(self) -> MockTabletTransactionCommit {
+            self.mock_transaction_commit
+        }
+    }
+
     #[test]
-    fn test_resolve_tablets() {
+    fn test_end_to_end_success() {
         let table_accessor = create_table_accessor();
 
         let table_query_1 = create_table_query(
             TABLE_QUERY_1,
-            vec![KEY_1.to_string(), KEY_2.to_string()],
+            vec![KEY_1.to_string(), KEY_2.to_string(), KEY_3.to_string()],
             &table_accessor,
         );
 
         let table_query_2 = create_table_query(
             TABLE_QUERY_2,
-            vec![KEY_1.to_string(), KEY_2.to_string()],
+            vec![KEY_1.to_string(), KEY_2.to_string(), KEY_3.to_string()],
             &table_accessor,
         );
+
+        let mut transaction_commit_builder = TabletTransactionCommitBuilder::new();
+        transaction_commit_builder
+            .expect_check_result(Some(transaction::TabletTransactionOutcome::Succeeded));
+        let mut transaction_commit = transaction_commit_builder.take();
 
         let mut transaction_builder = TabletTransactionBuilder::new();
         transaction_builder
             .expect_get_id(TABLET_TRANSACTION_ID_1)
             .expect_process(vec![table_query_2.clone()])
-            .expect_has_pending_process(true);
+            .expect_has_pending_process(true)
+            .expect_has_pending_process(false)
+            .expect_commit(transaction_commit);
         let (mut transaction, mut process_handler) = transaction_builder.take();
 
         let mut transaction_context_builder = TabletTransactinoContextBuilder::new();
@@ -865,7 +925,7 @@ mod tests {
             .expect_start_transaction(transaction);
         let (mut transaction_context, mut resolve_handler) = transaction_context_builder.take();
 
-        let mut store = create_store(2, 2);
+        let mut store = create_store(3, 3);
 
         store.process_request(KeyValueRequest::Put(
             CORRELATION_ID_1,
@@ -875,12 +935,43 @@ mod tests {
             CORRELATION_ID_2,
             create_put_request(REQUEST_ID_2, KEY_2, VALUE_2),
         ));
+        store.process_request(KeyValueRequest::Get(
+            CORRELATION_ID_3,
+            create_get_request(REQUEST_ID_3, KEY_3),
+        ));
         store.make_progress(1, &mut transaction_context);
+
+        assert!(store.take_responses().is_empty());
 
         let tablet_descriptor_1 = create_tablet_descriptor(TABLET_ID_1);
 
         resolve_handler(vec![(table_query_1.clone(), tablet_descriptor_1.clone())]);
 
         store.make_progress(2, &mut transaction_context);
+
+        assert!(store.take_responses().is_empty());
+
+        let tablet_contents_1 =
+            create_tablet_contents(vec![(KEY_1.to_string(), VALUE_0.to_string())]);
+        let mut tablet_1 = create_tablet(TABLET_ID_1, &tablet_contents_1);
+
+        process_handler(
+            TABLET_TRANSACTION_ID_1,
+            vec![(table_query_2.clone(), &mut tablet_1)],
+        );
+
+        store.make_progress(3, &mut transaction_context);
+
+        assert_eq!(
+            vec![
+                KeyValueResponse::Put(CORRELATION_ID_1, create_put_response(REQUEST_ID_1, true)),
+                KeyValueResponse::Put(CORRELATION_ID_2, create_put_response(REQUEST_ID_2, false)),
+                KeyValueResponse::Get(
+                    CORRELATION_ID_3,
+                    create_get_response(REQUEST_ID_3, false, "")
+                )
+            ],
+            store.take_responses()
+        );
     }
 }
