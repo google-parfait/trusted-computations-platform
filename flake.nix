@@ -36,7 +36,7 @@
               includeSystemImages = false;
             }).androidsdk;
           rustToolchain =
-            pkgs.rust-bin.nightly.latest.default.override {
+            pkgs.rust-bin.nightly."2024-02-01".default.override {
               extensions = [
                 "clippy"
                 "llvm-tools-preview"
