@@ -43,7 +43,7 @@ fn run_server() -> ! {
     let service: ApplicationService<
         TabletCacheActor<SimpleTabletTransactionManager, SimpleKeyValueStore>,
     > = ApplicationService::new(TabletCacheActor::new(
-        SimpleTabletTransactionManager::new(),
+        SimpleTabletTransactionManager::create(1024 * 1024 * 1024 * 16),
         SimpleKeyValueStore::create("map".to_string(), 100, 100),
     ));
     let server = EndpointServiceServer::new(service);

@@ -12,15 +12,18 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-use alloc::{boxed::Box, string::String, vec::Vec};
+use core::cell::RefCell;
+
+use alloc::{boxed::Box, rc::Rc, string::String, vec::Vec};
 use prost::bytes::Bytes;
 use tcp_tablet_store_service::apps::tablet_store::service::{
-    TabletMetadata, TabletsRequest, TabletsResponse,
+    ListTabletResult, TabletMetadata, TabletOp, TabletOpResult, TabletOpStatus, TabletsRequest,
+    TabletsRequestStatus, TabletsResponse,
 };
 
 use crate::apps::tablet_cache::service::{
     ExecuteTabletOpsRequest, ExecuteTabletOpsResponse, LoadTabletRequest, LoadTabletResponse,
-    StoreTabletRequest, StoreTabletResponse,
+    StoreTabletRequest, StoreTabletResponse, TabletDataStorageStatus,
 };
 use hashbrown::HashSet;
 
@@ -231,11 +234,17 @@ pub enum TabletTransactionOutcome {
     Failed,
 }
 
-pub struct SimpleTabletTransactionManager {}
+pub struct SimpleTabletTransactionManager {
+    core: Rc<RefCell<TabletTransactionManagerCore>>,
+}
 
 impl SimpleTabletTransactionManager {
-    pub fn new() -> SimpleTabletTransactionManager {
-        SimpleTabletTransactionManager {}
+    pub fn create(data_cache_capacity: u64) -> Self {
+        Self {
+            core: Rc::new(RefCell::new(TabletTransactionManagerCore::create(
+                data_cache_capacity,
+            ))),
+        }
     }
 }
 
@@ -267,6 +276,168 @@ impl TabletTransactionManager for SimpleTabletTransactionManager {
     }
 
     fn process_in_message(&mut self, message: InMessage) {
+        todo!()
+    }
+}
+
+// Manages tablet transaction execution. Coordinates metadata and data
+// loading and updating.
+struct TabletTransactionManagerCore {
+    metadata_cache: TabletMetadataCache,
+    data_cache: TabletDataCache,
+}
+
+impl TabletTransactionManagerCore {
+    fn create(data_cache_capacity: u64) -> Self {
+        Self {
+            metadata_cache: TabletMetadataCache::create(),
+            data_cache: TabletDataCache::create(data_cache_capacity),
+        }
+    }
+}
+
+#[derive(PartialEq, Debug, Clone)]
+enum TabletMetadataCacheInMessage {
+    ListResponse(u64, Vec<TabletOpResult>),
+}
+
+#[derive(PartialEq, Debug, Clone)]
+enum TabletMetadataCacheOutMessage {
+    ListRequest(u64, Vec<TabletOp>),
+}
+
+// Maintains last known state of the tablets metadata. Requests listing
+// of tablets from Tablet Store to resolve metadata of unknown tablets.
+struct TabletMetadataCache {}
+
+impl TabletMetadataCache {
+    fn create() -> Self {
+        Self {}
+    }
+
+    // Advances internal state machine of the tablet metadata cache.
+    fn make_progress(&mut self, instant: u64) {
+        todo!();
+    }
+
+    // Requests to resolve tablets that given set of the table queries affect. Returned
+    // result handle must be checked for the operation completion. The operation is
+    // completed only when all affected tablets are resolved.
+    fn resolve_tablets(
+        &mut self,
+        queries: Vec<TableQuery>,
+    ) -> ResultHandle<Vec<(TableQuery, TabletMetadata)>, TabletsRequestStatus> {
+        todo!();
+    }
+
+    // Instructs cache to update tablet metadata. Metadata maybe updated after
+    // transaction execution.
+    fn update_tablet(&mut self, metadata: TabletMetadata) {
+        todo!();
+    }
+
+    // Processes incoming messages. Incoming message may contain tablets list responses.
+    fn process_in_message(&mut self, in_message: TabletMetadataCacheInMessage) {
+        todo!();
+    }
+
+    // Takes outgoing messages. Outgoing message may contain tablet list requests.
+    fn take_out_messages(&mut self) -> Vec<TabletMetadataCacheOutMessage> {
+        todo!();
+    }
+}
+
+#[derive(PartialEq, Debug, Clone)]
+enum TabletDataCacheInMessage {
+    LoadResponse(u64, LoadTabletResponse, Bytes),
+    StoreResponse(u64, StoreTabletResponse),
+}
+
+#[derive(PartialEq, Debug, Clone)]
+enum TabletDataCacheOutMessage {
+    LoadRequest(u64, LoadTabletRequest),
+    StoreRequest(u64, StoreTabletRequest, Bytes),
+}
+
+// Maintains cache of recently used tablet data. Tablet data cache follows soft capacity
+// limit but may temporarily grow larger than configured.
+struct TabletDataCache {}
+
+impl TabletDataCache {
+    // Creates new tablet data cache with given capacity. Configured capacity is considered
+    // a soft limit. Tablet data cache may grow larger temporarily than requested capacity.
+    fn create(cache_capacity: u64) -> Self {
+        Self {}
+    }
+
+    // Advances internal state machine of the tablet data cache.
+    fn make_progress(&mut self, instant: u64) {
+        todo!();
+    }
+
+    // Requests to load and cache tablet data described by provided metadata. Returned result
+    // handle must be checked for the operation completion. The operation is completed only when
+    // all requested tablets are loaded.
+    fn load_tablets(
+        &mut self,
+        metadata: Vec<TabletMetadata>,
+    ) -> ResultHandle<Vec<(TabletMetadata, Bytes)>, TabletDataStorageStatus> {
+        todo!()
+    }
+
+    // Requests to store and cache provided tablet data. Returned result handle must be
+    // checked for the operation completion. The operation is completed only when all requested
+    // tablets are stored.
+    fn store_tablets(
+        &mut self,
+        data: Vec<(TabletMetadata, Bytes)>,
+    ) -> ResultHandle<(), TabletDataStorageStatus> {
+        todo!()
+    }
+
+    // Processes incoming messages. Message may contain load or store tablet responses.
+    fn process_in_message(&mut self, in_message: TabletDataCacheInMessage) {
+        todo!()
+    }
+
+    // Takes outgoing messages. Message may contain load or store tablet requests.
+    fn take_out_messages(&mut self) -> Vec<TabletDataCacheOutMessage> {
+        todo!()
+    }
+}
+
+fn create_eventual_result<T, E>() -> (ResultHandle<T, E>, ResultSource<T, E>) {
+    todo!()
+}
+
+// Holds shared state of the result handler and source.
+struct ResultCore<T, E> {
+    result: Option<T>,
+    error: Option<E>,
+}
+
+// Enables method caller to later check if the result is available.
+struct ResultHandle<T, E> {
+    core: Rc<RefCell<ResultCore<T, E>>>,
+}
+
+impl<T, E> ResultHandle<T, E> {
+    fn check_result(&mut self) -> Option<Result<T, E>> {
+        todo!()
+    }
+}
+
+// Enables method logic to later set the result to either a value or an error.
+struct ResultSource<T, E> {
+    core: Rc<RefCell<ResultCore<T, E>>>,
+}
+
+impl<T, E> ResultSource<T, E> {
+    fn set_result(&mut self, result: T) {
+        todo!()
+    }
+
+    fn set_error(&mut self, error: E) {
         todo!()
     }
 }
