@@ -31,7 +31,7 @@ mod test {
     fn send_cas_counter_request(
         cluster: &mut FakeCluster<CounterActor>,
         node_id: u64,
-        request_id: u64,
+        correlation_id: u64,
         counter_name: &str,
         expected_value: i64,
         new_value: i64,
@@ -39,7 +39,6 @@ mod test {
         let counter_request = AtomicCounterInMessage {
             msg: Some(atomic_counter_in_message::Msg::CounterRequest(
                 CounterRequest {
-                    id: request_id,
                     name: counter_name.to_string(),
                     op: Some(counter_request::Op::CompareAndSwap(
                         CounterCompareAndSwapRequest {
@@ -54,7 +53,7 @@ mod test {
 
         cluster.send_app_message(
             node_id,
-            request_id,
+            correlation_id,
             counter_request.encode_to_vec().into(),
             Bytes::new(),
         )
@@ -62,7 +61,7 @@ mod test {
 
     fn advance_until_counter_response(
         cluster: &mut FakeCluster<CounterActor>,
-        response_id: u64,
+        correlation_id: u64,
     ) -> CounterResponse {
         let mut counter_response_opt: Option<CounterResponse> = None;
         let response_messages =
@@ -74,7 +73,7 @@ mod test {
                         counter_response,
                     )) = out_message.msg
                     {
-                        if counter_response.id == response_id {
+                        if message.correlation_id == correlation_id {
                             counter_response_opt = Some(counter_response);
                             return true;
                         }
@@ -91,12 +90,12 @@ mod test {
 
     fn advance_until_cas_counter_response(
         cluster: &mut FakeCluster<CounterActor>,
-        counter_request_id: u64,
+        correlation_id: u64,
         counter_response_status: CounterStatus,
         old_value: i64,
         new_value: i64,
     ) -> bool {
-        let counter_response = advance_until_counter_response(cluster, counter_request_id);
+        let counter_response = advance_until_counter_response(cluster, correlation_id);
 
         let counter_op = if counter_response_status == CounterStatus::Success {
             Some(counter_response::Op::CompareAndSwap(
@@ -111,7 +110,6 @@ mod test {
 
         counter_response
             == CounterResponse {
-                id: counter_request_id,
                 status: counter_response_status.into(),
                 op: counter_op,
             }

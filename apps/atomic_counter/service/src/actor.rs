@@ -59,21 +59,16 @@ impl CounterActor {
     fn apply_compare_and_swap(
         &mut self,
         index: u64,
-        id: u64,
         counter_name: &String,
         compare_and_swap_request: &CounterCompareAndSwapRequest,
         payload: Bytes,
     ) -> CounterResponse {
         debug!(
             self.get_context().logger(),
-            "Applying at index #{} #{} compare and swap command {:?}",
-            index,
-            id,
-            compare_and_swap_request
+            "Applying at index #{} compare and swap command {:?}", index, compare_and_swap_request
         );
 
         let mut response = CounterResponse {
-            id,
             status: CounterStatus::Unspecified.into(),
             op: None,
         };
@@ -178,7 +173,6 @@ impl Actor for CounterActor {
             ..Default::default()
         };
         let mut status = CounterStatus::Success;
-        let mut id = 0;
 
         match AtomicCounterInMessage::decode(command.header.clone()) {
             Ok(in_message) => match in_message.msg {
@@ -187,16 +181,15 @@ impl Actor for CounterActor {
                         atomic_counter_in_message::Msg::CounterRequest(mut request) => {
                             debug!(
                                 self.get_context().logger(),
-                                "Processing #{} command", request.id
+                                "Processing #{} command", request.name
                             );
 
-                            id = request.id;
                             if request.op.is_none() {
                                 status = CounterStatus::InvalidOperationError;
 
                                 warn!(
                                     self.get_context().logger(),
-                                    "Rejecting #{} command: unknown op", request.id
+                                    "Rejecting #{} command: unknown op", request.name
                                 );
                             }
 
@@ -205,7 +198,7 @@ impl Actor for CounterActor {
 
                                 warn!(
                                     self.get_context().logger(),
-                                    "Rejecting #{} command: not a leader", request.id
+                                    "Rejecting #{} command: not a leader", request.name
                                 );
                             }
 
@@ -230,7 +223,6 @@ impl Actor for CounterActor {
             }
         }
 
-        response.id = id;
         response.status = status.into();
         Ok(CommandOutcome::with_command(ActorCommand::with_header(
             command.correlation_id,
@@ -254,7 +246,6 @@ impl Actor for CounterActor {
             counter_request::Op::CompareAndSwap(ref compare_and_swap_request) => self
                 .apply_compare_and_swap(
                     context.index,
-                    request.id,
                     &request.name,
                     compare_and_swap_request,
                     request.payload,

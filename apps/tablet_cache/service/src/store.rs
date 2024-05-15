@@ -528,7 +528,6 @@ impl TabletTracker {
             Some(KeyValueResponse::Put(
                 correlation_id,
                 PutKeyResponse {
-                    request_id: put_request.request_id,
                     existed: existing_value.is_some(),
                 },
             ))
@@ -550,7 +549,6 @@ impl TabletTracker {
             Some(KeyValueResponse::Get(
                 correlation_id,
                 GetKeyResponse {
-                    request_id: get_request.request_id,
                     existed: existing_value.is_some(),
                     value: existing_value.map_or(Bytes::new(), |v| v.clone()),
                 },
@@ -673,9 +671,6 @@ mod tests {
     const CORRELATION_ID_1: u64 = 1;
     const CORRELATION_ID_2: u64 = 2;
     const CORRELATION_ID_3: u64 = 3;
-    const REQUEST_ID_1: u64 = 1;
-    const REQUEST_ID_2: u64 = 2;
-    const REQUEST_ID_3: u64 = 1;
     const KEY_1: &'static str = "key 1";
     const KEY_2: &'static str = "key 2";
     const KEY_3: &'static str = "key 3";
@@ -698,31 +693,25 @@ mod tests {
         TableAccessor::create(TABLE_NAME.to_string())
     }
 
-    fn create_put_request(request_id: u64, key: &str, value: &str) -> PutKeyRequest {
+    fn create_put_request(key: &str, value: &str) -> PutKeyRequest {
         PutKeyRequest {
-            request_id,
             key: key.to_string(),
             value: Bytes::copy_from_slice(value.as_bytes()),
         }
     }
 
-    fn create_put_response(request_id: u64, existed: bool) -> PutKeyResponse {
-        PutKeyResponse {
-            request_id,
-            existed,
-        }
+    fn create_put_response(existed: bool) -> PutKeyResponse {
+        PutKeyResponse { existed }
     }
 
-    fn create_get_request(request_id: u64, key: &str) -> GetKeyRequest {
+    fn create_get_request(key: &str) -> GetKeyRequest {
         GetKeyRequest {
-            request_id,
             key: key.to_string(),
         }
     }
 
-    fn create_get_response(request_id: u64, existed: bool, value: &str) -> GetKeyResponse {
+    fn create_get_response(existed: bool, value: &str) -> GetKeyResponse {
         GetKeyResponse {
-            request_id,
             existed,
             value: Bytes::copy_from_slice(value.as_bytes()),
         }
@@ -929,15 +918,15 @@ mod tests {
 
         store.process_request(KeyValueRequest::Put(
             CORRELATION_ID_1,
-            create_put_request(REQUEST_ID_1, KEY_1, VALUE_1),
+            create_put_request(KEY_1, VALUE_1),
         ));
         store.process_request(KeyValueRequest::Put(
             CORRELATION_ID_2,
-            create_put_request(REQUEST_ID_2, KEY_2, VALUE_2),
+            create_put_request(KEY_2, VALUE_2),
         ));
         store.process_request(KeyValueRequest::Get(
             CORRELATION_ID_3,
-            create_get_request(REQUEST_ID_3, KEY_3),
+            create_get_request(KEY_3),
         ));
         store.make_progress(1, &mut transaction_context);
 
@@ -964,12 +953,9 @@ mod tests {
 
         assert_eq!(
             vec![
-                KeyValueResponse::Put(CORRELATION_ID_1, create_put_response(REQUEST_ID_1, true)),
-                KeyValueResponse::Put(CORRELATION_ID_2, create_put_response(REQUEST_ID_2, false)),
-                KeyValueResponse::Get(
-                    CORRELATION_ID_3,
-                    create_get_response(REQUEST_ID_3, false, "")
-                )
+                KeyValueResponse::Put(CORRELATION_ID_1, create_put_response(true)),
+                KeyValueResponse::Put(CORRELATION_ID_2, create_put_response(false)),
+                KeyValueResponse::Get(CORRELATION_ID_3, create_get_response(false, ""))
             ],
             store.take_responses()
         );

@@ -92,38 +92,30 @@ enum TabletDataStorageStatus {
 
 // Request to put key value pair into the Key Value Store.
 message PutKeyRequest {
-  // Id that is used to correlate request and response.
-  uint64 request_id = 1;
   // Key to put.
-  string key = 2;
+  string key = 1;
   // Value to put.
-  bytes value = 3;
+  bytes value = 2;
 }
 
 // Request to get value from the Key Value Store.
 message GetKeyRequest {
-  // Id that is used to correlate request and response.
-  uint64 request_id = 1;
-  // Key to get.
-  string key = 2;
+  // Key to get
+  string key = 1;
 }
 
 // Response to put key value pair into the Key Value Store.
 message PutKeyResponse {
-  // Id that is used to correlate request and response.
-  uint64 request_id = 1;
   // Inidicates if key existed at the time the request has been executed.
-  bool existed = 2;
+  bool existed = 1;
 }
 
 // Response to get value from the Key Value Store.
 message GetKeyResponse {
-  // Id that is used to correlate request and response.
-  uint64 request_id = 1;
   // Inidicates if key existed at the time the request has been executed.
-  bool existed = 2;
+  bool existed = 1;
   // Value associated with the requested key.
-  bytes value = 3;
+  bytes value = 2;
 }
 
 // Configuration for the Tablet Cache.

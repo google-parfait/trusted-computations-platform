@@ -34,19 +34,16 @@ message AtomicCounterOutMessage {
 
 // Represents a request to execute an operation on a named counter.
 message CounterRequest {
-  // The id that uniquely identifies this request. Needed for the response
-  // correlation.
-  uint64 id = 1;
   // The name of the counter to execute operation on.
-  string name = 2;
+  string name = 1;
   // The operation to execute.
   oneof op {
-    CounterCompareAndSwapRequest compare_and_swap = 3;
+    CounterCompareAndSwapRequest compare_and_swap = 2;
   }
   // Arbitrary extra context to include with the request.
-  bytes context = 4;
+  bytes context = 3;
   // Arbitrary payload to store with the counter if the operation succeeds.
-  bytes payload = 5;
+  bytes payload = 4;
 }
 
 // Represents a request to execute compare and swap operation.
@@ -58,13 +55,11 @@ message CounterCompareAndSwapRequest {
 }
 
 message CounterResponse {
-  // The id of the counter request that this response corresponds to.
-  uint64 id = 1;
   // The status of the requested operation execution.
-  CounterStatus status = 2;
+  CounterStatus status = 1;
   // The operation result.
   oneof op {
-    CounterCompareAndSwapResponse compare_and_swap = 3;
+    CounterCompareAndSwapResponse compare_and_swap = 2;
   }
 }
 
