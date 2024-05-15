@@ -16,9 +16,8 @@ syntax = "proto3";
 
 package runtime.endpoint;
 
-import "proto/attestation/endorsement.proto";
-import "proto/attestation/evidence.proto";
 import "proto/attestation/reference_value.proto";
+import "proto/session/session.proto";
 
 // Messages coming from the Untrusted Launcher to the Trusted Host.
 message InMessage {
@@ -170,13 +169,10 @@ message RaftConfig {
 }
 
 message AttestationConfig {
-  // Endorsements associated with this replica. Supplied to other raft peers
-  // as part of the initial handshake.
-  oak.attestation.v1.Endorsements endorsements = 1;
   // Oak ReferenceValues specifying the binaries running at each layer of
   // the DICE attestation. These are used for verifying claims from other
   // raft peers.
-  oak.attestation.v1.ReferenceValues reference_values = 2;
+  oak.attestation.v1.ReferenceValues reference_values = 1;
 }
 
 // Instructs the trusted application to stop the corresponding raft replica.
@@ -407,7 +403,6 @@ message SecureChannelHandshake {
     NoiseProtocol noise_protocol = 3;
   }
 
-  // TODO: Add missing encryption and attestation fields.
   message NoiseProtocol {
     oneof message {
       // Request to initiate a handshake with `recipient_replica_id`.
@@ -418,23 +413,23 @@ message SecureChannelHandshake {
     }
 
     message InitiatorRequest {
-      // Attestation report of the initiator that must be verified by the
-      // recipient before a secure communication channel can be established.
-      Attestation attestation = 1;
+      oneof message {
+        // Request message for remote attestation.
+        oak.session.v1.AttestRequest attest_request = 1;
+        // Request message for the crypto handshake needed to establish a set
+        // of session keys.
+        oak.session.v1.HandshakeRequest handshake_request = 2;
+      }
     }
 
     message RecipientResponse {
-      // Attestation report of the recipient that must be verified by the
-      // initiator before a secure communication channel can be established.
-      Attestation attestation = 1;
-    }
-
-    message Attestation {
-      // Attestation evidence for replica instance.
-      oak.attestation.v1.Evidence evidence = 1;
-      // Endorsements associated with this replica instance as specified in
-      // the `AttestationConfig`.
-      oak.attestation.v1.Endorsements endorsements = 2;
+      oneof message {
+        // Response message for remote attestation.
+        oak.session.v1.AttestResponse attest_response = 1;
+        // Response message for the crypto handshake needed to establish a set
+        // of session keys.
+        oak.session.v1.HandshakeResponse handshake_response = 2;
+      }
     }
   }
 }

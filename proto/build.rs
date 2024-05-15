@@ -29,10 +29,16 @@ fn main() -> Result<()> {
                 ".runtime.endpoint.DeliverAppMessage".to_string(),
                 ".runtime.endpoint.Entry".to_string(),
             ],
-            extern_paths: vec![micro_rpc_build::ExternPath::new(
-                ".oak.attestation.v1",
-                "::oak_proto_rust::oak::attestation::v1",
-            )],
+            extern_paths: vec![
+                micro_rpc_build::ExternPath::new(
+                    ".oak.attestation.v1",
+                    "::oak_proto_rust::oak::attestation::v1",
+                ),
+                micro_rpc_build::ExternPath::new(
+                    ".oak.session.v1",
+                    "::oak_proto_rust::oak::session::v1",
+                ),
+            ],
             ..Default::default()
         },
     );
