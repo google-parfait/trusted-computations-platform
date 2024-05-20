@@ -13,26 +13,20 @@
 // limitations under the License.
 
 use core::{
-    cell::{RefCell, RefMut},
+    cell::RefCell,
     hash::{Hash, Hasher},
     mem,
 };
 
 use ahash::AHasher;
-use alloc::{
-    boxed::Box,
-    rc::Rc,
-    string::String,
-    vec::{self, Vec},
-};
-use hashbrown::{HashMap, HashSet};
-use tcp_tablet_store_service::apps::tablet_store::service::TabletOpResult;
+use alloc::{boxed::Box, rc::Rc, string::String, vec::Vec};
+use hashbrown::HashMap;
 
 use crate::{
     apps::tablet_cache::service::{
         GetKeyRequest, GetKeyResponse, PutKeyRequest, PutKeyResponse, TabletContents,
     },
-    transaction::{self, TableQuery, Tablet},
+    transaction,
 };
 
 use prost::{bytes::Bytes, Message};
@@ -119,7 +113,7 @@ impl SimpleKeyValueStore {
 impl KeyValueStore for SimpleKeyValueStore {
     fn make_progress(
         &mut self,
-        instant: u64,
+        _instant: u64,
         transaction_context: &mut dyn transaction::TabletTransactionContext,
     ) {
         let mut core = self.core.borrow_mut();
@@ -279,7 +273,7 @@ impl SimpleKeyValueStoreCore {
 
     fn maybe_commit_transactions(&mut self) {
         // Check if there are any transactions with all local processing completed.
-        for (transaction_id, transaction_tracker) in &mut self.transaction_trackers {
+        for transaction_tracker in self.transaction_trackers.values_mut() {
             transaction_tracker.maybe_commit_transaction();
         }
     }
@@ -604,7 +598,7 @@ impl TransactionTracker {
                 .as_ref()
                 .is_some_and(|t| !t.has_pending_process())
         {
-            let mut transaction = mem::take(&mut self.transaction).unwrap();
+            let transaction = mem::take(&mut self.transaction).unwrap();
             self.waiting_commit = Some(transaction.commit());
         }
     }
@@ -659,7 +653,10 @@ fn create_table_query(
 
 #[cfg(all(test, feature = "std"))]
 mod tests {
+    use core::default;
+
     use tcp_runtime::util::raft::create_empty_raft_entry;
+    use tcp_tablet_store_service::apps::tablet_store::service::TabletMetadata;
 
     use super::*;
     use crate::mock::*;
@@ -747,7 +744,13 @@ mod tests {
     }
 
     fn create_tablet(tablet_id: u32, tablet_contents: &TabletContents) -> transaction::Tablet {
-        transaction::Tablet::create(tablet_id, tablet_contents.encode_to_vec().into())
+        transaction::Tablet::create(
+            TabletMetadata {
+                tablet_id,
+                ..Default::default()
+            },
+            tablet_contents.encode_to_vec().into(),
+        )
     }
 
     fn create_tablet_contents(key_values: Vec<(String, String)>) -> TabletContents {
@@ -844,10 +847,10 @@ mod tests {
             self
         }
 
-        fn expect_commit(&mut self, transaction_commit: MockTabletTransactionCommit) -> &mut Self {
+        fn expect_commit(&mut self, commit_transaction: MockTabletTransactionCommit) -> &mut Self {
             self.mock_transaction
                 .expect_commit()
-                .return_once_st(move || Box::new(transaction_commit));
+                .return_once_st(move || Box::new(commit_transaction));
             self
         }
 
@@ -863,13 +866,13 @@ mod tests {
     }
 
     struct TabletTransactionCommitBuilder {
-        mock_transaction_commit: MockTabletTransactionCommit,
+        mock_commit_transaction: MockTabletTransactionCommit,
     }
 
     impl TabletTransactionCommitBuilder {
         fn new() -> Self {
             Self {
-                mock_transaction_commit: MockTabletTransactionCommit::new(),
+                mock_commit_transaction: MockTabletTransactionCommit::new(),
             }
         }
 
@@ -877,7 +880,7 @@ mod tests {
             &mut self,
             transaction_outcome: Option<transaction::TabletTransactionOutcome>,
         ) -> &mut Self {
-            self.mock_transaction_commit
+            self.mock_commit_transaction
                 .expect_check_result()
                 .times(1)
                 .return_once_st(move || transaction_outcome);
@@ -885,7 +888,7 @@ mod tests {
         }
 
         fn take(self) -> MockTabletTransactionCommit {
-            self.mock_transaction_commit
+            self.mock_commit_transaction
         }
     }
 
@@ -905,10 +908,10 @@ mod tests {
             &table_accessor,
         );
 
-        let mut transaction_commit_builder = TabletTransactionCommitBuilder::new();
-        transaction_commit_builder
+        let mut commit_transaction_builder = TabletTransactionCommitBuilder::new();
+        commit_transaction_builder
             .expect_check_result(Some(transaction::TabletTransactionOutcome::Succeeded));
-        let mut transaction_commit = transaction_commit_builder.take();
+        let mut commit_transaction = commit_transaction_builder.take();
 
         let mut transaction_builder = TabletTransactionBuilder::new();
         transaction_builder
@@ -916,7 +919,7 @@ mod tests {
             .expect_process(vec![table_query_2.clone()])
             .expect_has_pending_process(true)
             .expect_has_pending_process(false)
-            .expect_commit(transaction_commit);
+            .expect_commit(commit_transaction);
         let (mut transaction, mut process_handler) = transaction_builder.take();
 
         let mut transaction_context_builder = TabletTransactinoContextBuilder::new();

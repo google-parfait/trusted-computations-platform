@@ -19,9 +19,7 @@ use crate::apps::tablet_store::service::*;
 use alloc::boxed::Box;
 use alloc::format;
 use alloc::string::String;
-use alloc::string::ToString;
 use alloc::vec::Vec;
-use core::default;
 use core::mem::swap;
 use hashbrown::{HashMap, HashSet};
 use prost::{bytes::Bytes, Message};
@@ -136,8 +134,8 @@ impl TableMetadata {
                 }
                 OpResult::UpdateTablet(update_tablet_result)
             }
-            Op::AddTablet(add_tablet_op) => todo!(),
-            Op::RemoveTablet(remove_tablet_op) => todo!(),
+            Op::AddTablet(_add_tablet_op) => todo!(),
+            Op::RemoveTablet(_remove_tablet_op) => todo!(),
         });
 
         op_result
@@ -151,8 +149,8 @@ impl TableMetadata {
         let mut op_result = tablet_op_prepare_result;
 
         op_result.op_result = Some(match tablet_op {
-            Op::ListTablet(list_tablet_op) => op_result.op_result.unwrap(),
-            Op::CheckTablet(check_tablet_op) => op_result.op_result.unwrap(),
+            Op::ListTablet(_list_tablet_op) => op_result.op_result.unwrap(),
+            Op::CheckTablet(_check_tablet_op) => op_result.op_result.unwrap(),
             Op::UpdateTablet(update_tablet_op) => {
                 let updated_tablet = update_tablet_op.tablet_metadata.unwrap();
                 self.tablets
@@ -391,7 +389,7 @@ impl<C: TabletConfigurator> Actor for TabletStoreActor<C> {
             Some(oneof) => match oneof {
                 InMsg::ExecuteTabletOpsRequest(_execute_tablet_ops_request) => {
                     match TabletsRequest::decode(command.payload.clone()) {
-                        Ok(tablets_request) => command.payload,
+                        Ok(_tablets_request) => command.payload,
                         Err(e) => {
                             return self.create_error_outcome(
                                 format!("Rejecting command: {}", e),
