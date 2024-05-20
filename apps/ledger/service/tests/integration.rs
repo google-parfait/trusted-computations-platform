@@ -1042,42 +1042,4 @@ mod test {
             "public key not found"
         );
     }
-
-    #[test]
-    fn test_monotonic_time() {
-        let (mut ledger, _) = create_ledger_service();
-        ledger
-            .create_key(CreateKeyRequest {
-                now: Some(prost_types::Timestamp {
-                    seconds: 1000,
-                    ..Default::default()
-                }),
-                ..Default::default()
-            })
-            .unwrap();
-
-        // Timestamps passed to the LedgerService must be non-decreasing.
-        assert_err!(
-            ledger.create_key(CreateKeyRequest {
-                now: Some(prost_types::Timestamp {
-                    seconds: 500,
-                    ..Default::default()
-                }),
-                ..Default::default()
-            }),
-            micro_rpc::StatusCode::InvalidArgument,
-            "time must be monotonic"
-        );
-        assert_err!(
-            ledger.authorize_access(AuthorizeAccessRequest {
-                now: Some(prost_types::Timestamp {
-                    seconds: 500,
-                    ..Default::default()
-                }),
-                ..Default::default()
-            }),
-            micro_rpc::StatusCode::InvalidArgument,
-            "time must be monotonic"
-        );
-    }
 }
