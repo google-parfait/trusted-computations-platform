@@ -49,6 +49,12 @@ if [ "$1" == "release" ] || [ "$1" == "debug" ]; then
     cp --preserve=timestamps -v -f \
         target/x86_64-unknown-none/$1/tcp_ledger_enclave_app \
         "${KOKORO_ARTIFACTS_DIR}/binaries/"
+    cp --preserve=timestamps -v -f \
+        target/x86_64-unknown-none/$1/tcp_tablet_cache_enclave_app \
+        "${KOKORO_ARTIFACTS_DIR}/binaries/"
+    cp --preserve=timestamps -v -f \
+        target/x86_64-unknown-none/$1/tcp_tablet_store_enclave_app \
+        "${KOKORO_ARTIFACTS_DIR}/binaries/"
   fi
 
   # Store the git commit hash in the name of an empty file, so that it can be efficiently found via a glob.
