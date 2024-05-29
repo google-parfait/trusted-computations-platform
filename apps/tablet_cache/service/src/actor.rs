@@ -14,25 +14,19 @@
 
 use crate::{
     apps::tablet_cache::service::{
-        tablet_cache_in_message::*, tablet_cache_out_message::OutMsg, LoadTabletRequest,
-        LoadTabletResponse, PutKeyRequest, StoreTabletRequest, StoreTabletResponse,
-        TabletCacheConfig, TabletCacheInMessage, TabletCacheOutMessage,
+        tablet_cache_in_message::*, tablet_cache_out_message::OutMsg, TabletCacheConfig,
+        TabletCacheInMessage, TabletCacheOutMessage,
     },
-    store,
-    transaction::{self, TabletTransactionManager},
+    store, transaction,
 };
-use alloc::{boxed::Box, rc::Rc, string::String, vec::Vec};
-use core::cell::RefCell;
+use alloc::boxed::Box;
 use prost::{bytes::Bytes, Message};
 use slog::debug;
 use tcp_runtime::model::{
     Actor, ActorCommand, ActorContext, ActorError, ActorEvent, ActorEventContext, CommandOutcome,
     EventOutcome,
 };
-use tcp_tablet_store_service::apps::tablet_store::service::{
-    ExecuteTabletOpsRequest, ExecuteTabletOpsResponse, TabletMetadata, TabletsRequest,
-    TabletsResponse,
-};
+use tcp_tablet_store_service::apps::tablet_store::service::TabletsResponse;
 
 pub struct TabletCacheActor<T: transaction::TabletTransactionManager, S: store::KeyValueStore> {
     transaction_manager: T,
@@ -116,7 +110,7 @@ impl<T: transaction::TabletTransactionManager, S: store::KeyValueStore> Actor
         if let Some(command) = command {
             let in_header = match TabletCacheInMessage::decode(command.header.clone()) {
                 Ok(in_message) => in_message.in_msg,
-                Err(e) => {
+                Err(_) => {
                     return Err(ActorError::Internal);
                 }
             };
@@ -195,11 +189,11 @@ impl<T: transaction::TabletTransactionManager, S: store::KeyValueStore> Actor
                 transaction::OutMessage::ExecuteTabletOpsRequest(
                     correlation_id,
                     execute_tablet_ops_tequest,
-                    TabletsRequest,
+                    tablets_request,
                 ) => Self::command_with_proto(
                     correlation_id,
                     OutMsg::ExecuteTabletOpsRequest(execute_tablet_ops_tequest),
-                    TabletsRequest,
+                    tablets_request,
                 ),
             });
 
@@ -224,7 +218,7 @@ impl<T: transaction::TabletTransactionManager, S: store::KeyValueStore> Actor
                     }
                 });
 
-        let mut out_commands = transaction_out_commands.chain(store_out_commands).collect();
+        let out_commands = transaction_out_commands.chain(store_out_commands).collect();
 
         Ok(CommandOutcome::with_commands(out_commands))
     }

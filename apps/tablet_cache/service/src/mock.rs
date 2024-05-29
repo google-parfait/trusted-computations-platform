@@ -16,11 +16,11 @@
 
 extern crate mockall;
 
-use crate::transaction::{
-    TableQuery, Tablet, TabletDescriptor, TabletTransaction, TabletTransactionCommit,
-    TabletTransactionContext, TabletTransactionOutcome,
-};
+use crate::apps::tablet_cache::service::*;
+use crate::transaction::*;
 use mockall::mock;
+use prost::bytes::Bytes;
+use tcp_tablet_store_service::apps::tablet_store::service::*;
 
 mock! {
     pub TabletTransactionContext {
@@ -64,5 +64,84 @@ mock! {
 
     impl TabletTransactionCommit for TabletTransactionCommit {
         fn check_result(&mut self) -> Option<TabletTransactionOutcome>;
+    }
+}
+
+mock! {
+    pub TabletDataCache {
+    }
+
+    impl TabletDataCache for TabletDataCache {
+        fn make_progress(&mut self, instant: u64);
+
+        fn load_tablets(
+            &mut self,
+            metadata: &Vec<TabletMetadata>,
+        ) -> ResultHandle<Vec<(TabletMetadata, Bytes)>, TabletDataStorageStatus>;
+
+        fn store_tablets<'a>(
+            &mut self,
+            data: &mut Vec<(&'a mut TabletMetadata, Bytes)>,
+        ) -> ResultHandle<(), TabletDataStorageStatus>;
+
+        fn process_in_message(&mut self, in_message: TabletDataCacheInMessage);
+
+        fn take_out_messages(&mut self) -> Vec<TabletDataCacheOutMessage>;
+    }
+}
+
+mock! {
+    pub TabletMetadataCache {
+    }
+
+    impl TabletMetadataCache for TabletMetadataCache {
+        fn make_progress(&mut self, instant: u64);
+
+        fn resolve_tablets(
+            &mut self,
+            queries: &Vec<TableQuery>,
+        ) -> ResultHandle<Vec<(TableQuery, TabletMetadata)>, TabletsRequestStatus>;
+
+        fn update_tablet(&mut self, metadata: TabletMetadata);
+
+        fn process_in_message(&mut self, in_message: TabletMetadataCacheInMessage);
+
+        fn take_out_messages(&mut self) -> Vec<TabletMetadataCacheOutMessage>;
+    }
+}
+
+mock! {
+    pub TabletTransactionCoordinator {
+    }
+
+    impl TabletTransactionCoordinator for TabletTransactionCoordinator {
+        fn make_progress(
+            &mut self,
+            instant: u64,
+            metadata_cache: &mut dyn TabletMetadataCache,
+            data_cache: &mut dyn TabletDataCache,
+        );
+
+        fn process_in_message(&mut self, in_message: TabletTransactionCoordinatorInMessage);
+
+        fn take_out_messages(&mut self) -> Vec<TabletTransactionCoordinatorOutMessage>;
+
+        fn create_transaction(&mut self) -> u64;
+
+        fn process_transaction(
+            &mut self,
+            transaction_id: u64,
+            queries: Vec<TableQuery>,
+            handler: Box<ProcessHandler>,
+        );
+
+        fn has_transaction_pending_process(&self, transaction_id: u64) -> bool;
+
+        fn commit_transaction(&mut self, transaction_id: u64);
+
+        fn abort_transaction(&mut self, transaction_id: u64);
+
+        fn check_transaction_result(&mut self, transaction_id: u64)
+            -> Option<TabletTransactionOutcome>;
     }
 }
