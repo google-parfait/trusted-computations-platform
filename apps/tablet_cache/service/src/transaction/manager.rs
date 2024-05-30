@@ -39,21 +39,21 @@ use super::{
     TabletTransactionOutcome,
 };
 
-const TRANSACTION_COORDINATOR_CORRELATION_COUNTER: u64 = 1 << 56;
-
 pub struct DefaultTabletTransactionManager {
     core: Rc<RefCell<TabletTransactionManagerCore>>,
 }
 
 impl DefaultTabletTransactionManager {
-    pub fn create(data_cache_capacity: u64) -> Self {
+    pub fn create(
+        transaction_coordinator: Box<dyn TabletTransactionCoordinator>,
+        metadata_cache: Box<dyn TabletMetadataCache>,
+        data_cache: Box<dyn TabletDataCache>,
+    ) -> Self {
         Self {
             core: Rc::new(RefCell::new(TabletTransactionManagerCore::create(
-                Box::new(DefaultTabletTransactionCoordinator::create(
-                    TRANSACTION_COORDINATOR_CORRELATION_COUNTER,
-                )),
-                Box::new(DefaultTabletMetadataCache::create()),
-                Box::new(DefaultTabletDataCache::create(data_cache_capacity)),
+                transaction_coordinator,
+                metadata_cache,
+                data_cache,
             ))),
         }
     }

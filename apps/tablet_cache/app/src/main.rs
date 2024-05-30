@@ -29,9 +29,15 @@ use oak_restricted_kernel_sdk::{
 use tcp_proto::runtime::endpoint::EndpointServiceServer;
 use tcp_runtime::service::ApplicationService;
 use tcp_tablet_cache_service::{
-    actor::TabletCacheActor, store::SimpleKeyValueStore,
-    transaction::manager::DefaultTabletTransactionManager,
+    actor::TabletCacheActor,
+    store::SimpleKeyValueStore,
+    transaction::{
+        coordinator::DefaultTabletTransactionCoordinator, data::DefaultTabletDataCache,
+        manager::DefaultTabletTransactionManager, metadata::DefaultTabletMetadataCache,
+    },
 };
+
+const TRANSACTION_COORDINATOR_CORRELATION_COUNTER: u64 = 1 << 56;
 
 #[entrypoint]
 fn run_server() -> ! {
@@ -43,7 +49,13 @@ fn run_server() -> ! {
     let service: ApplicationService<
         TabletCacheActor<DefaultTabletTransactionManager, SimpleKeyValueStore>,
     > = ApplicationService::new(TabletCacheActor::new(
-        DefaultTabletTransactionManager::create(1024 * 1024 * 1024 * 16),
+        DefaultTabletTransactionManager::create(
+            Box::new(DefaultTabletTransactionCoordinator::create(
+                TRANSACTION_COORDINATOR_CORRELATION_COUNTER,
+            )),
+            Box::new(DefaultTabletMetadataCache::create()),
+            Box::new(DefaultTabletDataCache::create(1024 * 1024 * 1024 * 16)),
+        ),
         SimpleKeyValueStore::create("map".to_string(), 100, 100),
     ));
     let server = EndpointServiceServer::new(service);
