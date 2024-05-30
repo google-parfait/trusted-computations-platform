@@ -17,7 +17,7 @@
 extern crate mockall;
 
 use crate::apps::tablet_cache::service::*;
-use crate::transaction::*;
+use crate::transaction::{coordinator::*, data::*, manager::*, metadata::*, result::*, *};
 use mockall::mock;
 use prost::bytes::Bytes;
 use tcp_tablet_store_service::apps::tablet_store::service::*;

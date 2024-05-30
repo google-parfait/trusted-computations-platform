@@ -30,7 +30,7 @@ use tcp_proto::runtime::endpoint::EndpointServiceServer;
 use tcp_runtime::service::ApplicationService;
 use tcp_tablet_cache_service::{
     actor::TabletCacheActor, store::SimpleKeyValueStore,
-    transaction::SimpleTabletTransactionManager,
+    transaction::manager::DefaultTabletTransactionManager,
 };
 
 #[entrypoint]
@@ -41,9 +41,9 @@ fn run_server() -> ! {
 
     let mut invocation_stats = StaticSampleStore::<1000>::new().unwrap();
     let service: ApplicationService<
-        TabletCacheActor<SimpleTabletTransactionManager, SimpleKeyValueStore>,
+        TabletCacheActor<DefaultTabletTransactionManager, SimpleKeyValueStore>,
     > = ApplicationService::new(TabletCacheActor::new(
-        SimpleTabletTransactionManager::create(1024 * 1024 * 1024 * 16),
+        DefaultTabletTransactionManager::create(1024 * 1024 * 1024 * 16),
         SimpleKeyValueStore::create("map".to_string(), 100, 100),
     ));
     let server = EndpointServiceServer::new(service);
