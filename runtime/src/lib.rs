@@ -24,6 +24,7 @@ extern crate oak_attestation;
 extern crate oak_attestation_verification;
 extern crate oak_proto_rust;
 extern crate oak_restricted_kernel_sdk;
+extern crate oak_session;
 extern crate prost;
 extern crate raft;
 extern crate slog;

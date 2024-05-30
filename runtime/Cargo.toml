@@ -22,6 +22,7 @@ oak_attestation_verification = {workspace = true}
 oak_crypto = { workspace = true }
 oak_proto_rust = {workspace = true}
 oak_restricted_kernel_sdk = {workspace = true}
+oak_session = {workspace = true}
 mockall = { version = "0.11.4", optional = true }
 
 [dev-dependencies]
