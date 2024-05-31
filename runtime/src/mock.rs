@@ -18,6 +18,7 @@ extern crate mockall;
 extern crate tcp_proto;
 
 use self::mockall::mock;
+use attestation::{Attestation, AttestationProvider, ClientAttestation, ServerAttestation};
 use communication::CommunicationModule;
 use consensus;
 use consensus::{Raft, RaftLightReady, RaftReady, Store};
@@ -25,6 +26,10 @@ use handshake::{HandshakeSession, HandshakeSessionProvider, Role};
 use model::{
     Actor, ActorCommand, ActorContext, ActorError, ActorEvent, ActorEventContext, CommandOutcome,
     EventOutcome,
+};
+use oak_proto_rust::oak::{
+    attestation::v1::AttestationResults,
+    session::v1::{AttestRequest, AttestResponse},
 };
 use platform::{Host, PalError};
 use prost::bytes::Bytes;
@@ -279,5 +284,46 @@ mock! {
         fn take_out_message(&mut self) -> Option<SecureChannelHandshake>;
 
         fn is_completed(&self) -> bool;
+    }
+}
+
+mock! {
+    pub AttestationProvider {
+    }
+
+    impl AttestationProvider for AttestationProvider {
+        fn get_client_attestation(&self) -> Box<dyn ClientAttestation>;
+
+        fn get_server_attestation(&self) -> Box<dyn ServerAttestation>;
+    }
+}
+
+mock! {
+    pub ClientAttestation {
+    }
+
+    impl Attestation<AttestResponse, AttestRequest> for ClientAttestation {
+        fn get_attestation_results(self) -> Option<AttestationResults>;
+
+        fn get_outgoing_message(&mut self) -> Result<Option<AttestRequest>, PalError>;
+
+        fn put_incoming_message(
+            &mut self,
+            incoming_message: &AttestResponse) -> Result<Option<()>, PalError>;
+    }
+}
+
+mock! {
+    pub ServerAttestation {
+    }
+
+    impl Attestation<AttestRequest, AttestResponse> for ServerAttestation {
+        fn get_attestation_results(self) -> Option<AttestationResults>;
+
+        fn get_outgoing_message(&mut self) -> Result<Option<AttestResponse>, PalError>;
+
+        fn put_incoming_message(
+            &mut self,
+            incoming_message: &AttestRequest) -> Result<Option<()>, PalError>;
     }
 }

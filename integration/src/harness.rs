@@ -21,6 +21,7 @@ use prost::bytes::Bytes;
 use slog::{info, Logger};
 use tcp_proto::runtime::endpoint::raft_config::SnapshotConfig;
 use tcp_proto::runtime::endpoint::*;
+use tcp_runtime::attestation::DefaultAttestationProvider;
 use tcp_runtime::communication::DefaultCommunicationModule;
 use tcp_runtime::driver::Driver;
 use tcp_runtime::handshake::DefaultHandshakeSessionProvider;
@@ -276,7 +277,9 @@ impl<A: Actor> FakePlatform<A> {
                     Box::new(DefaultSnapshotReceiver::new()),
                 ),
                 actor,
-                DefaultCommunicationModule::new(Box::new(DefaultHandshakeSessionProvider {})),
+                DefaultCommunicationModule::new(Box::new(DefaultHandshakeSessionProvider::new(
+                    Box::new(DefaultAttestationProvider {}),
+                ))),
             )),
             host: RefCell::new(FakeHost::new(app_config)),
         }

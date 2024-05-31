@@ -13,6 +13,7 @@
 // limitations under the License.
 
 #![feature(trait_upcasting)]
+#![feature(trait_alias)]
 #![cfg_attr(not(feature = "std"), no_std)]
 #![cfg_attr(not(feature = "std"), feature(error_in_core))]
 
@@ -30,6 +31,7 @@ extern crate raft;
 extern crate slog;
 extern crate tcp_proto;
 
+pub mod attestation;
 pub mod communication;
 pub mod consensus;
 pub mod driver;

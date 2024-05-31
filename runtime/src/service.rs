@@ -17,6 +17,7 @@ extern crate micro_rpc;
 extern crate prost;
 extern crate tcp_proto;
 
+use crate::attestation::DefaultAttestationProvider;
 use crate::communication::DefaultCommunicationModule;
 use crate::handshake::DefaultHandshakeSessionProvider;
 use crate::model::Actor;
@@ -81,7 +82,9 @@ impl<A: Actor> ApplicationService<A> {
                     Box::new(DefaultSnapshotReceiver::new()),
                 ),
                 actor,
-                DefaultCommunicationModule::new(Box::new(DefaultHandshakeSessionProvider {})),
+                DefaultCommunicationModule::new(Box::new(DefaultHandshakeSessionProvider::new(
+                    Box::new(DefaultAttestationProvider {}),
+                ))),
             ),
         }
     }
