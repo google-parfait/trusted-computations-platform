@@ -17,6 +17,7 @@
 #![feature(alloc_error_handler)]
 
 extern crate alloc;
+extern crate prost;
 extern crate tcp_proto;
 extern crate tcp_runtime;
 
@@ -26,14 +27,17 @@ use oak_restricted_kernel_sdk::{
     entrypoint,
     utils::{log, samplestore::StaticSampleStore},
 };
+use prost::bytes::Bytes;
 use tcp_proto::runtime::endpoint::EndpointServiceServer;
 use tcp_runtime::service::ApplicationService;
 use tcp_tablet_cache_service::{
     actor::TabletCacheActor,
     store::SimpleKeyValueStore,
     transaction::{
-        coordinator::DefaultTabletTransactionCoordinator, data::DefaultTabletDataCache,
-        manager::DefaultTabletTransactionManager, metadata::DefaultTabletMetadataCache,
+        coordinator::DefaultTabletTransactionCoordinator,
+        data::{BytesTabletDataSerializer, DefaultTabletDataCache},
+        manager::DefaultTabletTransactionManager,
+        metadata::DefaultTabletMetadataCache,
     },
 };
 
@@ -47,14 +51,17 @@ fn run_server() -> ! {
 
     let mut invocation_stats = StaticSampleStore::<1000>::new().unwrap();
     let service: ApplicationService<
-        TabletCacheActor<DefaultTabletTransactionManager, SimpleKeyValueStore>,
+        TabletCacheActor<DefaultTabletTransactionManager<Bytes>, SimpleKeyValueStore>,
     > = ApplicationService::new(TabletCacheActor::new(
         DefaultTabletTransactionManager::create(
             Box::new(DefaultTabletTransactionCoordinator::create(
                 TRANSACTION_COORDINATOR_CORRELATION_COUNTER,
             )),
             Box::new(DefaultTabletMetadataCache::create()),
-            Box::new(DefaultTabletDataCache::create(1024 * 1024 * 1024 * 16)),
+            Box::new(DefaultTabletDataCache::create(
+                1024 * 1024 * 1024 * 16,
+                Box::new(BytesTabletDataSerializer {}),
+            )),
         ),
         SimpleKeyValueStore::create("map".to_string(), 100, 100),
     ));

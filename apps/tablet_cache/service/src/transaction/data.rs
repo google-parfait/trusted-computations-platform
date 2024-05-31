@@ -12,7 +12,9 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-use alloc::vec::Vec;
+use core::{cell::RefCell, ops::Deref};
+
+use alloc::{boxed::Box, rc::Rc, string::String, vec::Vec};
 use prost::bytes::Bytes;
 use tcp_tablet_store_service::apps::tablet_store::service::TabletMetadata;
 
@@ -37,7 +39,10 @@ pub enum TabletDataCacheOutMessage {
 
 // Maintains cache of recently used tablet data. Tablet data cache follows soft capacity
 // limit but may temporarily grow larger than configured.
-pub trait TabletDataCache {
+//
+// Type parameter T represents a union type for the tablet data representation. For example
+// it can be a protobuf message with a oneof representing specific tables.
+pub trait TabletDataCache<T> {
     // Advances internal state machine of the tablet data cache.
     fn make_progress(&mut self, instant: u64);
 
@@ -48,7 +53,7 @@ pub trait TabletDataCache {
     fn load_tablets(
         &mut self,
         metadata: &Vec<TabletMetadata>,
-    ) -> ResultHandle<Vec<(TabletMetadata, Bytes)>, TabletDataStorageStatus>;
+    ) -> ResultHandle<Vec<(TabletMetadata, TabletData<T>)>, TabletDataStorageStatus>;
 
     // Requests to store and cache provided tablet data. Returned result handle must be
     // checked for the operation completion. The operation is completed only when all requested
@@ -57,7 +62,7 @@ pub trait TabletDataCache {
     // reflect new version of the tablet.
     fn store_tablets(
         &mut self,
-        data: &mut Vec<(&mut TabletMetadata, Bytes)>,
+        data: &mut Vec<(&mut TabletMetadata, T)>,
     ) -> ResultHandle<(), TabletDataStorageStatus>;
 
     // Processes incoming messages. Message may contain load or store tablet responses.
@@ -67,17 +72,77 @@ pub trait TabletDataCache {
     fn take_out_messages(&mut self) -> Vec<TabletDataCacheOutMessage>;
 }
 
-pub struct DefaultTabletDataCache {}
+// Represents a readonly shared access to the strongly typed tablet data.
+pub struct TabletData<T> {
+    data: Rc<T>,
+}
 
-impl DefaultTabletDataCache {
-    // Creates new tablet data cache with given capacity. Configured capacity is considered
-    // a soft limit. Tablet data cache may grow larger temporarily than requested capacity.
-    pub fn create(cache_capacity: u64) -> Self {
-        Self {}
+impl<T> TabletData<T> {
+    pub fn create(t: T) -> Self {
+        Self { data: Rc::new(t) }
     }
 }
 
-impl TabletDataCache for DefaultTabletDataCache {
+impl<T> Deref for TabletData<T> {
+    type Target = T;
+
+    fn deref(&self) -> &Self::Target {
+        self.data.as_ref()
+    }
+}
+
+impl<T> Clone for TabletData<T> {
+    fn clone(&self) -> Self {
+        Self {
+            data: self.data.clone(),
+        }
+    }
+}
+
+// Represents serializer that is used to serialize and deserialize tablet
+// data during storing and loading, to measure tablet data size for the
+// purpose of tablet data cache bookkeeping.
+pub trait TabletDataSerializer<T> {
+    fn serialize(&self, tablet_object: &T) -> Result<Bytes, ()>;
+
+    fn deserialize(&self, table_name: &String, tablet_data: Bytes) -> Result<T, ()>;
+
+    fn get_size(&self, tablet_object: &T) -> usize;
+}
+
+// Serializer for the tablet data represented by raw bytes.
+pub struct BytesTabletDataSerializer {}
+
+impl TabletDataSerializer<Bytes> for BytesTabletDataSerializer {
+    fn serialize(&self, tablet_object: &Bytes) -> Result<Bytes, ()> {
+        Ok(tablet_object.clone())
+    }
+
+    fn deserialize(&self, table_name: &String, tablet_data: Bytes) -> Result<Bytes, ()> {
+        Ok(tablet_data)
+    }
+
+    fn get_size(&self, tablet_object: &Bytes) -> usize {
+        tablet_object.len()
+    }
+}
+
+pub struct DefaultTabletDataCache<T> {
+    dummy: Option<T>,
+}
+
+impl<T> DefaultTabletDataCache<T> {
+    // Creates new tablet data cache with given capacity. Configured capacity is considered
+    // a soft limit. Tablet data cache may grow larger temporarily than requested capacity.
+    pub fn create(
+        _cache_capacity: u64,
+        _tablet_serializer: Box<dyn TabletDataSerializer<T>>,
+    ) -> Self {
+        Self { dummy: None }
+    }
+}
+
+impl<T> TabletDataCache<T> for DefaultTabletDataCache<T> {
     fn make_progress(&mut self, _instant: u64) {
         todo!()
     }
@@ -85,13 +150,13 @@ impl TabletDataCache for DefaultTabletDataCache {
     fn load_tablets(
         &mut self,
         _metadata: &Vec<TabletMetadata>,
-    ) -> ResultHandle<Vec<(TabletMetadata, Bytes)>, TabletDataStorageStatus> {
+    ) -> ResultHandle<Vec<(TabletMetadata, TabletData<T>)>, TabletDataStorageStatus> {
         todo!()
     }
 
     fn store_tablets(
         &mut self,
-        _data: &mut Vec<(&mut TabletMetadata, Bytes)>,
+        _data: &mut Vec<(&mut TabletMetadata, T)>,
     ) -> ResultHandle<(), TabletDataStorageStatus> {
         todo!()
     }

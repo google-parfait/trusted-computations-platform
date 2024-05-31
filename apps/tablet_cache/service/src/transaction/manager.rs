@@ -39,18 +39,18 @@ use super::{
     TabletTransactionOutcome,
 };
 
-pub struct DefaultTabletTransactionManager {
-    core: Rc<RefCell<TabletTransactionManagerCore>>,
+pub struct DefaultTabletTransactionManager<T> {
+    core: Rc<RefCell<TabletTransactionManagerCore<T>>>,
 }
 
-impl DefaultTabletTransactionManager {
+impl<T> DefaultTabletTransactionManager<T> {
     pub fn create(
-        transaction_coordinator: Box<dyn TabletTransactionCoordinator>,
+        transaction_coordinator: Box<dyn TabletTransactionCoordinator<T>>,
         metadata_cache: Box<dyn TabletMetadataCache>,
-        data_cache: Box<dyn TabletDataCache>,
+        data_cache: Box<dyn TabletDataCache<T>>,
     ) -> Self {
         Self {
-            core: Rc::new(RefCell::new(TabletTransactionManagerCore::create(
+            core: Rc::new(RefCell::new(TabletTransactionManagerCore::<T>::create(
                 transaction_coordinator,
                 metadata_cache,
                 data_cache,
@@ -59,7 +59,7 @@ impl DefaultTabletTransactionManager {
     }
 }
 
-impl TabletTransactionManager for DefaultTabletTransactionManager {
+impl<T: 'static> TabletTransactionManager<T> for DefaultTabletTransactionManager<T> {
     fn init(&mut self, _capacity: u64) {
         todo!()
     }
@@ -77,12 +77,12 @@ impl TabletTransactionManager for DefaultTabletTransactionManager {
     }
 }
 
-impl TabletTransactionContext for DefaultTabletTransactionManager {
+impl<T: 'static> TabletTransactionContext<T> for DefaultTabletTransactionManager<T> {
     fn resolve(&mut self, _queries: Vec<TableQuery>, _handler: Box<ResolveHandler>) {
         todo!()
     }
 
-    fn start_transaction(&mut self) -> Box<dyn TabletTransaction> {
+    fn start_transaction(&mut self) -> Box<dyn TabletTransaction<T>> {
         Box::new(DefaultTabletTransaction::create(
             self.core.borrow_mut().create_transaction(),
             self.core.clone(),
@@ -90,14 +90,14 @@ impl TabletTransactionContext for DefaultTabletTransactionManager {
     }
 }
 
-struct DefaultTabletTransaction {
+struct DefaultTabletTransaction<T> {
     transaction_id: u64,
     transaction_outcome: Option<TabletTransactionOutcome>,
-    core: Rc<RefCell<TabletTransactionManagerCore>>,
+    core: Rc<RefCell<TabletTransactionManagerCore<T>>>,
 }
 
-impl DefaultTabletTransaction {
-    fn create(transaction_id: u64, core: Rc<RefCell<TabletTransactionManagerCore>>) -> Self {
+impl<T> DefaultTabletTransaction<T> {
+    fn create(transaction_id: u64, core: Rc<RefCell<TabletTransactionManagerCore<T>>>) -> Self {
         Self {
             transaction_id,
             transaction_outcome: None,
@@ -106,12 +106,12 @@ impl DefaultTabletTransaction {
     }
 }
 
-impl TabletTransaction for DefaultTabletTransaction {
+impl<T: 'static> TabletTransaction<T> for DefaultTabletTransaction<T> {
     fn get_id(&self) -> u64 {
         self.transaction_id
     }
 
-    fn process(&mut self, queries: Vec<TableQuery>, handler: Box<ProcessHandler>) {
+    fn process(&mut self, queries: Vec<TableQuery>, handler: Box<ProcessHandler<T>>) {
         self.core
             .borrow_mut()
             .process_transaction(self.transaction_id, queries, handler)
@@ -137,7 +137,7 @@ impl TabletTransaction for DefaultTabletTransaction {
     }
 }
 
-impl TabletTransactionCommit for DefaultTabletTransaction {
+impl<T> TabletTransactionCommit for DefaultTabletTransaction<T> {
     fn check_result(&mut self) -> Option<TabletTransactionOutcome> {
         if self.transaction_outcome.is_none() {
             self.transaction_outcome = self
@@ -151,18 +151,18 @@ impl TabletTransactionCommit for DefaultTabletTransaction {
 
 // Manages tablet transaction execution. Coordinates metadata and data
 // loading and updating.
-struct TabletTransactionManagerCore {
-    transaction_coordinator: Box<dyn TabletTransactionCoordinator>,
+struct TabletTransactionManagerCore<T> {
+    transaction_coordinator: Box<dyn TabletTransactionCoordinator<T>>,
     metadata_cache: Box<dyn TabletMetadataCache>,
-    data_cache: Box<dyn TabletDataCache>,
+    data_cache: Box<dyn TabletDataCache<T>>,
 }
 
 // Delegates processing to metadata cache, data cache and transaction coordinator.
-impl TabletTransactionManagerCore {
+impl<T> TabletTransactionManagerCore<T> {
     fn create(
-        transaction_coordinator: Box<dyn TabletTransactionCoordinator>,
+        transaction_coordinator: Box<dyn TabletTransactionCoordinator<T>>,
         metadata_cache: Box<dyn TabletMetadataCache>,
-        data_cache: Box<dyn TabletDataCache>,
+        data_cache: Box<dyn TabletDataCache<T>>,
     ) -> Self {
         Self {
             transaction_coordinator,
@@ -185,7 +185,7 @@ impl TabletTransactionManagerCore {
         &mut self,
         transaction_id: u64,
         queries: Vec<TableQuery>,
-        handler: Box<ProcessHandler>,
+        handler: Box<ProcessHandler<T>>,
     ) {
         self.transaction_coordinator
             .process_transaction(transaction_id, queries, handler)

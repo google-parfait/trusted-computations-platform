@@ -28,13 +28,18 @@ use tcp_runtime::model::{
 };
 use tcp_tablet_store_service::apps::tablet_store::service::TabletsResponse;
 
-pub struct TabletCacheActor<T: transaction::TabletTransactionManager, S: store::KeyValueStore> {
+pub struct TabletCacheActor<
+    T: transaction::TabletTransactionManager<Bytes>,
+    S: store::KeyValueStore,
+> {
     transaction_manager: T,
     key_value_store: S,
     context: Option<Box<dyn ActorContext>>,
 }
 
-impl<T: transaction::TabletTransactionManager, S: store::KeyValueStore> TabletCacheActor<T, S> {
+impl<T: transaction::TabletTransactionManager<Bytes>, S: store::KeyValueStore>
+    TabletCacheActor<T, S>
+{
     pub fn new(transaction_manager: T, key_value_store: S) -> Self {
         TabletCacheActor {
             transaction_manager,
@@ -77,7 +82,7 @@ impl<T: transaction::TabletTransactionManager, S: store::KeyValueStore> TabletCa
     }
 }
 
-impl<T: transaction::TabletTransactionManager, S: store::KeyValueStore> Actor
+impl<T: transaction::TabletTransactionManager<Bytes>, S: store::KeyValueStore> Actor
     for TabletCacheActor<T, S>
 {
     fn on_init(&mut self, context: Box<dyn ActorContext>) -> Result<(), ActorError> {

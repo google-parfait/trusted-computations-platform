@@ -15,6 +15,7 @@
 use core::{cell::RefCell, clone::Clone, mem};
 
 use alloc::{boxed::Box, rc::Rc, string::String, vec::Vec};
+use data::TabletData;
 use prost::bytes::Bytes;
 use tcp_tablet_store_service::apps::tablet_store::service::{
     tablet_op, tablet_op_result::OpResult, CheckTabletOp, TabletMetadata, TabletOp, TabletOpResult,
@@ -63,7 +64,10 @@ pub enum OutMessage {
 // an adapter for the tablet store that is responsible for transactional
 // management of the tablet metadata and tablet data storage that is responsible
 // for the tablet data storage.
-pub trait TabletTransactionManager: TabletTransactionContext {
+//
+// Type parameter T represents a union type for the tablet data representation. For example
+// it can be a protobuf message with a oneof representing specific tables.
+pub trait TabletTransactionManager<T>: TabletTransactionContext<T> {
     // Initializes transaction manager with tablet cache capacity.
     fn init(&mut self, cache_capacity: u64);
 
@@ -83,13 +87,16 @@ pub trait TabletTransactionManager: TabletTransactionContext {
 pub type ResolveHandler = dyn FnMut(Vec<(TableQuery, TabletDescriptor)>) -> ();
 
 // Provides ability to map keys to tablets and initiate tablet transactions.
-pub trait TabletTransactionContext {
+//
+// Type parameter T represents a union type for the tablet data representation. For example
+// it can be a protobuf message with a oneof representing specific tables.
+pub trait TabletTransactionContext<T> {
     // Requests to map keys in a given table to corresponding tablets.
     // Provided handler will be called once resolution is complete.
     fn resolve(&mut self, queries: Vec<TableQuery>, handler: Box<ResolveHandler>);
 
     // Starts a new transaction. Multiple concurrent transactions may coexist.
-    fn start_transaction(&mut self) -> Box<dyn TabletTransaction>;
+    fn start_transaction(&mut self) -> Box<dyn TabletTransaction<T>>;
 }
 
 // Provides succint tablet metadata and contents. Enables transaction to
@@ -97,48 +104,64 @@ pub trait TabletTransactionContext {
 // will produce a check tablet operation to make sure its version hasn't
 // changed. If tablet contens has been updated, transaction manager
 // will produce an update tablet operation.
-#[derive(Default, PartialEq, Debug, Clone)]
-pub struct Tablet {
-    tablet_metadata: TabletMetadata,
-    tablet_contents: Bytes,
+#[derive(Clone)]
+//
+// Type parameter T represents a union type for the tablet data representation. For example
+// it can be a protobuf message with a oneof representing specific tables.
+pub struct Tablet<T> {
+    metadata: TabletMetadata,
+    contents: Option<TabletData<T>>,
+    updated_contents: Option<T>,
     is_dirty: bool,
 }
 
-impl Tablet {
-    pub fn create(tablet_metadata: TabletMetadata, tablet_contents: Bytes) -> Tablet {
+impl<T> Tablet<T> {
+    pub fn create(tablet_metadata: TabletMetadata) -> Tablet<T> {
         Tablet {
-            tablet_metadata,
-            tablet_contents,
+            metadata: tablet_metadata,
+            contents: None,
+            updated_contents: None,
+            is_dirty: false,
+        }
+    }
+
+    pub fn create_with_contents(tablet_metadata: TabletMetadata, tablet_contents: T) -> Tablet<T> {
+        Tablet {
+            metadata: tablet_metadata,
+            contents: Some(TabletData::create(tablet_contents)),
+            updated_contents: None,
             is_dirty: false,
         }
     }
 
     // Gets tablet id.
     pub fn get_id(&self) -> u32 {
-        self.tablet_metadata.tablet_id
+        self.metadata.tablet_id
     }
 
     fn get_metadata(&self) -> &TabletMetadata {
-        &self.tablet_metadata
+        &self.metadata
     }
 
     // Gets metadata describing this tablet.
     fn get_metadata_mut(&mut self) -> &mut TabletMetadata {
-        &mut self.tablet_metadata
+        &mut self.metadata
     }
 
     // Gets tablet contents.
-    pub fn get_contents(&self) -> Bytes {
-        self.tablet_contents.clone()
+    pub fn get_contents(&self) -> &T {
+        self.contents.as_ref().unwrap()
     }
 
-    // Updates tablet contents.
-    pub fn set_contents(&mut self, contents: Bytes) {
-        self.tablet_contents = contents;
+    pub fn set_contents(&mut self, contents: T) {
         self.is_dirty = true;
+        self.updated_contents = Some(contents);
     }
 
-    // Indicates if tablet contents has been updated.
+    pub fn take_updated_contents(&mut self) -> Option<T> {
+        mem::take(&mut self.updated_contents)
+    }
+
     pub fn is_dirty(&self) -> bool {
         self.is_dirty
     }
@@ -210,20 +233,23 @@ impl TableQuery {
     }
 }
 
-pub type ProcessHandler = dyn FnMut(u64, Vec<(TableQuery, &mut Tablet)>) -> ();
+pub type ProcessHandler<T> = dyn FnMut(u64, Vec<(TableQuery, &mut Tablet<T>)>) -> ();
 
 // Represents a tablet processing transaction. Transaction records reads and writes
 // made to a set of tablets and then on commit turns them into set of check and
 // update tablet ops. Once created the consumer may request several times to
 // process tablets where processing may result in updated tablet data. Updated
 // tablet will result in an update tablet op, otherwise check tablet op.
-pub trait TabletTransaction {
+//
+// Type parameter T represents a union type for the tablet data representation. For example
+// it can be a protobuf message with a oneof representing specific tables.
+pub trait TabletTransaction<T> {
     fn get_id(&self) -> u64;
 
     // Requests to process tablets covered by the given query. Essentially the
     // contents for the covered tabelts must be loaded into cache. Once available
     // provided handler can be called to allow consumer read and write tablet data.
-    fn process(&mut self, queries: Vec<TableQuery>, handler: Box<ProcessHandler>);
+    fn process(&mut self, queries: Vec<TableQuery>, handler: Box<ProcessHandler<T>>);
 
     // Indicates if transaction has any pending process requests.
     fn has_pending_process(&self) -> bool;
