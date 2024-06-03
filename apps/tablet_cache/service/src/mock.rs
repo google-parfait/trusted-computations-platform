@@ -23,31 +23,31 @@ use prost::bytes::Bytes;
 use tcp_tablet_store_service::apps::tablet_store::service::*;
 
 mock! {
-    pub TabletTransactionContext {
+    pub TabletTransactionContext<T> {
     }
 
-    impl TabletTransactionContext for TabletTransactionContext {
+    impl<T> TabletTransactionContext<T> for TabletTransactionContext<T> {
         fn resolve(
             &mut self,
             queries: Vec<TableQuery>,
             handler: Box<dyn FnMut(Vec<(TableQuery, TabletDescriptor)>) -> ()>,
         );
 
-        fn start_transaction(&mut self) -> Box<dyn TabletTransaction>;
+        fn start_transaction(&mut self) -> Box<dyn TabletTransaction<T>>;
     }
 }
 
 mock! {
-    pub TabletTransaction {
+    pub TabletTransaction<T> {
     }
 
-    impl TabletTransaction for TabletTransaction {
+    impl<T> TabletTransaction<T> for TabletTransaction<T> {
         fn get_id(&self) -> u64;
 
         fn process(
             &mut self,
             queries: Vec<TableQuery>,
-            handler: Box<dyn FnMut(u64, Vec<(TableQuery, &mut Tablet)>) -> ()>,
+            handler: Box<dyn FnMut(u64, Vec<(TableQuery, &mut Tablet<T>)>) -> ()>,
         );
 
         fn has_pending_process(&self) -> bool;
@@ -68,20 +68,20 @@ mock! {
 }
 
 mock! {
-    pub TabletDataCache {
+    pub TabletDataCache<T> {
     }
 
-    impl TabletDataCache for TabletDataCache {
+    impl<T> TabletDataCache<T> for TabletDataCache<T> {
         fn make_progress(&mut self, instant: u64);
 
         fn load_tablets(
             &mut self,
             metadata: &Vec<TabletMetadata>,
-        ) -> ResultHandle<Vec<(TabletMetadata, Bytes)>, TabletDataStorageStatus>;
+        ) -> ResultHandle<Vec<(TabletMetadata, TabletData<T>)>, TabletDataStorageStatus>;
 
         fn store_tablets<'a>(
             &mut self,
-            data: &mut Vec<(&'a mut TabletMetadata, Bytes)>,
+            data: &mut Vec<(&'a mut TabletMetadata, T)>,
         ) -> ResultHandle<(), TabletDataStorageStatus>;
 
         fn process_in_message(&mut self, in_message: TabletDataCacheInMessage);
@@ -111,15 +111,15 @@ mock! {
 }
 
 mock! {
-    pub TabletTransactionCoordinator {
+    pub TabletTransactionCoordinator<T> {
     }
 
-    impl TabletTransactionCoordinator for TabletTransactionCoordinator {
+    impl<T> TabletTransactionCoordinator<T> for TabletTransactionCoordinator<T> {
         fn make_progress(
             &mut self,
             instant: u64,
             metadata_cache: &mut dyn TabletMetadataCache,
-            data_cache: &mut dyn TabletDataCache,
+            data_cache: &mut dyn TabletDataCache<T>,
         );
 
         fn process_in_message(&mut self, in_message: TabletTransactionCoordinatorInMessage);
@@ -132,7 +132,7 @@ mock! {
             &mut self,
             transaction_id: u64,
             queries: Vec<TableQuery>,
-            handler: Box<ProcessHandler>,
+            handler: Box<ProcessHandler<T>>,
         );
 
         fn has_transaction_pending_process(&self, transaction_id: u64) -> bool;

@@ -62,7 +62,7 @@ pub trait KeyValueStore {
     fn make_progress(
         &mut self,
         instant: u64,
-        transaction_context: &mut dyn transaction::TabletTransactionContext,
+        transaction_context: &mut dyn transaction::TabletTransactionContext<Bytes>,
     );
 
     // Accepts consumer request for processing. The actual processing will likely
@@ -114,7 +114,7 @@ impl KeyValueStore for SimpleKeyValueStore {
     fn make_progress(
         &mut self,
         _instant: u64,
-        transaction_context: &mut dyn transaction::TabletTransactionContext,
+        transaction_context: &mut dyn transaction::TabletTransactionContext<Bytes>,
     ) {
         let mut core = self.core.borrow_mut();
 
@@ -207,7 +207,7 @@ impl SimpleKeyValueStoreCore {
     fn handle_query_process(
         &mut self,
         transaction_id: u64,
-        results: Vec<(transaction::TableQuery, &mut transaction::Tablet)>,
+        results: Vec<(transaction::TableQuery, &mut transaction::Tablet<Bytes>)>,
     ) {
         // Do actual request processing.
         if let Some(transaction_tracker) = self.transaction_trackers.get_mut(&transaction_id) {
@@ -229,7 +229,7 @@ impl SimpleKeyValueStoreCore {
 
     fn maybe_resolve_tablets(
         &mut self,
-        transaction_context: &mut dyn transaction::TabletTransactionContext,
+        transaction_context: &mut dyn transaction::TabletTransactionContext<Bytes>,
         handler: Box<transaction::ResolveHandler>,
     ) {
         // Initiate resolution of affected tablets if there are enough pending requests.
@@ -244,8 +244,8 @@ impl SimpleKeyValueStoreCore {
 
     fn maybe_start_transaction(
         &mut self,
-        transaction_context: &mut dyn transaction::TabletTransactionContext,
-        handler: Box<transaction::ProcessHandler>,
+        transaction_context: &mut dyn transaction::TabletTransactionContext<Bytes>,
+        handler: Box<transaction::ProcessHandler<Bytes>>,
     ) {
         let mut queries = Vec::new();
         let mut tablet_ids = Vec::new();
@@ -451,10 +451,10 @@ impl TabletTracker {
         &mut self,
         table_accessor: &TableAccessor,
         table_query: &transaction::TableQuery,
-        tablet: &mut transaction::Tablet,
+        tablet: &mut transaction::Tablet<Bytes>,
     ) -> Vec<(KeyValueRequest, KeyValueResponse)> {
         // Deserialize tablet contents to execute requests against.
-        let mut tablet_contents = TabletContents::decode(tablet.get_contents()).unwrap();
+        let mut tablet_contents = TabletContents::decode(tablet.get_contents().clone()).unwrap();
 
         let mut results = Vec::new();
 
@@ -562,14 +562,14 @@ struct TransactionTracker {
     tablet_ids: Vec<u32>,
     requests: Vec<KeyValueRequest>,
     responses: Vec<KeyValueResponse>,
-    transaction: Option<Box<dyn transaction::TabletTransaction>>,
+    transaction: Option<Box<dyn transaction::TabletTransaction<Bytes>>>,
     waiting_commit: Option<Box<dyn transaction::TabletTransactionCommit>>,
 }
 
 impl TransactionTracker {
     fn create(
         tablet_ids: Vec<u32>,
-        transaction: Box<dyn transaction::TabletTransaction>,
+        transaction: Box<dyn transaction::TabletTransaction<Bytes>>,
     ) -> TransactionTracker {
         TransactionTracker {
             tablet_ids,
@@ -732,8 +732,11 @@ mod tests {
         transaction::TabletDescriptor::create(tablet_id, false)
     }
 
-    fn create_tablet(tablet_id: u32, tablet_contents: &TabletContents) -> transaction::Tablet {
-        transaction::Tablet::create(
+    fn create_tablet(
+        tablet_id: u32,
+        tablet_contents: &TabletContents,
+    ) -> transaction::Tablet<Bytes> {
+        transaction::Tablet::create_with_contents(
             TabletMetadata {
                 tablet_id,
                 ..Default::default()
@@ -753,7 +756,7 @@ mod tests {
     }
 
     struct TabletTransactinoContextBuilder {
-        mock_transaction_context: MockTabletTransactionContext,
+        mock_transaction_context: MockTabletTransactionContext<Bytes>,
         resolve_handler: Rc<RefCell<Box<transaction::ResolveHandler>>>,
     }
 
@@ -776,7 +779,10 @@ mod tests {
             self
         }
 
-        fn expect_start_transaction(&mut self, transaction: MockTabletTransaction) -> &mut Self {
+        fn expect_start_transaction(
+            &mut self,
+            transaction: MockTabletTransaction<Bytes>,
+        ) -> &mut Self {
             self.mock_transaction_context
                 .expect_start_transaction()
                 .return_once_st(move || Box::new(transaction));
@@ -786,7 +792,7 @@ mod tests {
         fn take(
             self,
         ) -> (
-            MockTabletTransactionContext,
+            MockTabletTransactionContext<Bytes>,
             Box<transaction::ResolveHandler>,
         ) {
             let resolve_handler = self.resolve_handler;
@@ -798,8 +804,8 @@ mod tests {
     }
 
     struct TabletTransactionBuilder {
-        mock_transaction: MockTabletTransaction,
-        process_handler: Rc<RefCell<Box<transaction::ProcessHandler>>>,
+        mock_transaction: MockTabletTransaction<Bytes>,
+        process_handler: Rc<RefCell<Box<transaction::ProcessHandler<Bytes>>>>,
     }
 
     impl TabletTransactionBuilder {
@@ -843,7 +849,12 @@ mod tests {
             self
         }
 
-        fn take(self) -> (MockTabletTransaction, Box<transaction::ProcessHandler>) {
+        fn take(
+            self,
+        ) -> (
+            MockTabletTransaction<Bytes>,
+            Box<transaction::ProcessHandler<Bytes>>,
+        ) {
             let process_handler = self.process_handler;
             (
                 self.mock_transaction,

@@ -25,8 +25,10 @@ use tcp_tablet_store_service::apps::tablet_store::service::{
 use crate::apps::tablet_cache::service::TabletDataStorageStatus;
 
 use super::{
-    data::TabletDataCache, metadata::TabletMetadataCache, result::ResultHandle, ProcessHandler,
-    TableQuery, Tablet, TabletTransactionOutcome,
+    data::{TabletData, TabletDataCache},
+    metadata::TabletMetadataCache,
+    result::ResultHandle,
+    ProcessHandler, TableQuery, Tablet, TabletTransactionOutcome,
 };
 
 // Transaction coordinator incoming messages.
@@ -47,13 +49,16 @@ pub enum TabletTransactionCoordinatorOutMessage {
 // metadata of the affected by transaction tablets, on Tablet Data Cache to
 // load existing and store processed version of the tablet data in the Tablet
 // Data Storage.
-pub trait TabletTransactionCoordinator {
+//
+// Type parameter T represents a union type for the tablet data representation. For example
+// it can be a protobuf message with a oneof representing specific tables.
+pub trait TabletTransactionCoordinator<T> {
     // Advances internal state machine of the Tablet Transaction Coordinator.
     fn make_progress(
         &mut self,
         instant: u64,
         metadata_cache: &mut dyn TabletMetadataCache,
-        data_cache: &mut dyn TabletDataCache,
+        data_cache: &mut dyn TabletDataCache<T>,
     );
 
     // Processes incoming messages. Incoming message may contain tablets ops execution responses
@@ -74,7 +79,7 @@ pub trait TabletTransactionCoordinator {
         &mut self,
         transaction_id: u64,
         queries: Vec<TableQuery>,
-        handler: Box<ProcessHandler>,
+        handler: Box<ProcessHandler<T>>,
     );
 
     // Checks if transaction with given id has any pending processing.
@@ -92,15 +97,14 @@ pub trait TabletTransactionCoordinator {
         -> Option<TabletTransactionOutcome>;
 }
 
-#[derive(Default)]
-pub struct DefaultTabletTransactionCoordinator {
+pub struct DefaultTabletTransactionCoordinator<T> {
     // Counter that is used to produce unique correlation id for outgoing
     // messages.
     correlation_counter: u64,
     // Counter that is used to produce unique transaction id.
     transaction_counter: u64,
     // Maps transaction id to its current state.
-    transactions: HashMap<u64, TabletTransactionState>,
+    transactions: HashMap<u64, TabletTransactionState<T>>,
     // Maps correlation id that has been used to create Tablet Store request
     // and corresponding transction id.
     correlations: HashMap<u64, u64>,
@@ -108,11 +112,14 @@ pub struct DefaultTabletTransactionCoordinator {
     out_messages: Vec<TabletTransactionCoordinatorOutMessage>,
 }
 
-impl DefaultTabletTransactionCoordinator {
+impl<T> DefaultTabletTransactionCoordinator<T> {
     pub fn create(correlation_counter: u64) -> Self {
         Self {
             correlation_counter,
-            ..Default::default()
+            transaction_counter: 1,
+            transactions: HashMap::new(),
+            correlations: HashMap::new(),
+            out_messages: Vec::new(),
         }
     }
 
@@ -132,12 +139,12 @@ impl DefaultTabletTransactionCoordinator {
     }
 }
 
-impl TabletTransactionCoordinator for DefaultTabletTransactionCoordinator {
+impl<T> TabletTransactionCoordinator<T> for DefaultTabletTransactionCoordinator<T> {
     fn make_progress(
         &mut self,
         instant: u64,
         metadata_cache: &mut dyn TabletMetadataCache,
-        data_cache: &mut dyn TabletDataCache,
+        data_cache: &mut dyn TabletDataCache<T>,
     ) {
         for transaction in self.transactions.values_mut() {
             match transaction {
@@ -197,7 +204,7 @@ impl TabletTransactionCoordinator for DefaultTabletTransactionCoordinator {
         &mut self,
         transaction_id: u64,
         queries: Vec<TableQuery>,
-        handler: Box<ProcessHandler>,
+        handler: Box<ProcessHandler<T>>,
     ) {
         // Transaction interface ensures that this method can only be called when
         // transaction is present.
@@ -297,10 +304,10 @@ impl TabletTransactionCoordinator for DefaultTabletTransactionCoordinator {
 }
 
 // Tracks current state of a single tablet transaction.
-enum TabletTransactionState {
+enum TabletTransactionState<T> {
     // Transaction prepares by resolving, loading, processing and storing
     // processed tablets, generates respective tablet ops to update metadata.
-    Preparing(PreparingTabletTransactionState),
+    Preparing(PreparingTabletTransactionState<T>),
     // Transaction attempts to commit prepared tablet ops.
     Committing(CommittingTabletTransactionState),
     // Transaction has been completed either with a successful commit,
@@ -318,19 +325,18 @@ enum PreparingTabletTransactionOutcome {
     Failed,
 }
 
-#[derive(Default)]
-struct PreparingTabletTransactionState {
+struct PreparingTabletTransactionState<T> {
     // Identifies transaction this state describes.
     transaction_id: u64,
     // Holds state of all pending requests to process tablets as part of this transaction.
-    process_requests: Vec<TabletProcessState>,
+    process_requests: Vec<TabletProcessState<T>>,
 }
 
-impl PreparingTabletTransactionState {
+impl<T> PreparingTabletTransactionState<T> {
     fn create(transaction_id: u64) -> Self {
         Self {
             transaction_id,
-            ..Default::default()
+            process_requests: Vec::new(),
         }
     }
 
@@ -338,7 +344,7 @@ impl PreparingTabletTransactionState {
         &mut self,
         _instant: u64,
         metadata_cache: &mut dyn TabletMetadataCache,
-        data_cache: &mut dyn TabletDataCache,
+        data_cache: &mut dyn TabletDataCache<T>,
     ) {
         // Advance state of each process.
         for process_state in &mut self.process_requests {
@@ -362,7 +368,7 @@ impl PreparingTabletTransactionState {
                                 for (query, metadata) in resolve_values {
                                     // Start tracking state of the affected tablet.
                                     process_state.tablets.insert(
-                                        TabletState::create_key(&metadata),
+                                        create_tablet_key(&metadata),
                                         TabletState::create(query, metadata.clone()),
                                     );
                                     resolved_metadata.push(metadata);
@@ -395,7 +401,7 @@ impl PreparingTabletTransactionState {
                                     // using metadata.
                                     let tablet_state = process_state
                                         .tablets
-                                        .get_mut(&TabletState::create_key(&metadata))
+                                        .get_mut(&create_tablet_key(&metadata))
                                         .unwrap();
                                     tablet_state.tablet_init(data);
                                 }
@@ -455,7 +461,7 @@ impl PreparingTabletTransactionState {
         }
     }
 
-    fn init_pending(&mut self, queries: Vec<TableQuery>, handler: Box<ProcessHandler>) {
+    fn init_pending(&mut self, queries: Vec<TableQuery>, handler: Box<ProcessHandler<T>>) {
         self.process_requests.push(TabletProcessState {
             status: TabletProcessStatus::Pending(queries),
             handler,
@@ -515,46 +521,45 @@ impl CommittingTabletTransactionState {
     }
 }
 
+// Creates tablet key that consists of tablet id and its version.
+fn create_tablet_key(metadata: &TabletMetadata) -> u64 {
+    (metadata.tablet_id as u64) << 32 | (metadata.tablet_version as u64)
+}
+
 // Tracks state of a tablet affected by a transaction.
-#[derive(Default, Debug, Clone)]
-struct TabletState {
+#[derive(Clone)]
+struct TabletState<T> {
     // Query that affected the tablet.
     query: TableQuery,
     // Tablet metadata and data, along with tracking if this tablet was updated.
-    tablet: Tablet,
+    tablet: Tablet<T>,
 }
 
-impl TabletState {
+impl<T> TabletState<T> {
     fn create(query: TableQuery, metadata: TabletMetadata) -> Self {
         Self {
             query,
-            tablet: Tablet::create(metadata, Bytes::new()),
+            tablet: Tablet::<T>::create(metadata),
         }
-    }
-
-    // Creates tablet key that consists of tablet id and its version.
-    fn create_key(metadata: &TabletMetadata) -> u64 {
-        (metadata.tablet_id as u64) << 32 | (metadata.tablet_version as u64)
     }
 
     // Gets mutable reference to the tablet and query so that it can be passed to the
     // process handler.
-    fn tablet_mut(&mut self) -> (TableQuery, &mut Tablet) {
+    fn tablet_mut(&mut self) -> (TableQuery, &mut Tablet<T>) {
         (self.query.clone(), &mut self.tablet)
     }
 
     // Inits tablet state with data loaded from Tablet Data Cache.
-    fn tablet_init(&mut self, data: Bytes) {
+    fn tablet_init(&mut self, data: TabletData<T>) {
         // Note that we only assign loaded data to avoid marking it as dirty.
-        self.tablet.tablet_contents = data;
+        self.tablet.contents = Some(data);
     }
 
     // Prepares tablet op to be executed and optionally returns updated metadata along
     // with the data to be written to the Tablet Data Storage.
-    fn tablet_prepare(&mut self) -> Option<(&mut TabletMetadata, Bytes)> {
-        if self.tablet.is_dirty() {
-            let tablet_contents = self.tablet.get_contents();
-            Some((self.tablet.get_metadata_mut(), tablet_contents))
+    fn tablet_prepare(&mut self) -> Option<(&mut TabletMetadata, T)> {
+        if let Some(updated_contents) = self.tablet.take_updated_contents() {
+            Some((self.tablet.get_metadata_mut(), updated_contents))
         } else {
             None
         }
@@ -584,21 +589,21 @@ impl TabletState {
     }
 }
 
-struct TabletProcessState {
-    status: TabletProcessStatus,
+struct TabletProcessState<T> {
+    status: TabletProcessStatus<T>,
     // Handler that will be called to process tablets.
-    handler: Box<ProcessHandler>,
+    handler: Box<ProcessHandler<T>>,
     // Maps tablet key that of tablet id and its version to the tablet state.
-    tablets: HashMap<u64, TabletState>,
+    tablets: HashMap<u64, TabletState<T>>,
 }
 
-enum TabletProcessStatus {
+enum TabletProcessStatus<T> {
     Pending(Vec<TableQuery>),
     // Table queries are being resolved into a set of affected tablets.
     Resolving(ResultHandle<Vec<(TableQuery, TabletMetadata)>, TabletsRequestStatus>),
     // Affected by table queries tablets are being loaded into the tablet
     // data cache from storage.
-    Loading(ResultHandle<Vec<(TabletMetadata, Bytes)>, TabletDataStorageStatus>),
+    Loading(ResultHandle<Vec<(TabletMetadata, TabletData<T>)>, TabletDataStorageStatus>),
     // Affected by table queries tablets were processed and new versions
     // of tablet data is being stored in the storage.
     Storing(ResultHandle<(), TabletDataStorageStatus>),
@@ -633,7 +638,7 @@ mod tests {
     const KEY_HASH_1: u32 = 1;
     const KEY_HASH_2: u32 = 2;
 
-    fn create_transaction_coordinator() -> DefaultTabletTransactionCoordinator {
+    fn create_transaction_coordinator() -> DefaultTabletTransactionCoordinator<Bytes> {
         DefaultTabletTransactionCoordinator::create(0)
     }
 
@@ -645,8 +650,8 @@ mod tests {
     }
 
     fn create_load_source_and_handle() -> (
-        ResultHandle<Vec<(TabletMetadata, Bytes)>, TabletDataStorageStatus>,
-        ResultSource<Vec<(TabletMetadata, Bytes)>, TabletDataStorageStatus>,
+        ResultHandle<Vec<(TabletMetadata, TabletData<Bytes>)>, TabletDataStorageStatus>,
+        ResultSource<Vec<(TabletMetadata, TabletData<Bytes>)>, TabletDataStorageStatus>,
     ) {
         create_eventual_result()
     }
@@ -724,7 +729,7 @@ mod tests {
     }
 
     struct TabletDataCacheBuilder {
-        mock_tablet_data_cache: MockTabletDataCache,
+        mock_tablet_data_cache: MockTabletDataCache<Bytes>,
     }
 
     impl TabletDataCacheBuilder {
@@ -737,7 +742,10 @@ mod tests {
         fn expect_load_tablets(
             &mut self,
             expected_metadata: Vec<TabletMetadata>,
-            result_handle: ResultHandle<Vec<(TabletMetadata, Bytes)>, TabletDataStorageStatus>,
+            result_handle: ResultHandle<
+                Vec<(TabletMetadata, TabletData<Bytes>)>,
+                TabletDataStorageStatus,
+            >,
         ) -> &mut Self {
             self.mock_tablet_data_cache
                 .expect_load_tablets()
@@ -773,22 +781,22 @@ mod tests {
             self
         }
 
-        fn take(self) -> MockTabletDataCache {
+        fn take(self) -> MockTabletDataCache<Bytes> {
             self.mock_tablet_data_cache
         }
     }
 
     struct TranactionCoordinatorLoop {
-        transaction_coordinator: DefaultTabletTransactionCoordinator,
+        transaction_coordinator: DefaultTabletTransactionCoordinator<Bytes>,
         metadata_cache: MockTabletMetadataCache,
-        data_cache: MockTabletDataCache,
+        data_cache: MockTabletDataCache<Bytes>,
     }
 
     impl TranactionCoordinatorLoop {
         fn create(
-            transaction_coordinator: DefaultTabletTransactionCoordinator,
+            transaction_coordinator: DefaultTabletTransactionCoordinator<Bytes>,
             metadata_cache: MockTabletMetadataCache,
-            data_cache: MockTabletDataCache,
+            data_cache: MockTabletDataCache<Bytes>,
         ) -> Self {
             Self {
                 transaction_coordinator,
@@ -797,7 +805,7 @@ mod tests {
             }
         }
 
-        fn get_mut(&mut self) -> &mut DefaultTabletTransactionCoordinator {
+        fn get_mut(&mut self) -> &mut DefaultTabletTransactionCoordinator<Bytes> {
             &mut self.transaction_coordinator
         }
 
@@ -825,8 +833,7 @@ mod tests {
 
     #[test]
     fn test_end_to_end_success() {
-        let transaction_coordinator: DefaultTabletTransactionCoordinator =
-            create_transaction_coordinator();
+        let transaction_coordinator = create_transaction_coordinator();
 
         let table_query_1 = create_table_query(TABLE_QUERY_1, vec![KEY_HASH_1, KEY_HASH_2]);
         let table_query_1_copy = table_query_1.clone();
@@ -894,7 +901,7 @@ mod tests {
 
         load_result_source_1.set_result(vec![(
             tablet_metadata_1_v_1.clone(),
-            tablet_data_1_v_1.clone(),
+            TabletData::create(tablet_data_1_v_1.clone()),
         )]);
 
         assert!(transaction_loop.execute_step(3, None).is_empty());

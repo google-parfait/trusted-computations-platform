@@ -2014,6 +2014,7 @@ dependencies = [
  "micro_rpc",
  "oak_restricted_kernel_interface",
  "oak_restricted_kernel_sdk",
+ "prost 0.12.4",
  "tcp_proto",
  "tcp_runtime",
  "tcp_tablet_cache_service",
