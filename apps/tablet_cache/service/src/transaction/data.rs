@@ -15,6 +15,7 @@
 use core::{cell::RefCell, ops::Deref};
 
 use alloc::{boxed::Box, rc::Rc, string::String, vec::Vec};
+use hashbrown::HashMap;
 use prost::bytes::Bytes;
 use tcp_tablet_store_service::apps::tablet_store::service::TabletMetadata;
 
@@ -23,7 +24,7 @@ use crate::apps::tablet_cache::service::{
     TabletDataStorageStatus,
 };
 
-use super::result::ResultHandle;
+use super::result::{ResultHandle, ResultSource};
 
 #[derive(PartialEq, Debug, Clone)]
 pub enum TabletDataCacheInMessage {
@@ -127,18 +128,108 @@ impl TabletDataSerializer<Bytes> for BytesTabletDataSerializer {
     }
 }
 
+pub trait TabletDataCachePolicy {
+    // TODO define exact interface based on the algorithm described below.
+}
+
+pub struct DefaultTabletDataCachePolicy {}
+
+impl TabletDataCachePolicy for DefaultTabletDataCachePolicy {}
+
+// Tablet cache id:
+//   * uri - data storage uri that uniquely identifies tablet data. Note that tablet
+// id and version is not sufficiently unique in cache context as concurrent transactions
+// may attempt to create the same version of the tablet but different data. Therefore
+// we rely on uniqueness of the storage uris.
+//
+// Tablet cache entry attributes:
+//   * tablet cache id - uniquely identifies tablet data in the cache.
+//   * tablet metadata - the metadata describing the tablet.
+//   * operation (load / store / cache / error) - current operation being executed against the
+// tablet where load and store operations contain respective correlation ids, cache
+// operation contains actual data and tablet cache descriptor.
+//   * tablet batch ids - list of tablet batches that are interested in this tablet.
+//
+// Tablet cache descriptor attributes:
+//   * last access time (instant) - timestamp when tablet has been last accessed.
+//   * locked (true / false) - locked means tablet is being referenced by a pending
+// tablet batch operation and cannot be evicted from cache. Must be updated when status
+// of corresponding tablet batch operation changes.
+//
+// Tablet cache map attributes:
+//   * tablet cache id -> tablet cache entry
+//
+// Tablet batch attributes:
+//   * tablet batch id - uniquely identifies a batch of tablets that are loaded or
+// stored together.
+//   * tablet cache ids - list of ids for the tablets that are part of the batch.
+//   * operation (load / store) - current operation being executed for the tablet
+// batch and containing corresponding result source.
+//   * num remaining tablets - number of tablets that are not yet cached. Once all
+// tablets have been cached the operation associated with the batch can be completed
+// and tablet batch association can be removed.
+//
+// Tablet batch map attributes:
+//   * tablet batch id -> tablet batch
+//
+// Tablet op map attributes:
+//   * correlation id -> tablet cache id
+//
+// Loading tablet batch (happens in response to external call to load tablets):
+//   * Generate new tablet batch id.
+//   * Generate cache id for each tablet from its metadata.
+//   * Get or insert a tablet cache entry based on tablet cache id.
+//   * Register tablet batch id in tablet cache entry so that the tablet cache entry
+// cannot be evicted from cache while batch is being loaded.
+//   * Consult with the tablet cache policy which if any tablet cache entries must
+// now be evicted and evict them.
+//   * Count and remember number of not yet cached tablets in the tablet batch.
+//
+// Storing tablet batch (happens in response to external call to store tablets):
+//   * Generate new tablet batch id.
+//   * Generate new version of the metadata for each of the affected tablets.
+//   * Generate cache id for each tablet from its new metadata.
+//   * Get or insert a tablet cache entry based on tablet cache id.
+//   * Register tablet batch id in tablet cache entry so that the tablet cache entry
+// cannot be evicted from cache while batch is being stored.
+//   * Consult with the tablet cache policy which if any tablet cache entries must
+// now be evicted.
+//   * Count and remember number of not yet cached tablets in the tablet batch.
+//
+// Processing tablet cache messages (happens in response to incoming messages):
+//   * Lookup tablet cache entry id using correlation id in the tablet op map.
+//   * Process incoming message in the context of looked up tablet cache entry.
+// If incoming message request represents success switch entry to the cache
+// operation, otherwise to error.
+//   * Notify all tablet cache batches registered with the tablet cache entry
+// about state change and allow the batch to react to it. Tablet batch may complete
+// successfully if all tablets have been cached, unsuccessfully if loading or storing
+// has failed, or remain uncompleted if more tablets must be cached.
+//
+// Maintaining tablet cache (happens in response to making progress):
+//   * Consult with the tablet data cache policy if any of the cache entries must be
+// evicted.
+//   * Evict indicated cache entries.
+//
 pub struct DefaultTabletDataCache<T> {
-    dummy: Option<T>,
+    cache_capacity: u64,
+    tablet_serializer: Box<dyn TabletDataSerializer<T>>,
+    tablet_cache_policy: Box<dyn TabletDataCachePolicy>,
 }
 
 impl<T> DefaultTabletDataCache<T> {
     // Creates new tablet data cache with given capacity. Configured capacity is considered
     // a soft limit. Tablet data cache may grow larger temporarily than requested capacity.
     pub fn create(
-        _cache_capacity: u64,
-        _tablet_serializer: Box<dyn TabletDataSerializer<T>>,
+        cache_capacity: u64,
+        tablet_serializer: Box<dyn TabletDataSerializer<T>>,
+        tablet_cache_policy: Box<dyn TabletDataCachePolicy>,
     ) -> Self {
-        Self { dummy: None }
+        Self {
+            cache_capacity,
+            tablet_serializer,
+            tablet_cache_policy,
+        }
     }
 }
 

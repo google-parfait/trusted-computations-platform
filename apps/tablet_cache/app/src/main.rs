@@ -35,7 +35,7 @@ use tcp_tablet_cache_service::{
     store::SimpleKeyValueStore,
     transaction::{
         coordinator::DefaultTabletTransactionCoordinator,
-        data::{BytesTabletDataSerializer, DefaultTabletDataCache},
+        data::{BytesTabletDataSerializer, DefaultTabletDataCache, DefaultTabletDataCachePolicy},
         manager::DefaultTabletTransactionManager,
         metadata::DefaultTabletMetadataCache,
     },
@@ -61,6 +61,7 @@ fn run_server() -> ! {
             Box::new(DefaultTabletDataCache::create(
                 1024 * 1024 * 1024 * 16,
                 Box::new(BytesTabletDataSerializer {}),
+                Box::new(DefaultTabletDataCachePolicy {}),
             )),
         ),
         SimpleKeyValueStore::create("map".to_string(), 100, 100),
