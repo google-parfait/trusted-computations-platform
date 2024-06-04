@@ -14,12 +14,21 @@
 
 use crate::{
     attestation::{AttestationProvider, ClientAttestation, ServerAttestation},
+    logger::log::create_logger,
     platform::PalError,
 };
 
 use alloc::boxed::Box;
-use core::mem;
-use tcp_proto::runtime::endpoint::*;
+use slog::{debug, warn, Logger};
+use tcp_proto::runtime::endpoint::{
+    secure_channel_handshake::{
+        noise_protocol, noise_protocol::initiator_request::Message::AttestRequest,
+        noise_protocol::recipient_response::Message::AttestResponse,
+        noise_protocol::Message::InitiatorRequest, noise_protocol::Message::RecipientResponse,
+        Encryption, NoiseProtocol,
+    },
+    *,
+};
 
 // Role associated with a HandshakeSession.
 #[derive(Debug, PartialEq)]
@@ -51,7 +60,7 @@ pub trait HandshakeSession {
 
     // Take out any pending handshake messages that need to be sent out for this session.
     // Returns None if no such message exists.
-    fn take_out_message(&mut self) -> Option<SecureChannelHandshake>;
+    fn take_out_message(&mut self) -> Result<Option<SecureChannelHandshake>, PalError>;
 
     // Returns true if this handshake session is now complete.
     fn is_completed(&self) -> bool;
@@ -77,11 +86,13 @@ impl HandshakeSessionProvider for DefaultHandshakeSessionProvider {
     ) -> Box<dyn HandshakeSession> {
         match role {
             Role::Initiator => Box::new(ClientHandshakeSession::new(
+                create_logger(),
                 self_replica_id,
                 peer_replica_id,
                 self.attestation_provider.get_client_attestation(),
             )),
             Role::Recipient => Box::new(ServerHandshakeSession::new(
+                create_logger(),
                 self_replica_id,
                 peer_replica_id,
                 self.attestation_provider.get_server_attestation(),
@@ -90,106 +101,330 @@ impl HandshakeSessionProvider for DefaultHandshakeSessionProvider {
     }
 }
 
+#[derive(PartialEq)]
+enum State {
+    // State is unknown.
+    Unknown,
+    // Bidirectional remote attestation initiated. Waiting for completion.
+    Attesting,
+    // Crypto key exchange based on Noise Protocol initiated. This occurs after
+    // attestation has been verified.
+    KeyExchange,
+    // Handshake completed successfully.
+    Completed,
+    // Handshake failed due to internal errors or failed attestation.
+    Failed,
+}
+
 pub struct ClientHandshakeSession {
-    _self_replica_id: u64,
-    _peer_replica_id: u64,
-    pending_message: Option<SecureChannelHandshake>,
-    _attestation: Box<dyn ClientAttestation>,
+    logger: Logger,
+    self_replica_id: u64,
+    peer_replica_id: u64,
+    attestation: Box<dyn ClientAttestation>,
+    state: State,
 }
 
 impl ClientHandshakeSession {
     fn new(
+        logger: Logger,
         self_replica_id: u64,
         peer_replica_id: u64,
         attestation: Box<dyn ClientAttestation>,
     ) -> Self {
-        // Initialize the first handshake message that should be sent out by the client.
-        let pending_message = Some(SecureChannelHandshake {
-            recipient_replica_id: peer_replica_id,
-            sender_replica_id: self_replica_id,
-            encryption: None,
-        });
         Self {
-            _self_replica_id: self_replica_id,
-            _peer_replica_id: peer_replica_id,
-            pending_message,
-            _attestation: attestation,
+            logger,
+            self_replica_id,
+            peer_replica_id,
+            attestation,
+            state: State::Unknown,
         }
     }
 }
+
 impl HandshakeSession for ClientHandshakeSession {
-    fn process_message(&mut self, _message: &SecureChannelHandshake) -> Result<(), PalError> {
-        Ok(())
+    fn process_message(&mut self, message: &SecureChannelHandshake) -> Result<(), PalError> {
+        return match self.state {
+            State::Unknown => {
+                warn!(
+                    self.logger,
+                    "Unexpected handshake message {:?} received in state Unknown.", message
+                );
+                self.state = State::Failed;
+                Err(PalError::Internal)
+            }
+            State::Attesting => {
+                if let Some(Encryption::NoiseProtocol(ref noise_protocol)) = message.encryption
+                    && let Some(RecipientResponse(ref recipient_response)) = noise_protocol.message
+                    && let Some(AttestResponse(ref attest_response)) = recipient_response.message
+                {
+                    self.attestation
+                        .put_incoming_message(attest_response)
+                        .or_else(|err| {
+                            warn!(
+                                self.logger,
+                                "Failed to put incoming message in state Attesting {}.", err
+                            );
+                            self.state = State::Failed;
+                            Err(PalError::Internal)
+                        })?;
+                    // TODO: Integrate with KeyExchange state instead of Completing.
+                    self.state = State::Completed;
+                    Ok(())
+                } else {
+                    warn!(
+                        self.logger,
+                        "Unexpected handshake message {:?} received in state Attesting.", message
+                    );
+                    self.state = State::Failed;
+                    Err(PalError::Internal)
+                }
+            }
+            State::KeyExchange => todo!(),
+            State::Completed => {
+                debug!(
+                    self.logger,
+                    "Ignoring message since handshake already completed."
+                );
+                Ok(())
+            }
+            State::Failed => {
+                warn!(self.logger, "Cannot process messages in state Failed.");
+                Err(PalError::Internal)
+            }
+        };
     }
 
-    fn take_out_message(&mut self) -> Option<SecureChannelHandshake> {
-        mem::take(&mut self.pending_message)
+    fn take_out_message(&mut self) -> Result<Option<SecureChannelHandshake>, PalError> {
+        return match self.state {
+            State::Unknown => {
+                if let Ok(Some(attest_request)) = self.attestation.get_outgoing_message() {
+                    self.state = State::Attesting;
+                    Ok(Some(SecureChannelHandshake {
+                        recipient_replica_id: self.peer_replica_id,
+                        sender_replica_id: self.self_replica_id,
+                        encryption: Some(Encryption::NoiseProtocol(NoiseProtocol {
+                            message: Some(InitiatorRequest(noise_protocol::InitiatorRequest {
+                                message: Some(AttestRequest(attest_request)),
+                            })),
+                        })),
+                    }))
+                } else {
+                    warn!(
+                        self.logger,
+                        "No outgoing `AttestRequest` message retrieved in state Unknown."
+                    );
+                    self.state = State::Failed;
+                    Err(PalError::Internal)
+                }
+            }
+            State::Attesting => {
+                debug!(
+                    self.logger,
+                    "No messages to take out while state is still Attesting."
+                );
+                Ok(None)
+            }
+            State::KeyExchange => todo!(),
+            State::Completed => {
+                debug!(
+                    self.logger,
+                    "No messages to take out since handshake already completed."
+                );
+                Ok(None)
+            }
+            State::Failed => {
+                warn!(self.logger, "Cannot take out messages in state Failed.");
+                Err(PalError::Internal)
+            }
+        };
     }
 
     fn is_completed(&self) -> bool {
-        self.pending_message.is_none()
+        self.state == State::Completed
     }
 }
 
 pub struct ServerHandshakeSession {
+    logger: Logger,
     self_replica_id: u64,
     peer_replica_id: u64,
-    pending_message: Option<SecureChannelHandshake>,
-    _attestation: Box<dyn ServerAttestation>,
+    attestation: Box<dyn ServerAttestation>,
+    state: State,
 }
 
 impl ServerHandshakeSession {
     fn new(
+        logger: Logger,
         self_replica_id: u64,
         peer_replica_id: u64,
         attestation: Box<dyn ServerAttestation>,
     ) -> Self {
         Self {
+            logger,
             self_replica_id,
             peer_replica_id,
-            pending_message: None,
-            _attestation: attestation,
+            attestation,
+            state: State::Unknown,
         }
     }
 }
+
 impl HandshakeSession for ServerHandshakeSession {
-    fn process_message(&mut self, _message: &SecureChannelHandshake) -> Result<(), PalError> {
-        // Stash a handshake response.
-        self.pending_message = Some(SecureChannelHandshake {
-            recipient_replica_id: self.peer_replica_id,
-            sender_replica_id: self.self_replica_id,
-            encryption: None,
-        });
-        Ok(())
+    fn process_message(&mut self, message: &SecureChannelHandshake) -> Result<(), PalError> {
+        return match self.state {
+            State::Unknown => {
+                if let Some(Encryption::NoiseProtocol(ref noise_protocol)) = message.encryption
+                    && let Some(InitiatorRequest(ref initiator_request)) = noise_protocol.message
+                    && let Some(AttestRequest(ref attest_request)) = initiator_request.message
+                {
+                    self.attestation
+                        .put_incoming_message(attest_request)
+                        .or_else(|err| {
+                            warn!(
+                                self.logger,
+                                "Failed to put incoming message in state Unknown {}.", err
+                            );
+                            self.state = State::Failed;
+                            Err(PalError::Internal)
+                        })?;
+                    self.state = State::Attesting;
+                    Ok(())
+                } else {
+                    warn!(
+                        self.logger,
+                        "Unexpected handshake message {:?} received in state Unknown.", message
+                    );
+                    self.state = State::Failed;
+                    Err(PalError::Internal)
+                }
+            }
+            State::Attesting => {
+                warn!(
+                    self.logger,
+                    "Unexpected handshake message {:?} received in state Attesting.", message
+                );
+                self.state = State::Failed;
+                Err(PalError::Internal)
+            }
+            State::KeyExchange => todo!(),
+            State::Completed => {
+                debug!(
+                    self.logger,
+                    "Ignoring message since handshake already completed."
+                );
+                Ok(())
+            }
+            State::Failed => {
+                warn!(self.logger, "Cannot process messages in state Failed.");
+                Err(PalError::Internal)
+            }
+        };
     }
 
-    fn take_out_message(&mut self) -> Option<SecureChannelHandshake> {
-        mem::take(&mut self.pending_message)
+    fn take_out_message(&mut self) -> Result<Option<SecureChannelHandshake>, PalError> {
+        return match self.state {
+            State::Unknown => {
+                debug!(self.logger, "No messages to take out in state Unknown");
+                Ok(None)
+            }
+            State::Attesting => {
+                if let Ok(Some(attest_response)) = self.attestation.get_outgoing_message() {
+                    // TODO: Integrate with state KeyExchange instead of Completing.
+                    self.state = State::Completed;
+                    Ok(Some(SecureChannelHandshake {
+                        recipient_replica_id: self.peer_replica_id,
+                        sender_replica_id: self.self_replica_id,
+                        encryption: Some(Encryption::NoiseProtocol(NoiseProtocol {
+                            message: Some(RecipientResponse(noise_protocol::RecipientResponse {
+                                message: Some(AttestResponse(attest_response)),
+                            })),
+                        })),
+                    }))
+                } else {
+                    warn!(
+                        self.logger,
+                        "No outgoing `AttestResponse` message retrieved in state Attesting."
+                    );
+                    self.state = State::Failed;
+                    Err(PalError::Internal)
+                }
+            }
+            State::KeyExchange => todo!(),
+            State::Completed => {
+                debug!(
+                    self.logger,
+                    "No messages to take out since handshake already completed."
+                );
+                Ok(None)
+            }
+            State::Failed => {
+                warn!(self.logger, "Cannot take out messages in state Failed.");
+                Err(PalError::Internal)
+            }
+        };
     }
 
     fn is_completed(&self) -> bool {
-        self.pending_message.is_none()
+        self.state == State::Completed
     }
 }
 
 #[cfg(all(test, feature = "std"))]
 mod test {
-    use crate::handshake::{DefaultHandshakeSessionProvider, HandshakeSessionProvider};
-    use core::mem;
-    use handshake::Role;
-    use mock::{MockAttestationProvider, MockClientAttestation, MockServerAttestation};
-    use tcp_proto::runtime::endpoint::*;
+    extern crate mockall;
 
-    fn create_secure_channel_handshake(
+    use self::mockall::predicate::eq;
+    use crate::handshake::{
+        ClientHandshakeSession, DefaultHandshakeSessionProvider, HandshakeSession,
+        HandshakeSessionProvider, Role, ServerHandshakeSession,
+    };
+    use crate::logger::log::create_logger;
+    use core::mem;
+    use mock::{MockAttestationProvider, MockClientAttestation, MockServerAttestation};
+    use oak_proto_rust::oak::session::v1::{
+        AttestRequest as OakAttestRequest, AttestResponse as OakAttestResponse,
+    };
+    use platform::PalError;
+    use tcp_proto::runtime::endpoint::{
+        secure_channel_handshake::{
+            noise_protocol, noise_protocol::initiator_request::Message::AttestRequest,
+            noise_protocol::recipient_response::Message::AttestResponse,
+            noise_protocol::Message::InitiatorRequest, noise_protocol::Message::RecipientResponse,
+            Encryption, NoiseProtocol,
+        },
+        *,
+    };
+
+    fn create_handshake_attest_request(
         sender_replica_id: u64,
         recipient_replica_id: u64,
     ) -> SecureChannelHandshake {
         SecureChannelHandshake {
             recipient_replica_id,
             sender_replica_id,
-            encryption: None,
+            encryption: Some(Encryption::NoiseProtocol(NoiseProtocol {
+                message: Some(InitiatorRequest(noise_protocol::InitiatorRequest {
+                    message: Some(AttestRequest(OakAttestRequest::default())),
+                })),
+            })),
         }
     }
+
+    fn create_handshake_attest_response(
+        sender_replica_id: u64,
+        recipient_replica_id: u64,
+    ) -> SecureChannelHandshake {
+        SecureChannelHandshake {
+            recipient_replica_id,
+            sender_replica_id,
+            encryption: Some(Encryption::NoiseProtocol(NoiseProtocol {
+                message: Some(RecipientResponse(noise_protocol::RecipientResponse {
+                    message: Some(AttestResponse(OakAttestResponse::default())),
+                })),
+            })),
+        }
+    }
+
     struct AttestationProviderBuilder {
         mock_attestation_provider: MockAttestationProvider,
     }
@@ -226,13 +461,100 @@ mod test {
         }
     }
 
+    struct ClientAttestationBuilder {
+        mock_client_attestation: MockClientAttestation,
+    }
+
+    impl ClientAttestationBuilder {
+        fn new() -> ClientAttestationBuilder {
+            ClientAttestationBuilder {
+                mock_client_attestation: MockClientAttestation::new(),
+            }
+        }
+
+        fn expect_get_outgoing_message(
+            mut self,
+            message: Result<Option<OakAttestRequest>, PalError>,
+        ) -> ClientAttestationBuilder {
+            self.mock_client_attestation
+                .expect_get_outgoing_message()
+                .once()
+                .return_once(move || message);
+            self
+        }
+
+        fn expect_put_incoming_message(
+            mut self,
+            message: OakAttestResponse,
+            result: Result<Option<()>, PalError>,
+        ) -> ClientAttestationBuilder {
+            self.mock_client_attestation
+                .expect_put_incoming_message()
+                .with(eq(message))
+                .once()
+                .return_once(move |_| result);
+            self
+        }
+
+        fn take(mut self) -> MockClientAttestation {
+            mem::take(&mut self.mock_client_attestation)
+        }
+    }
+
+    struct ServerAttestationBuilder {
+        mock_server_attestation: MockServerAttestation,
+    }
+
+    impl ServerAttestationBuilder {
+        fn new() -> ServerAttestationBuilder {
+            ServerAttestationBuilder {
+                mock_server_attestation: MockServerAttestation::new(),
+            }
+        }
+
+        fn expect_get_outgoing_message(
+            mut self,
+            message: Result<Option<OakAttestResponse>, PalError>,
+        ) -> ServerAttestationBuilder {
+            self.mock_server_attestation
+                .expect_get_outgoing_message()
+                .once()
+                .return_once(move || message);
+            self
+        }
+
+        fn expect_put_incoming_message(
+            mut self,
+            message: OakAttestRequest,
+            result: Result<Option<()>, PalError>,
+        ) -> ServerAttestationBuilder {
+            self.mock_server_attestation
+                .expect_put_incoming_message()
+                .with(eq(message))
+                .once()
+                .return_once(move |_| result);
+            self
+        }
+
+        fn take(mut self) -> MockServerAttestation {
+            mem::take(&mut self.mock_server_attestation)
+        }
+    }
+
     #[test]
-    fn test_client_session() {
+    fn test_client_session_success() {
         let self_replica_id = 11111;
         let peer_replica_id = 22222;
-        let handshake_message = create_secure_channel_handshake(self_replica_id, peer_replica_id);
+        let handshake_attest_request =
+            create_handshake_attest_request(self_replica_id, peer_replica_id);
+        let handshake_attest_response =
+            create_handshake_attest_response(self_replica_id, peer_replica_id);
+        let mock_client_attestation = ClientAttestationBuilder::new()
+            .expect_get_outgoing_message(Ok(Some(OakAttestRequest::default())))
+            .expect_put_incoming_message(OakAttestResponse::default(), Ok(Some(())))
+            .take();
         let mock_attestation_provider = AttestationProviderBuilder::new()
-            .expect_get_client_attestation(MockClientAttestation::new())
+            .expect_get_client_attestation(mock_client_attestation)
             .take();
         let handshake_session_provider =
             DefaultHandshakeSessionProvider::new(Box::new(mock_attestation_provider));
@@ -240,37 +562,280 @@ mod test {
             handshake_session_provider.get(self_replica_id, peer_replica_id, Role::Initiator);
 
         assert_eq!(
-            Some(handshake_message.clone()),
+            Ok(Some(handshake_attest_request.clone())),
             client_handshake_session.take_out_message()
         );
+        assert_eq!(Ok(None), client_handshake_session.take_out_message());
         assert_eq!(
             Ok(()),
-            client_handshake_session.process_message(&handshake_message)
+            client_handshake_session.process_message(&handshake_attest_response)
         );
         assert_eq!(true, client_handshake_session.is_completed());
+
+        // Processing messages in COMPLETED state is ignored.
+        assert_eq!(
+            Ok(()),
+            client_handshake_session.process_message(&handshake_attest_response)
+        );
+        assert_eq!(Ok(None), client_handshake_session.take_out_message());
     }
 
     #[test]
-    fn test_server_session() {
+    fn test_client_session_get_attest_request_error() {
         let self_replica_id = 11111;
         let peer_replica_id = 22222;
-        let handshake_message = create_secure_channel_handshake(self_replica_id, peer_replica_id);
+        let handshake_attest_response =
+            create_handshake_attest_response(self_replica_id, peer_replica_id);
+        let mock_client_attestation = ClientAttestationBuilder::new()
+            .expect_get_outgoing_message(Err(PalError::InvalidOperation))
+            .take();
+        let mut client_handshake_session = ClientHandshakeSession::new(
+            create_logger(),
+            self_replica_id,
+            peer_replica_id,
+            Box::new(mock_client_attestation),
+        );
+
+        assert_eq!(
+            Err(PalError::Internal),
+            client_handshake_session.take_out_message()
+        );
+
+        // Processing any messages in FAILED state should fail.
+        assert_eq!(
+            Err(PalError::Internal),
+            client_handshake_session.process_message(&handshake_attest_response)
+        );
+        assert_eq!(
+            Err(PalError::Internal),
+            client_handshake_session.take_out_message()
+        );
+        assert_eq!(false, client_handshake_session.is_completed());
+    }
+
+    #[test]
+    fn test_client_session_put_attest_response_error() {
+        let self_replica_id = 11111;
+        let peer_replica_id = 22222;
+        let handshake_attest_request =
+            create_handshake_attest_request(self_replica_id, peer_replica_id);
+        let handshake_attest_response =
+            create_handshake_attest_response(self_replica_id, peer_replica_id);
+        let mock_client_attestation = ClientAttestationBuilder::new()
+            .expect_get_outgoing_message(Ok(Some(OakAttestRequest::default())))
+            .expect_put_incoming_message(
+                OakAttestResponse::default(),
+                Err(PalError::InvalidOperation),
+            )
+            .take();
+        let mut client_handshake_session = ClientHandshakeSession::new(
+            create_logger(),
+            self_replica_id,
+            peer_replica_id,
+            Box::new(mock_client_attestation),
+        );
+
+        assert_eq!(
+            Ok(Some(handshake_attest_request.clone())),
+            client_handshake_session.take_out_message()
+        );
+        assert_eq!(
+            Err(PalError::Internal),
+            client_handshake_session.process_message(&handshake_attest_response)
+        );
+    }
+
+    #[test]
+    fn test_client_session_unknown_state_process_message() {
+        let self_replica_id = 11111;
+        let peer_replica_id = 22222;
+        let handshake_attest_request =
+            create_handshake_attest_request(self_replica_id, peer_replica_id);
+        let handshake_attest_response =
+            create_handshake_attest_response(self_replica_id, peer_replica_id);
+        let mut client_handshake_session = ClientHandshakeSession::new(
+            create_logger(),
+            self_replica_id,
+            peer_replica_id,
+            Box::new(MockClientAttestation::new()),
+        );
+
+        assert_eq!(
+            Err(PalError::Internal),
+            client_handshake_session.process_message(&handshake_attest_response)
+        );
+    }
+
+    #[test]
+    fn test_client_session_attesting_state_invalid_message() {
+        let self_replica_id = 11111;
+        let peer_replica_id = 22222;
+        let handshake_attest_request =
+            create_handshake_attest_request(self_replica_id, peer_replica_id);
+        let mock_client_attestation = ClientAttestationBuilder::new()
+            .expect_get_outgoing_message(Ok(Some(OakAttestRequest::default())))
+            .take();
+        let mut client_handshake_session = ClientHandshakeSession::new(
+            create_logger(),
+            self_replica_id,
+            peer_replica_id,
+            Box::new(mock_client_attestation),
+        );
+
+        assert_eq!(
+            Ok(Some(handshake_attest_request.clone())),
+            client_handshake_session.take_out_message()
+        );
+        assert_eq!(
+            Err(PalError::Internal),
+            client_handshake_session.process_message(&handshake_attest_request)
+        );
+    }
+
+    #[test]
+    fn test_server_session_success() {
+        let self_replica_id = 11111;
+        let peer_replica_id = 22222;
+        let handshake_attest_request =
+            create_handshake_attest_request(self_replica_id, peer_replica_id);
+        let handshake_attest_response =
+            create_handshake_attest_response(self_replica_id, peer_replica_id);
+        let mock_server_attestation = ServerAttestationBuilder::new()
+            .expect_get_outgoing_message(Ok(Some(OakAttestResponse::default())))
+            .expect_put_incoming_message(OakAttestRequest::default(), Ok(Some(())))
+            .take();
         let mock_attestation_provider = AttestationProviderBuilder::new()
-            .expect_get_server_attestation(MockServerAttestation::new())
+            .expect_get_server_attestation(mock_server_attestation)
             .take();
         let handshake_session_provider =
             DefaultHandshakeSessionProvider::new(Box::new(mock_attestation_provider));
         let mut server_handshake_session =
             handshake_session_provider.get(self_replica_id, peer_replica_id, Role::Recipient);
 
+        assert_eq!(Ok(None), server_handshake_session.take_out_message());
         assert_eq!(
             Ok(()),
-            server_handshake_session.process_message(&handshake_message)
+            server_handshake_session.process_message(&handshake_attest_request)
         );
         assert_eq!(
-            Some(handshake_message.clone()),
+            Ok(Some(handshake_attest_response.clone())),
             server_handshake_session.take_out_message()
         );
         assert_eq!(true, server_handshake_session.is_completed());
+
+        // Processing messages in COMPLETED state is ignored.
+        assert_eq!(
+            Ok(()),
+            server_handshake_session.process_message(&handshake_attest_response)
+        );
+        assert_eq!(Ok(None), server_handshake_session.take_out_message());
+    }
+
+    #[test]
+    fn test_server_session_put_attest_request_error() {
+        let self_replica_id = 11111;
+        let peer_replica_id = 22222;
+        let handshake_attest_request =
+            create_handshake_attest_request(self_replica_id, peer_replica_id);
+        let mock_server_attestation = ServerAttestationBuilder::new()
+            .expect_put_incoming_message(
+                OakAttestRequest::default(),
+                Err(PalError::InvalidOperation),
+            )
+            .take();
+        let mut server_handshake_session = ServerHandshakeSession::new(
+            create_logger(),
+            self_replica_id,
+            peer_replica_id,
+            Box::new(mock_server_attestation),
+        );
+
+        assert_eq!(
+            Err(PalError::Internal),
+            server_handshake_session.process_message(&handshake_attest_request)
+        );
+
+        // Processing any messages in FAILED state should fail.
+        assert_eq!(
+            Err(PalError::Internal),
+            server_handshake_session.process_message(&handshake_attest_request)
+        );
+        assert_eq!(
+            Err(PalError::Internal),
+            server_handshake_session.take_out_message()
+        );
+        assert_eq!(false, server_handshake_session.is_completed());
+    }
+
+    #[test]
+    fn test_server_session_get_attest_response_error() {
+        let self_replica_id = 11111;
+        let peer_replica_id = 22222;
+        let handshake_attest_request =
+            create_handshake_attest_request(self_replica_id, peer_replica_id);
+        let mock_server_attestation = ServerAttestationBuilder::new()
+            .expect_put_incoming_message(OakAttestRequest::default(), Ok(Some(())))
+            .expect_get_outgoing_message(Err(PalError::InvalidOperation))
+            .take();
+        let mut server_handshake_session = ServerHandshakeSession::new(
+            create_logger(),
+            self_replica_id,
+            peer_replica_id,
+            Box::new(mock_server_attestation),
+        );
+
+        assert_eq!(
+            Ok(()),
+            server_handshake_session.process_message(&handshake_attest_request)
+        );
+        assert_eq!(
+            Err(PalError::Internal),
+            server_handshake_session.take_out_message()
+        );
+    }
+
+    #[test]
+    fn test_server_session_unknown_state_invalid_message() {
+        let self_replica_id = 11111;
+        let peer_replica_id = 22222;
+        let handshake_attest_response =
+            create_handshake_attest_response(self_replica_id, peer_replica_id);
+        let mut server_handshake_session = ServerHandshakeSession::new(
+            create_logger(),
+            self_replica_id,
+            peer_replica_id,
+            Box::new(MockServerAttestation::new()),
+        );
+
+        assert_eq!(
+            Err(PalError::Internal),
+            server_handshake_session.process_message(&handshake_attest_response)
+        );
+    }
+
+    #[test]
+    fn test_server_session_attesting_state_process_message() {
+        let self_replica_id = 11111;
+        let peer_replica_id = 22222;
+        let handshake_attest_request =
+            create_handshake_attest_request(self_replica_id, peer_replica_id);
+        let mock_server_attestation = ServerAttestationBuilder::new()
+            .expect_put_incoming_message(OakAttestRequest::default(), Ok(Some(())))
+            .take();
+        let mut server_handshake_session = ServerHandshakeSession::new(
+            create_logger(),
+            self_replica_id,
+            peer_replica_id,
+            Box::new(mock_server_attestation),
+        );
+
+        assert_eq!(
+            Ok(()),
+            server_handshake_session.process_message(&handshake_attest_request)
+        );
+        assert_eq!(
+            Err(PalError::Internal),
+            server_handshake_session.process_message(&handshake_attest_request)
+        );
     }
 }

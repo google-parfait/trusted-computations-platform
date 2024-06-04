@@ -225,7 +225,7 @@ impl CommunicationState {
     fn process_out_message(&mut self, message: out_message::Msg) -> Result<(), PalError> {
         match &self.handshake_state {
             HandshakeState::Unknown => {
-                self.pending_handshake_message = self.handshake_session.take_out_message();
+                self.pending_handshake_message = self.handshake_session.take_out_message()?;
                 if self.pending_handshake_message.is_none() {
                     warn!(self.logger, "No initial handshake message found.");
                     return Err(PalError::Internal);
@@ -257,7 +257,8 @@ impl CommunicationState {
                     // Messages in Unknown/Initiated state must be handshake messages.
                     in_message::Msg::SecureChannelHandshake(handshake_message) => {
                         self.handshake_session.process_message(&handshake_message)?;
-                        self.pending_handshake_message = self.handshake_session.take_out_message();
+                        self.pending_handshake_message =
+                            self.handshake_session.take_out_message()?;
                         if self.handshake_session.is_completed() {
                             self.handshake_state = HandshakeState::Completed;
                         } else {
@@ -435,12 +436,12 @@ mod test {
 
         fn expect_take_out_message(
             mut self,
-            message: Option<SecureChannelHandshake>,
+            message: Result<Option<SecureChannelHandshake>, PalError>,
         ) -> HandshakeSessionBuilder {
             self.mock_handshake_session
                 .expect_take_out_message()
                 .once()
-                .return_const(message);
+                .return_once(move || message);
 
             self
         }
@@ -468,10 +469,10 @@ mod test {
         let handshake_message_b =
             create_secure_channel_handshake(self_replica_id, peer_replica_id_b);
         let mock_handshake_session_a = HandshakeSessionBuilder::new()
-            .expect_take_out_message(Some(handshake_message_a.clone()))
+            .expect_take_out_message(Ok(Some(handshake_message_a.clone())))
             .take();
         let mock_handshake_session_b = HandshakeSessionBuilder::new()
-            .expect_take_out_message(Some(handshake_message_b.clone()))
+            .expect_take_out_message(Ok(Some(handshake_message_b.clone())))
             .take();
         let mock_handshake_session_provider = HandshakeSessionProviderBuilder::new()
             .expect_get(
@@ -556,12 +557,12 @@ mod test {
             create_secure_channel_handshake(peer_replica_id_b, self_replica_id);
         let mock_handshake_session_a = HandshakeSessionBuilder::new()
             .expect_process_message(handshake_message_a.clone(), Ok(()))
-            .expect_take_out_message(Some(handshake_message_a.clone()))
+            .expect_take_out_message(Ok(Some(handshake_message_a.clone())))
             .expect_is_completed(true)
             .take();
         let mock_handshake_session_b = HandshakeSessionBuilder::new()
             .expect_process_message(handshake_message_b.clone(), Ok(()))
-            .expect_take_out_message(Some(handshake_message_b.clone()))
+            .expect_take_out_message(Ok(Some(handshake_message_b.clone())))
             .expect_is_completed(true)
             .take();
         let mock_handshake_session_provider = HandshakeSessionProviderBuilder::new()
@@ -657,14 +658,14 @@ mod test {
         let handshake_message_b_to_a =
             create_secure_channel_handshake(peer_replica_id_b, peer_replica_id_a);
         let mock_handshake_session_a = HandshakeSessionBuilder::new()
-            .expect_take_out_message(Some(handshake_message_a_to_b.clone()))
+            .expect_take_out_message(Ok(Some(handshake_message_a_to_b.clone())))
             .expect_process_message(handshake_message_b_to_a.clone(), Ok(()))
-            .expect_take_out_message(None)
+            .expect_take_out_message(Ok(None))
             .expect_is_completed(true)
             .take();
         let mock_handshake_session_b = HandshakeSessionBuilder::new()
             .expect_process_message(handshake_message_a_to_b.clone(), Ok(()))
-            .expect_take_out_message(Some(handshake_message_b_to_a.clone()))
+            .expect_take_out_message(Ok(Some(handshake_message_b_to_a.clone())))
             .expect_is_completed(true)
             .take();
         let mock_handshake_session_provider_a = HandshakeSessionProviderBuilder::new()
@@ -782,20 +783,20 @@ mod test {
         let handshake_message_b_to_a =
             create_secure_channel_handshake(peer_replica_id_b, peer_replica_id_a);
         let mock_handshake_session_a = HandshakeSessionBuilder::new()
-            .expect_take_out_message(Some(handshake_message_a_to_b.clone()))
+            .expect_take_out_message(Ok(Some(handshake_message_a_to_b.clone())))
             .expect_process_message(handshake_message_b_to_a.clone(), Ok(()))
-            .expect_take_out_message(Some(handshake_message_a_to_b.clone()))
+            .expect_take_out_message(Ok(Some(handshake_message_a_to_b.clone())))
             .expect_is_completed(false)
             .expect_process_message(handshake_message_b_to_a.clone(), Ok(()))
-            .expect_take_out_message(None)
+            .expect_take_out_message(Ok(None))
             .expect_is_completed(true)
             .take();
         let mock_handshake_session_b = HandshakeSessionBuilder::new()
             .expect_process_message(handshake_message_a_to_b.clone(), Ok(()))
-            .expect_take_out_message(Some(handshake_message_b_to_a.clone()))
+            .expect_take_out_message(Ok(Some(handshake_message_b_to_a.clone())))
             .expect_is_completed(false)
             .expect_process_message(handshake_message_a_to_b.clone(), Ok(()))
-            .expect_take_out_message(Some(handshake_message_b_to_a.clone()))
+            .expect_take_out_message(Ok(Some(handshake_message_b_to_a.clone())))
             .expect_is_completed(true)
             .take();
         let mock_handshake_session_provider_a = HandshakeSessionProviderBuilder::new()
@@ -931,10 +932,10 @@ mod test {
         let peer_replica_id_a = 11111;
         let peer_replica_id_b = 22222;
         let mock_handshake_session_a = HandshakeSessionBuilder::new()
-            .expect_take_out_message(Some(create_secure_channel_handshake(
+            .expect_take_out_message(Ok(Some(create_secure_channel_handshake(
                 peer_replica_id_a,
                 peer_replica_id_b,
-            )))
+            ))))
             .take();
         let mock_handshake_session_b = HandshakeSessionBuilder::new().take();
         let mock_handshake_session_provider_a = HandshakeSessionProviderBuilder::new()

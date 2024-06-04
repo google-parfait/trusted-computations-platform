@@ -14,6 +14,7 @@
 
 #![feature(trait_upcasting)]
 #![feature(trait_alias)]
+#![feature(let_chains)]
 #![cfg_attr(not(feature = "std"), no_std)]
 #![cfg_attr(not(feature = "std"), feature(error_in_core))]
 

@@ -281,7 +281,7 @@ mock! {
     impl HandshakeSession for HandshakeSession {
         fn process_message(&mut self, message: &SecureChannelHandshake) -> Result<(), PalError>;
 
-        fn take_out_message(&mut self) -> Option<SecureChannelHandshake>;
+        fn take_out_message(&mut self) -> Result<Option<SecureChannelHandshake>, PalError>;
 
         fn is_completed(&self) -> bool;
     }
