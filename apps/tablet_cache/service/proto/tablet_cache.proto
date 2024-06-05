@@ -29,6 +29,8 @@ message TabletCacheInMessage {
     // Response to tablet operation request. Serialized and encrypted tablet
     // response is carried as payload.
     ExecuteTabletOpsResponse execute_tablet_ops_response = 5;
+    // Error to perform operation on tablet in Tablet Store. Payload is empty.
+    ExecuteTabletOpsError execute_tablet_ops_error = 6;
   }
 }
 
@@ -57,6 +59,22 @@ message ExecuteTabletOpsRequest {
 
 // Response from Tablet Store to Tablet Cache.
 message ExecuteTabletOpsResponse {}
+
+// Error performing operation from Tablet Store to Tablet Cache.
+message ExecuteTabletOpsError {
+  ExecuteTabletOpsStatus status = 1;
+
+  string diagnostic_message = 2;
+}
+
+// Status of the tablets request processing.
+enum ExecuteTabletOpsStatus {
+  EXECUTE_TABLET_OPS_STATUS_UNSPECIFIED = 0;
+
+  EXECUTE_TABLET_OPS_STATUS_REJECTED = 1;
+
+  EXECUTE_TABLET_OPS_STATUS_INVALID_OPERATION = 2;
+}
 
 // Request from Tablet Cache to untrusted host to load tablet blob from Tablet
 // Data Storage.

@@ -159,6 +159,9 @@ impl<T: transaction::TabletTransactionManager<Bytes>, S: store::KeyValueStore> A
                             ),
                         )
                     }
+                    InMsg::ExecuteTabletOpsError(_error) => {
+                        todo!()
+                    }
                 },
                 None => {
                     return Err(ActorError::Internal);
