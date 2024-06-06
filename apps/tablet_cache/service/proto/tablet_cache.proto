@@ -74,6 +74,8 @@ enum ExecuteTabletOpsStatus {
   EXECUTE_TABLET_OPS_STATUS_REJECTED = 1;
 
   EXECUTE_TABLET_OPS_STATUS_INVALID_OPERATION = 2;
+
+  EXECUTE_TABLET_OPS_STATUS_RPC_ERROR = 3;
 }
 
 // Request from Tablet Cache to untrusted host to load tablet blob from Tablet
