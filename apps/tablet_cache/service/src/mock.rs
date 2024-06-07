@@ -81,7 +81,7 @@ mock! {
 
         fn store_tablets<'a>(
             &mut self,
-            data: &mut Vec<(&'a mut TabletMetadata, T)>,
+            data: Vec<(&'a mut TabletMetadata, T)>,
         ) -> ResultHandle<(), TabletDataStorageStatus>;
 
         fn process_in_message(&mut self, in_message: TabletDataCacheInMessage);
