@@ -27,6 +27,7 @@ use tcp_runtime::driver::Driver;
 use tcp_runtime::handshake::DefaultHandshakeSessionProvider;
 use tcp_runtime::logger::log::create_logger;
 use tcp_runtime::model::Actor;
+use tcp_runtime::oak_handshaker::DefaultOakHandshakerFactory;
 use tcp_runtime::platform::{Application, Host};
 use tcp_runtime::snapshot::{
     DefaultSnapshotProcessor, DefaultSnapshotReceiver, DefaultSnapshotSender,
@@ -279,6 +280,7 @@ impl<A: Actor> FakePlatform<A> {
                 actor,
                 DefaultCommunicationModule::new(Box::new(DefaultHandshakeSessionProvider::new(
                     Box::new(DefaultAttestationProvider {}),
+                    Box::new(DefaultOakHandshakerFactory {}),
                 ))),
             )),
             host: RefCell::new(FakeHost::new(app_config)),

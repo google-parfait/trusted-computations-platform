@@ -18,6 +18,7 @@ extern crate mockall;
 extern crate tcp_proto;
 
 use self::mockall::mock;
+use alloc::vec::Vec;
 use attestation::{Attestation, AttestationProvider, ClientAttestation, ServerAttestation};
 use communication::CommunicationModule;
 use consensus;
@@ -27,9 +28,14 @@ use model::{
     Actor, ActorCommand, ActorContext, ActorError, ActorEvent, ActorEventContext, CommandOutcome,
     EventOutcome,
 };
+use oak_handshaker::{
+    OakClientHandshaker, OakHandshaker, OakHandshakerFactory, OakServerHandshaker,
+};
 use oak_proto_rust::oak::{
     attestation::v1::AttestationResults,
+    crypto::v1::SessionKeys,
     session::v1::{AttestRequest, AttestResponse},
+    session::v1::{HandshakeRequest, HandshakeResponse},
 };
 use platform::{Host, PalError};
 use prost::bytes::Bytes;
@@ -325,5 +331,50 @@ mock! {
         fn put_incoming_message(
             &mut self,
             incoming_message: &AttestRequest) -> Result<Option<()>, PalError>;
+    }
+}
+
+mock! {
+    pub OakHandshakerFactory {
+    }
+
+    impl OakHandshakerFactory for OakHandshakerFactory {
+        fn get_client_oak_handshaker(&self) -> Box<dyn OakClientHandshaker>;
+
+        fn get_server_oak_handshaker(&self) -> Box<dyn OakServerHandshaker>;
+    }
+}
+
+mock! {
+    pub OakClientHandshaker {
+    }
+
+    impl OakHandshaker<HandshakeResponse, HandshakeRequest> for OakClientHandshaker {
+        fn init(&mut self, peer_static_public_key: Vec<u8>);
+
+        fn derive_session_keys(self) -> Option<SessionKeys>;
+
+        fn get_outgoing_message(&mut self) -> Result<Option<HandshakeRequest>, PalError>;
+
+        fn put_incoming_message(
+            &mut self,
+            incoming_message: &HandshakeResponse) -> Result<Option<()>, PalError>;
+    }
+}
+
+mock! {
+    pub OakServerHandshaker {
+    }
+
+    impl OakHandshaker<HandshakeRequest, HandshakeResponse> for OakServerHandshaker {
+        fn init(&mut self, peer_static_public_key: Vec<u8>);
+
+        fn derive_session_keys(self) -> Option<SessionKeys>;
+
+        fn get_outgoing_message(&mut self) -> Result<Option<HandshakeResponse>, PalError>;
+
+        fn put_incoming_message(
+            &mut self,
+            incoming_message: &HandshakeRequest) -> Result<Option<()>, PalError>;
     }
 }

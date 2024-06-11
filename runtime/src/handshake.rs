@@ -15,6 +15,7 @@
 use crate::{
     attestation::{AttestationProvider, ClientAttestation, ServerAttestation},
     logger::log::create_logger,
+    oak_handshaker::{OakClientHandshaker, OakHandshakerFactory, OakServerHandshaker},
     platform::PalError,
 };
 
@@ -68,12 +69,17 @@ pub trait HandshakeSession {
 
 pub struct DefaultHandshakeSessionProvider {
     attestation_provider: Box<dyn AttestationProvider>,
+    oak_handshaker_factory: Box<dyn OakHandshakerFactory>,
 }
 
 impl DefaultHandshakeSessionProvider {
-    pub fn new(attestation_provider: Box<dyn AttestationProvider>) -> Self {
+    pub fn new(
+        attestation_provider: Box<dyn AttestationProvider>,
+        oak_handshaker_factory: Box<dyn OakHandshakerFactory>,
+    ) -> Self {
         Self {
             attestation_provider,
+            oak_handshaker_factory,
         }
     }
 }
@@ -90,12 +96,14 @@ impl HandshakeSessionProvider for DefaultHandshakeSessionProvider {
                 self_replica_id,
                 peer_replica_id,
                 self.attestation_provider.get_client_attestation(),
+                self.oak_handshaker_factory.get_client_oak_handshaker(),
             )),
             Role::Recipient => Box::new(ServerHandshakeSession::new(
                 create_logger(),
                 self_replica_id,
                 peer_replica_id,
                 self.attestation_provider.get_server_attestation(),
+                self.oak_handshaker_factory.get_server_oak_handshaker(),
             )),
         }
     }
@@ -121,6 +129,7 @@ pub struct ClientHandshakeSession {
     self_replica_id: u64,
     peer_replica_id: u64,
     attestation: Box<dyn ClientAttestation>,
+    _oak_handshaker: Box<dyn OakClientHandshaker>,
     state: State,
 }
 
@@ -130,12 +139,14 @@ impl ClientHandshakeSession {
         self_replica_id: u64,
         peer_replica_id: u64,
         attestation: Box<dyn ClientAttestation>,
+        oak_handshaker: Box<dyn OakClientHandshaker>,
     ) -> Self {
         Self {
             logger,
             self_replica_id,
             peer_replica_id,
             attestation,
+            _oak_handshaker: oak_handshaker,
             state: State::Unknown,
         }
     }
@@ -249,6 +260,7 @@ pub struct ServerHandshakeSession {
     self_replica_id: u64,
     peer_replica_id: u64,
     attestation: Box<dyn ServerAttestation>,
+    _oak_handshaker: Box<dyn OakServerHandshaker>,
     state: State,
 }
 
@@ -258,12 +270,14 @@ impl ServerHandshakeSession {
         self_replica_id: u64,
         peer_replica_id: u64,
         attestation: Box<dyn ServerAttestation>,
+        oak_handshaker: Box<dyn OakServerHandshaker>,
     ) -> Self {
         Self {
             logger,
             self_replica_id,
             peer_replica_id,
             attestation,
+            _oak_handshaker: oak_handshaker,
             state: State::Unknown,
         }
     }
@@ -380,7 +394,10 @@ mod test {
     };
     use crate::logger::log::create_logger;
     use core::mem;
-    use mock::{MockAttestationProvider, MockClientAttestation, MockServerAttestation};
+    use mock::{
+        MockAttestationProvider, MockClientAttestation, MockOakClientHandshaker,
+        MockOakHandshakerFactory, MockOakServerHandshaker, MockServerAttestation,
+    };
     use oak_proto_rust::oak::session::v1::{
         AttestRequest as OakAttestRequest, AttestResponse as OakAttestResponse,
     };
@@ -541,6 +558,42 @@ mod test {
         }
     }
 
+    struct OakHandshakerFactoryBuilder {
+        mock_oak_handshaker_factory: MockOakHandshakerFactory,
+    }
+
+    impl OakHandshakerFactoryBuilder {
+        fn new() -> OakHandshakerFactoryBuilder {
+            OakHandshakerFactoryBuilder {
+                mock_oak_handshaker_factory: MockOakHandshakerFactory::new(),
+            }
+        }
+
+        fn expect_get_client_oak_handshaker(
+            mut self,
+            mock_oak_handshaker: MockOakClientHandshaker,
+        ) -> OakHandshakerFactoryBuilder {
+            self.mock_oak_handshaker_factory
+                .expect_get_client_oak_handshaker()
+                .return_once(move || Box::new(mock_oak_handshaker));
+            self
+        }
+
+        fn expect_get_server_oak_handshaker(
+            mut self,
+            mock_oak_handshaker: MockOakServerHandshaker,
+        ) -> OakHandshakerFactoryBuilder {
+            self.mock_oak_handshaker_factory
+                .expect_get_server_oak_handshaker()
+                .return_once(move || Box::new(mock_oak_handshaker));
+            self
+        }
+
+        fn take(mut self) -> MockOakHandshakerFactory {
+            mem::take(&mut self.mock_oak_handshaker_factory)
+        }
+    }
+
     #[test]
     fn test_client_session_success() {
         let self_replica_id = 11111;
@@ -556,8 +609,13 @@ mod test {
         let mock_attestation_provider = AttestationProviderBuilder::new()
             .expect_get_client_attestation(mock_client_attestation)
             .take();
-        let handshake_session_provider =
-            DefaultHandshakeSessionProvider::new(Box::new(mock_attestation_provider));
+        let mock_oak_handshaker_factory = OakHandshakerFactoryBuilder::new()
+            .expect_get_client_oak_handshaker(MockOakClientHandshaker::new())
+            .take();
+        let handshake_session_provider = DefaultHandshakeSessionProvider::new(
+            Box::new(mock_attestation_provider),
+            Box::new(mock_oak_handshaker_factory),
+        );
         let mut client_handshake_session =
             handshake_session_provider.get(self_replica_id, peer_replica_id, Role::Initiator);
 
@@ -594,6 +652,7 @@ mod test {
             self_replica_id,
             peer_replica_id,
             Box::new(mock_client_attestation),
+            Box::new(MockOakClientHandshaker::new()),
         );
 
         assert_eq!(
@@ -633,6 +692,7 @@ mod test {
             self_replica_id,
             peer_replica_id,
             Box::new(mock_client_attestation),
+            Box::new(MockOakClientHandshaker::new()),
         );
 
         assert_eq!(
@@ -658,6 +718,7 @@ mod test {
             self_replica_id,
             peer_replica_id,
             Box::new(MockClientAttestation::new()),
+            Box::new(MockOakClientHandshaker::new()),
         );
 
         assert_eq!(
@@ -680,6 +741,7 @@ mod test {
             self_replica_id,
             peer_replica_id,
             Box::new(mock_client_attestation),
+            Box::new(MockOakClientHandshaker::new()),
         );
 
         assert_eq!(
@@ -707,8 +769,13 @@ mod test {
         let mock_attestation_provider = AttestationProviderBuilder::new()
             .expect_get_server_attestation(mock_server_attestation)
             .take();
-        let handshake_session_provider =
-            DefaultHandshakeSessionProvider::new(Box::new(mock_attestation_provider));
+        let mock_oak_handshaker_factory = OakHandshakerFactoryBuilder::new()
+            .expect_get_server_oak_handshaker(MockOakServerHandshaker::new())
+            .take();
+        let handshake_session_provider = DefaultHandshakeSessionProvider::new(
+            Box::new(mock_attestation_provider),
+            Box::new(mock_oak_handshaker_factory),
+        );
         let mut server_handshake_session =
             handshake_session_provider.get(self_replica_id, peer_replica_id, Role::Recipient);
 
@@ -748,6 +815,7 @@ mod test {
             self_replica_id,
             peer_replica_id,
             Box::new(mock_server_attestation),
+            Box::new(MockOakServerHandshaker::new()),
         );
 
         assert_eq!(
@@ -782,6 +850,7 @@ mod test {
             self_replica_id,
             peer_replica_id,
             Box::new(mock_server_attestation),
+            Box::new(MockOakServerHandshaker::new()),
         );
 
         assert_eq!(
@@ -805,6 +874,7 @@ mod test {
             self_replica_id,
             peer_replica_id,
             Box::new(MockServerAttestation::new()),
+            Box::new(MockOakServerHandshaker::new()),
         );
 
         assert_eq!(
@@ -827,6 +897,7 @@ mod test {
             self_replica_id,
             peer_replica_id,
             Box::new(mock_server_attestation),
+            Box::new(MockOakServerHandshaker::new()),
         );
 
         assert_eq!(

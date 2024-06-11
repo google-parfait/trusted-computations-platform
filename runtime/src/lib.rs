@@ -41,6 +41,7 @@ pub mod logger;
 #[cfg(feature = "std")]
 pub mod mock;
 pub mod model;
+pub mod oak_handshaker;
 pub mod platform;
 pub mod service;
 pub mod snapshot;
