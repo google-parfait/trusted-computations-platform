@@ -117,8 +117,9 @@ impl TableMetadata {
                 if let Some(existing_tablet) = self.tablets.get(&check_tablet_op.tablet_id) {
                     if existing_tablet.tablet_version == check_tablet_op.tablet_version {
                         op_result.status = TabletOpStatus::Succeeded.into();
+                    } else {
+                        check_tablet_result.existing_tablet = Some(existing_tablet.clone());
                     }
-                    check_tablet_result.tablet_version = existing_tablet.tablet_version;
                 }
                 OpResult::CheckTablet(check_tablet_result)
             }
@@ -526,10 +527,15 @@ mod tests {
         }
     }
 
-    fn create_check_tablet_result(status: TabletOpStatus, tablet_version: u32) -> TabletOpResult {
+    fn create_check_tablet_result(
+        status: TabletOpStatus,
+        tablet_metadata: Option<TabletMetadata>,
+    ) -> TabletOpResult {
         TabletOpResult {
             status: status.into(),
-            op_result: Some(OpResult::CheckTablet(CheckTabletResult { tablet_version })),
+            op_result: Some(OpResult::CheckTablet(CheckTabletResult {
+                existing_tablet: tablet_metadata,
+            })),
         }
     }
 
@@ -737,10 +743,7 @@ mod tests {
             tablets_response,
             create_execute_tablet_ops_response(
                 TabletsRequestStatus::Succeeded,
-                vec![create_check_tablet_result(
-                    TabletOpStatus::Succeeded,
-                    TABLET_VERSION_1
-                )]
+                vec![create_check_tablet_result(TabletOpStatus::Succeeded, None)]
             )
         );
     }
@@ -843,7 +846,7 @@ mod tests {
             create_execute_tablet_ops_response(
                 TabletsRequestStatus::Succeeded,
                 vec![
-                    create_check_tablet_result(TabletOpStatus::Succeeded, TABLET_VERSION_1),
+                    create_check_tablet_result(TabletOpStatus::Succeeded, None),
                     create_update_tablet_result(
                         TabletOpStatus::Succeeded,
                         create_tablet_metadata(TABLET_ID_1, TABLET_VERSION_1)
@@ -909,7 +912,10 @@ mod tests {
                         TabletOpStatus::Succeeded,
                         vec![create_tablet_metadata(TABLET_ID_1, TABLET_VERSION_1),]
                     ),
-                    create_check_tablet_result(TabletOpStatus::Failed, TABLET_VERSION_1),
+                    create_check_tablet_result(
+                        TabletOpStatus::Failed,
+                        Some(create_tablet_metadata(TABLET_ID_1, TABLET_VERSION_1))
+                    ),
                     create_update_tablet_result(
                         TabletOpStatus::Failed,
                         create_tablet_metadata(TABLET_ID_1, TABLET_VERSION_1)

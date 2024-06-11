@@ -18,8 +18,8 @@ use alloc::{boxed::Box, vec::Vec};
 use hashbrown::HashMap;
 use prost::bytes::Bytes;
 use tcp_tablet_store_service::apps::tablet_store::service::{
-    tablet_op, CheckTabletOp, TabletMetadata, TabletOp, TabletOpResult, TabletOpStatus,
-    TabletsRequestStatus, UpdateTabletOp,
+    tablet_op, tablet_op_result, CheckTabletOp, TabletMetadata, TabletOp, TabletOpResult,
+    TabletOpStatus, TabletsRequestStatus, UpdateTabletOp,
 };
 
 use crate::apps::tablet_cache::service::TabletDataStorageStatus;
@@ -63,7 +63,11 @@ pub trait TabletTransactionCoordinator<T> {
 
     // Processes incoming messages. Incoming message may contain tablets ops execution responses
     // coming from Tablet Store.
-    fn process_in_message(&mut self, in_message: TabletTransactionCoordinatorInMessage);
+    fn process_in_message(
+        &mut self,
+        metadata_cache: &mut dyn TabletMetadataCache,
+        in_message: TabletTransactionCoordinatorInMessage,
+    );
 
     // Take outgoing messages. Outoing message may contain tablets ops execution requests that
     // must be sent to Tablet Store.
@@ -158,7 +162,11 @@ impl<T> TabletTransactionCoordinator<T> for DefaultTabletTransactionCoordinator<
         }
     }
 
-    fn process_in_message(&mut self, in_message: TabletTransactionCoordinatorInMessage) {
+    fn process_in_message(
+        &mut self,
+        metadata_cache: &mut dyn TabletMetadataCache,
+        in_message: TabletTransactionCoordinatorInMessage,
+    ) {
         match in_message {
             TabletTransactionCoordinatorInMessage::ExecuteTabletOpsResponse(
                 correlation_id,
@@ -169,9 +177,13 @@ impl<T> TabletTransactionCoordinator<T> for DefaultTabletTransactionCoordinator<
                     // we need to check that transaction is still waiting trying to commit.
                     if let Some(transaction) = self.transactions.get_mut(&transaction_id) {
                         if let TabletTransactionState::Committing(transaction_state) = transaction {
-                            *transaction = TabletTransactionState::Completed(
-                                transaction_state.complete(tablet_op_results),
-                            );
+                            let (transaction_outcome, metadata_to_update_cache) =
+                                transaction_state.complete(tablet_op_results);
+                            *transaction = TabletTransactionState::Completed(transaction_outcome);
+
+                            for tablet_metadata in metadata_to_update_cache {
+                                metadata_cache.update_tablet(tablet_metadata);
+                            }
                         }
                     }
                 }
@@ -508,16 +520,58 @@ impl CommittingTabletTransactionState {
         Self { tablet_ops }
     }
 
-    fn complete(&self, tablet_op_results: Vec<TabletOpResult>) -> TabletTransactionOutcome {
+    fn complete(
+        &self,
+        tablet_op_results: Vec<TabletOpResult>,
+    ) -> (TabletTransactionOutcome, Vec<TabletMetadata>) {
         // Technically we need to check that tablet ops correspond to tablet results
         // but for the time being we are doing a simple check of that all tablet ops
         // succeeded.
-        for tablet_op_result in tablet_op_results {
-            if tablet_op_result.status != TabletOpStatus::Succeeded as i32 {
-                return TabletTransactionOutcome::Failed;
+        let mut metadata_to_update_cache = Vec::new();
+        let mut transaction_outcome = TabletTransactionOutcome::Succeeded;
+        for (tablet_op, tablet_op_result) in self.tablet_ops.iter().zip(tablet_op_results.iter()) {
+            let op_succeeded = tablet_op_result.status == TabletOpStatus::Succeeded as i32;
+            if !op_succeeded {
+                transaction_outcome = TabletTransactionOutcome::Failed;
+            }
+            match (&tablet_op.op, &tablet_op_result.op_result) {
+                (
+                    Some(tablet_op::Op::CheckTablet(check_tablet_op)),
+                    Some(tablet_op_result::OpResult::CheckTablet(check_tablet_op_result)),
+                ) => {
+                    if !op_succeeded {
+                        metadata_to_update_cache.push(
+                            check_tablet_op_result
+                                .existing_tablet
+                                .as_ref()
+                                .unwrap()
+                                .clone(),
+                        );
+                    }
+                }
+                (
+                    Some(tablet_op::Op::UpdateTablet(update_tablet_op)),
+                    Some(tablet_op_result::OpResult::UpdateTablet(update_tablet_op_result)),
+                ) => {
+                    if !op_succeeded {
+                        metadata_to_update_cache.push(
+                            update_tablet_op_result
+                                .existing_tablet
+                                .as_ref()
+                                .unwrap()
+                                .clone(),
+                        );
+                    } else {
+                        metadata_to_update_cache
+                            .push(update_tablet_op.tablet_metadata.as_ref().unwrap().clone());
+                    }
+                }
+                _ => {
+                    panic!("Unexpected tablet op and result combination");
+                }
             }
         }
-        TabletTransactionOutcome::Succeeded
+        (transaction_outcome, metadata_to_update_cache)
     }
 }
 
@@ -723,6 +777,16 @@ mod tests {
             self
         }
 
+        fn expect_update_tablet(&mut self, tablet_metadata: TabletMetadata) -> &mut Self {
+            self.mock_tablet_metadata_cache
+                .expect_update_tablet()
+                .times(1)
+                .with(eq(tablet_metadata))
+                .return_const(());
+
+            self
+        }
+
         fn take(self) -> MockTabletMetadataCache {
             self.mock_tablet_metadata_cache
         }
@@ -824,7 +888,7 @@ mod tests {
 
             if in_message.is_some() {
                 self.transaction_coordinator
-                    .process_in_message(in_message.unwrap());
+                    .process_in_message(&mut self.metadata_cache, in_message.unwrap());
             }
 
             out_messages
@@ -849,7 +913,8 @@ mod tests {
         let (resolve_result_handle_1, mut resolve_result_source_1) =
             create_resolve_source_and_handle();
         metadata_cache_builder
-            .expect_resolve_tablets(vec![table_query_1.clone()], resolve_result_handle_1);
+            .expect_resolve_tablets(vec![table_query_1.clone()], resolve_result_handle_1)
+            .expect_update_tablet(tablet_metadata_1_v_2.clone());
         let metadata_cache = metadata_cache_builder.take();
 
         let mut data_cache_builder = TabletDataCacheBuilder::new();

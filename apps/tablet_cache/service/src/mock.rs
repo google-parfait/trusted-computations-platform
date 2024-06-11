@@ -122,7 +122,7 @@ mock! {
             data_cache: &mut dyn TabletDataCache<T>,
         );
 
-        fn process_in_message(&mut self, in_message: TabletTransactionCoordinatorInMessage);
+        fn process_in_message(&mut self, metadata_cache: &mut dyn TabletMetadataCache, in_message: TabletTransactionCoordinatorInMessage);
 
         fn take_out_messages(&mut self) -> Vec<TabletTransactionCoordinatorOutMessage>;
 
