@@ -425,7 +425,7 @@ impl<T> PreparingTabletTransactionState<T> {
 
                                 // Initiate store for the updated tablets through Tablet Data Cache and switch to storing
                                 // state waiting for completion.
-                                let store_result = data_cache.store_tablets(&mut tablet_writes);
+                                let store_result = data_cache.store_tablets(tablet_writes);
                                 Some(TabletProcessStatus::Storing(store_result))
                             }
                             Err(_) => {
@@ -764,7 +764,7 @@ mod tests {
             self.mock_tablet_data_cache
                 .expect_store_tablets()
                 .times(1)
-                .return_once_st(move |data| {
+                .return_once_st(move |mut data| {
                     assert_eq!(expected_data.len(), data.len());
 
                     for ((exp_metadata, exp_data, upd_metadata), (metadata, data)) in

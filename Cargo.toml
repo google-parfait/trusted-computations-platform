@@ -27,3 +27,5 @@ prost = { version = "0.12.4", default-features = false, features = ["prost-deriv
 prost-types = { version = "0.12.4", default-features = false }
 prost-build = { version = "0.12.4" }
 ahash = { version = "0.8.11", default-features = false }
+sha2 = { version = "*", default-features = false }
+base64 = { version = "0.22.1", default-features = false, features = ["alloc"] }

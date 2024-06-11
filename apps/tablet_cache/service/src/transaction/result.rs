@@ -27,6 +27,15 @@ pub fn create_eventual_result<T: Clone, E: Clone>() -> (ResultHandle<T, E>, Resu
     )
 }
 
+pub fn create_result_from_error<T: Clone, E: Clone>(error: E) -> ResultHandle<T, E> {
+    ResultHandle {
+        core: Rc::new(RefCell::new(ResultCore::<T, E> {
+            result: None,
+            error: Some(error),
+        })),
+    }
+}
+
 // Holds shared state of the result handler and source.
 struct ResultCore<T: Clone, E: Clone> {
     result: Option<T>,
