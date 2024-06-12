@@ -45,7 +45,7 @@ pub trait OakHandshaker<I, O> {
     fn init(&mut self, peer_static_public_key: Vec<u8>);
     fn put_incoming_message(&mut self, incoming_message: &I) -> Result<Option<()>, PalError>;
     fn get_outgoing_message(&mut self) -> Result<Option<O>, PalError>;
-    fn derive_session_keys(self) -> Option<SessionKeys>;
+    fn derive_session_keys(self: Box<Self>) -> Option<SessionKeys>;
 }
 
 // Default implementation of `OakHandshakerFactory`.
@@ -99,7 +99,7 @@ impl<'a> OakHandshaker<HandshakeResponse, HandshakeRequest> for DefaultOakClient
         Ok(Some(()))
     }
 
-    fn derive_session_keys(self) -> Option<SessionKeys> {
+    fn derive_session_keys(self: Box<Self>) -> Option<SessionKeys> {
         Some(SessionKeys {
             request_key: vec![],
             response_key: vec![],
@@ -143,7 +143,7 @@ impl<'a> OakHandshaker<HandshakeRequest, HandshakeResponse> for DefaultOakServer
         Ok(Some(()))
     }
 
-    fn derive_session_keys(self) -> Option<SessionKeys> {
+    fn derive_session_keys(self: Box<Self>) -> Option<SessionKeys> {
         Some(SessionKeys {
             request_key: vec![],
             response_key: vec![],

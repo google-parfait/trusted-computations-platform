@@ -16,7 +16,7 @@ use alloc::boxed::Box;
 use alloc::string::String;
 use alloc::vec;
 use oak_proto_rust::oak::{
-    attestation::v1::AttestationResults,
+    attestation::v1::{AttestationResults, ExtractedEvidence},
     session::v1::{AttestRequest, AttestResponse},
 };
 use oak_session::attestation::{
@@ -45,7 +45,7 @@ pub trait AttestationProvider {
 // response. `AttestationResults` can be retrieved once remote attestation has successfully
 // completed after an initial exchange of messages.
 pub trait Attestation<I, O> {
-    fn get_attestation_results(self) -> Option<AttestationResults>;
+    fn get_attestation_results(self: Box<Self>) -> Option<AttestationResults>;
     fn put_incoming_message(&mut self, incoming_message: &I) -> Result<Option<()>, PalError>;
     fn get_outgoing_message(&mut self) -> Result<Option<O>, PalError>;
 }
@@ -83,13 +83,17 @@ impl<'a> DefaultClientAttestation<'a> {
 
 impl<'a> Attestation<AttestResponse, AttestRequest> for DefaultClientAttestation<'a> {
     // TODO: Delegate to `inner` once the implementation is complete on Oak side.
-    fn get_attestation_results(self) -> Option<AttestationResults> {
+    fn get_attestation_results(self: Box<Self>) -> Option<AttestationResults> {
         Some(AttestationResults {
             status: 0,
             reason: String::new(),
             encryption_public_key: vec![],
             signing_public_key: vec![],
-            extracted_evidence: None,
+            extracted_evidence: Some(ExtractedEvidence {
+                encryption_public_key: vec![],
+                signing_public_key: vec![],
+                evidence_values: None,
+            }),
         })
     }
 
@@ -127,13 +131,17 @@ impl<'a> DefaultServerAttestation<'a> {
 
 impl<'a> Attestation<AttestRequest, AttestResponse> for DefaultServerAttestation<'a> {
     // TODO: Delegate to `inner` once the implementation is complete on Oak side.
-    fn get_attestation_results(self) -> Option<AttestationResults> {
+    fn get_attestation_results(self: Box<Self>) -> Option<AttestationResults> {
         Some(AttestationResults {
             status: 0,
             reason: String::new(),
             encryption_public_key: vec![],
             signing_public_key: vec![],
-            extracted_evidence: None,
+            extracted_evidence: Some(ExtractedEvidence {
+                encryption_public_key: vec![],
+                signing_public_key: vec![],
+                evidence_values: None,
+            }),
         })
     }
 

@@ -18,6 +18,7 @@ extern crate mockall;
 extern crate tcp_proto;
 
 use self::mockall::mock;
+use alloc::boxed::Box;
 use alloc::vec::Vec;
 use attestation::{Attestation, AttestationProvider, ClientAttestation, ServerAttestation};
 use communication::CommunicationModule;
@@ -309,7 +310,7 @@ mock! {
     }
 
     impl Attestation<AttestResponse, AttestRequest> for ClientAttestation {
-        fn get_attestation_results(self) -> Option<AttestationResults>;
+        fn get_attestation_results(self: Box<Self>) -> Option<AttestationResults>;
 
         fn get_outgoing_message(&mut self) -> Result<Option<AttestRequest>, PalError>;
 
@@ -324,7 +325,7 @@ mock! {
     }
 
     impl Attestation<AttestRequest, AttestResponse> for ServerAttestation {
-        fn get_attestation_results(self) -> Option<AttestationResults>;
+        fn get_attestation_results(self: Box<Self>) -> Option<AttestationResults>;
 
         fn get_outgoing_message(&mut self) -> Result<Option<AttestResponse>, PalError>;
 
@@ -352,7 +353,7 @@ mock! {
     impl OakHandshaker<HandshakeResponse, HandshakeRequest> for OakClientHandshaker {
         fn init(&mut self, peer_static_public_key: Vec<u8>);
 
-        fn derive_session_keys(self) -> Option<SessionKeys>;
+        fn derive_session_keys(self: Box<Self>) -> Option<SessionKeys>;
 
         fn get_outgoing_message(&mut self) -> Result<Option<HandshakeRequest>, PalError>;
 
@@ -369,7 +370,7 @@ mock! {
     impl OakHandshaker<HandshakeRequest, HandshakeResponse> for OakServerHandshaker {
         fn init(&mut self, peer_static_public_key: Vec<u8>);
 
-        fn derive_session_keys(self) -> Option<SessionKeys>;
+        fn derive_session_keys(self: Box<Self>) -> Option<SessionKeys>;
 
         fn get_outgoing_message(&mut self) -> Result<Option<HandshakeResponse>, PalError>;
 
