@@ -260,6 +260,7 @@ impl<T> TabletTransactionManagerCore<T> {
 
                 if !execute_op_results.is_empty() {
                     self.transaction_coordinator.process_in_message(
+                        &mut *self.metadata_cache,
                         TabletTransactionCoordinatorInMessage::ExecuteTabletOpsResponse(
                             correlation_id,
                             execute_op_results,

@@ -191,8 +191,10 @@ message ListTabletResult {
 
 // Result of checking if tablet at the time of execution is of the same version.
 message CheckTabletResult {
-  // Current version of the tablet.
-  uint32 tablet_version = 1;
+  // Fails if tablet to check has a different version. If the
+  // tablet op fails, the metadata of the existing tablet is included in the
+  // response.
+  TabletMetadata existing_tablet = 1;
 }
 
 // Result of adding new tablet to the Tablet Store.
