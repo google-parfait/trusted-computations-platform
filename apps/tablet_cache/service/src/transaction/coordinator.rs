@@ -181,8 +181,8 @@ impl<T> TabletTransactionCoordinator<T> for DefaultTabletTransactionCoordinator<
                                 transaction_state.complete(tablet_op_results);
                             *transaction = TabletTransactionState::Completed(transaction_outcome);
 
-                            for tablet_metadata in metadata_to_update_cache {
-                                metadata_cache.update_tablet(tablet_metadata);
+                            for (tablet_metadata, conflict) in metadata_to_update_cache {
+                                metadata_cache.update_tablet(tablet_metadata, conflict);
                             }
                         }
                     }
@@ -523,7 +523,7 @@ impl CommittingTabletTransactionState {
     fn complete(
         &self,
         tablet_op_results: Vec<TabletOpResult>,
-    ) -> (TabletTransactionOutcome, Vec<TabletMetadata>) {
+    ) -> (TabletTransactionOutcome, Vec<(TabletMetadata, bool)>) {
         // Technically we need to check that tablet ops correspond to tablet results
         // but for the time being we are doing a simple check of that all tablet ops
         // succeeded.
@@ -540,13 +540,14 @@ impl CommittingTabletTransactionState {
                     Some(tablet_op_result::OpResult::CheckTablet(check_tablet_op_result)),
                 ) => {
                     if !op_succeeded {
-                        metadata_to_update_cache.push(
+                        metadata_to_update_cache.push((
                             check_tablet_op_result
                                 .existing_tablet
                                 .as_ref()
                                 .unwrap()
                                 .clone(),
-                        );
+                            true,
+                        ));
                     }
                 }
                 (
@@ -554,16 +555,19 @@ impl CommittingTabletTransactionState {
                     Some(tablet_op_result::OpResult::UpdateTablet(update_tablet_op_result)),
                 ) => {
                     if !op_succeeded {
-                        metadata_to_update_cache.push(
+                        metadata_to_update_cache.push((
                             update_tablet_op_result
                                 .existing_tablet
                                 .as_ref()
                                 .unwrap()
                                 .clone(),
-                        );
+                            true,
+                        ));
                     } else {
-                        metadata_to_update_cache
-                            .push(update_tablet_op.tablet_metadata.as_ref().unwrap().clone());
+                        metadata_to_update_cache.push((
+                            update_tablet_op.tablet_metadata.as_ref().unwrap().clone(),
+                            false,
+                        ));
                     }
                 }
                 _ => {
@@ -777,11 +781,15 @@ mod tests {
             self
         }
 
-        fn expect_update_tablet(&mut self, tablet_metadata: TabletMetadata) -> &mut Self {
+        fn expect_update_tablet(
+            &mut self,
+            tablet_metadata: TabletMetadata,
+            conflict: bool,
+        ) -> &mut Self {
             self.mock_tablet_metadata_cache
                 .expect_update_tablet()
                 .times(1)
-                .with(eq(tablet_metadata))
+                .with(eq(tablet_metadata), eq(conflict))
                 .return_const(());
 
             self
@@ -914,7 +922,7 @@ mod tests {
             create_resolve_source_and_handle();
         metadata_cache_builder
             .expect_resolve_tablets(vec![table_query_1.clone()], resolve_result_handle_1)
-            .expect_update_tablet(tablet_metadata_1_v_2.clone());
+            .expect_update_tablet(tablet_metadata_1_v_2.clone(), false);
         let metadata_cache = metadata_cache_builder.take();
 
         let mut data_cache_builder = TabletDataCacheBuilder::new();

@@ -102,7 +102,7 @@ mock! {
             queries: &Vec<TableQuery>,
         ) -> ResultHandle<Vec<(TableQuery, TabletMetadata)>, TabletsRequestStatus>;
 
-        fn update_tablet(&mut self, metadata: TabletMetadata);
+        fn update_tablet(&mut self, metadata: TabletMetadata, conflict: bool);
 
         fn process_in_message(&mut self, in_message: TabletMetadataCacheInMessage);
 

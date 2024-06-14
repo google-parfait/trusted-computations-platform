@@ -45,7 +45,7 @@ pub trait TabletMetadataCache {
 
     // Instructs cache to update tablet metadata. Metadata maybe updated after
     // transaction execution.
-    fn update_tablet(&mut self, metadata: TabletMetadata);
+    fn update_tablet(&mut self, metadata: TabletMetadata, conflict: bool);
 
     // Processes incoming messages. Incoming message may contain tablets list responses.
     fn process_in_message(&mut self, in_message: TabletMetadataCacheInMessage);
@@ -74,7 +74,7 @@ impl TabletMetadataCache for DefaultTabletMetadataCache {
         todo!()
     }
 
-    fn update_tablet(&mut self, _metadata: TabletMetadata) {
+    fn update_tablet(&mut self, _metadata: TabletMetadata, _conflict: bool) {
         todo!()
     }
 
