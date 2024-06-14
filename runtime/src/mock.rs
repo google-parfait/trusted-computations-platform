@@ -24,6 +24,7 @@ use attestation::{Attestation, AttestationProvider, ClientAttestation, ServerAtt
 use communication::CommunicationModule;
 use consensus;
 use consensus::{Raft, RaftLightReady, RaftReady, Store};
+use encryptor::Encryptor;
 use handshake::{HandshakeSession, HandshakeSessionProvider, Role};
 use model::{
     Actor, ActorCommand, ActorContext, ActorError, ActorEvent, ActorEventContext, CommandOutcome,
@@ -291,6 +292,8 @@ mock! {
         fn take_out_message(&mut self) -> Result<Option<SecureChannelHandshake>, PalError>;
 
         fn is_completed(&self) -> bool;
+
+        fn get_encryptor(self: Box<Self>) -> Option<Box<dyn Encryptor>>;
     }
 }
 
@@ -377,5 +380,16 @@ mock! {
         fn put_incoming_message(
             &mut self,
             incoming_message: &HandshakeRequest) -> Result<Option<()>, PalError>;
+    }
+}
+
+mock! {
+    pub Encryptor {
+    }
+
+    impl Encryptor for Encryptor {
+        fn encrypt(&self, plaintext: &[u8]) -> Result<Vec<u8>, PalError>;
+
+        fn decrypt(&self, ciphertext: &[u8]) -> Result<Vec<u8>, PalError>;
     }
 }

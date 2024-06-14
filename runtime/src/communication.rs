@@ -15,6 +15,7 @@
 use core::mem;
 
 use crate::{
+    encryptor::Encryptor,
     handshake::{HandshakeSession, HandshakeSessionProvider, Role},
     logger::log::create_logger,
     platform::PalError,
@@ -191,10 +192,11 @@ pub struct CommunicationState {
     logger: Logger,
     handshake_state: HandshakeState,
     pending_handshake_message: Option<SecureChannelHandshake>,
-    handshake_session: Box<dyn HandshakeSession>,
+    handshake_session: Option<Box<dyn HandshakeSession>>,
     // Unencrypted stashed messages that will be encrypted and sent out once
     // handshake completes.
     unencrypted_messages: Vec<OutMessage>,
+    encryptor: Option<Box<dyn Encryptor>>,
 }
 
 #[derive(PartialEq)]
@@ -217,15 +219,20 @@ impl CommunicationState {
             logger,
             handshake_state: HandshakeState::Unknown,
             pending_handshake_message: None,
-            handshake_session,
+            handshake_session: Some(handshake_session),
             unencrypted_messages: Vec::new(),
+            encryptor: None,
         }
     }
 
     fn process_out_message(&mut self, message: out_message::Msg) -> Result<(), PalError> {
         match &self.handshake_state {
             HandshakeState::Unknown => {
-                self.pending_handshake_message = self.handshake_session.take_out_message()?;
+                self.pending_handshake_message = self
+                    .handshake_session
+                    .as_mut()
+                    .unwrap()
+                    .take_out_message()?;
                 if self.pending_handshake_message.is_none() {
                     warn!(self.logger, "No initial handshake message found.");
                     return Err(PalError::Internal);
@@ -256,10 +263,19 @@ impl CommunicationState {
                 match message {
                     // Messages in Unknown/Initiated state must be handshake messages.
                     in_message::Msg::SecureChannelHandshake(handshake_message) => {
-                        self.handshake_session.process_message(&handshake_message)?;
-                        self.pending_handshake_message =
-                            self.handshake_session.take_out_message()?;
-                        if self.handshake_session.is_completed() {
+                        self.handshake_session
+                            .as_mut()
+                            .unwrap()
+                            .process_message(&handshake_message)?;
+                        self.pending_handshake_message = self
+                            .handshake_session
+                            .as_mut()
+                            .unwrap()
+                            .take_out_message()?;
+                        if self.handshake_session.as_ref().unwrap().is_completed() {
+                            // Consume `self.handshake_session``.
+                            let handshake_session = self.handshake_session.take();
+                            self.encryptor = handshake_session.unwrap().get_encryptor();
                             self.handshake_state = HandshakeState::Completed;
                         } else {
                             self.handshake_state = HandshakeState::Initiated;
@@ -316,7 +332,7 @@ mod test {
     use alloc::vec::Vec;
     use communication::mem;
     use handshake::Role;
-    use mock::{MockHandshakeSession, MockHandshakeSessionProvider};
+    use mock::{MockEncryptor, MockHandshakeSession, MockHandshakeSessionProvider};
     use prost::bytes::Bytes;
     use tcp_proto::runtime::endpoint::*;
 
@@ -454,6 +470,17 @@ mod test {
             self
         }
 
+        fn expect_get_encryptor(
+            mut self,
+            mock_encryptor: MockEncryptor,
+        ) -> HandshakeSessionBuilder {
+            self.mock_handshake_session
+                .expect_get_encryptor()
+                .once()
+                .return_once(move || Some(Box::new(mock_encryptor)));
+            self
+        }
+
         fn take(mut self) -> MockHandshakeSession {
             mem::take(&mut self.mock_handshake_session)
         }
@@ -559,11 +586,13 @@ mod test {
             .expect_process_message(handshake_message_a.clone(), Ok(()))
             .expect_take_out_message(Ok(Some(handshake_message_a.clone())))
             .expect_is_completed(true)
+            .expect_get_encryptor(MockEncryptor::new())
             .take();
         let mock_handshake_session_b = HandshakeSessionBuilder::new()
             .expect_process_message(handshake_message_b.clone(), Ok(()))
             .expect_take_out_message(Ok(Some(handshake_message_b.clone())))
             .expect_is_completed(true)
+            .expect_get_encryptor(MockEncryptor::new())
             .take();
         let mock_handshake_session_provider = HandshakeSessionProviderBuilder::new()
             .expect_get(
@@ -662,11 +691,13 @@ mod test {
             .expect_process_message(handshake_message_b_to_a.clone(), Ok(()))
             .expect_take_out_message(Ok(None))
             .expect_is_completed(true)
+            .expect_get_encryptor(MockEncryptor::new())
             .take();
         let mock_handshake_session_b = HandshakeSessionBuilder::new()
             .expect_process_message(handshake_message_a_to_b.clone(), Ok(()))
             .expect_take_out_message(Ok(Some(handshake_message_b_to_a.clone())))
             .expect_is_completed(true)
+            .expect_get_encryptor(MockEncryptor::new())
             .take();
         let mock_handshake_session_provider_a = HandshakeSessionProviderBuilder::new()
             .expect_get(
@@ -790,6 +821,7 @@ mod test {
             .expect_process_message(handshake_message_b_to_a.clone(), Ok(()))
             .expect_take_out_message(Ok(None))
             .expect_is_completed(true)
+            .expect_get_encryptor(MockEncryptor::new())
             .take();
         let mock_handshake_session_b = HandshakeSessionBuilder::new()
             .expect_process_message(handshake_message_a_to_b.clone(), Ok(()))
@@ -798,6 +830,7 @@ mod test {
             .expect_process_message(handshake_message_a_to_b.clone(), Ok(()))
             .expect_take_out_message(Ok(Some(handshake_message_b_to_a.clone())))
             .expect_is_completed(true)
+            .expect_get_encryptor(MockEncryptor::new())
             .take();
         let mock_handshake_session_provider_a = HandshakeSessionProviderBuilder::new()
             .expect_get(

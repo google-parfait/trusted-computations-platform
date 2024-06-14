@@ -36,6 +36,7 @@ pub mod attestation;
 pub mod communication;
 pub mod consensus;
 pub mod driver;
+pub mod encryptor;
 pub mod handshake;
 pub mod logger;
 #[cfg(feature = "std")]

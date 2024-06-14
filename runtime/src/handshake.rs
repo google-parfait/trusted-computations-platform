@@ -14,11 +14,14 @@
 
 use crate::{
     attestation::{AttestationProvider, ClientAttestation, ServerAttestation},
+    encryptor::DefaultEncryptor,
+    encryptor::Encryptor,
     logger::log::create_logger,
     oak_handshaker::{OakClientHandshaker, OakHandshakerFactory, OakServerHandshaker},
     platform::PalError,
 };
 use alloc::{boxed::Box, format};
+use oak_proto_rust::oak::crypto::v1::SessionKeys;
 use oak_proto_rust::oak::session::v1::{
     AttestRequest as OakAttestRequest, AttestResponse as OakAttestResponse,
     HandshakeRequest as OakHandshakeRequest, HandshakeResponse as OakHandshakeResponse,
@@ -70,6 +73,13 @@ pub trait HandshakeSession {
 
     // Returns true if this handshake session is now complete.
     fn is_completed(&self) -> bool;
+
+    // This method `consumes` the HandshakeSession and returns the Encryptor which can be
+    // used for encrypting/decrypting any subsequent messages between the 2 replicas once
+    // handshake has successfully completed.
+    // Returns `None` if `is_completed` is false. This should ideally be invoked when
+    // `is_completed` returns true.
+    fn get_encryptor(self: Box<Self>) -> Option<Box<dyn Encryptor>>;
 }
 
 pub struct DefaultHandshakeSessionProvider {
@@ -136,6 +146,7 @@ pub struct ClientHandshakeSession {
     attestation: Option<Box<dyn ClientAttestation>>,
     oak_handshaker: Option<Box<dyn OakClientHandshaker>>,
     state: State,
+    session_keys: SessionKeys,
 }
 
 impl ClientHandshakeSession {
@@ -153,6 +164,7 @@ impl ClientHandshakeSession {
             attestation: Some(attestation),
             oak_handshaker: Some(oak_handshaker),
             state: State::Unknown,
+            session_keys: SessionKeys::default(),
         }
     }
 
@@ -253,8 +265,7 @@ impl ClientHandshakeSession {
 
         // Take out `self.oak_handshaker` out of `self` so that it can be consumed.
         let oak_handshaker = self.oak_handshaker.take();
-        // TODO: Use `session_keys` to initialize Encryptor.
-        let _session_keys = oak_handshaker
+        self.session_keys = oak_handshaker
             .unwrap()
             .derive_session_keys()
             .ok_or_else(|| {
@@ -358,6 +369,14 @@ impl HandshakeSession for ClientHandshakeSession {
     fn is_completed(&self) -> bool {
         self.state == State::Completed
     }
+
+    fn get_encryptor(self: Box<Self>) -> Option<Box<dyn Encryptor>> {
+        if self.state != State::Completed {
+            return None;
+        }
+
+        Some(Box::new(DefaultEncryptor::new(self.session_keys)))
+    }
 }
 
 pub struct ServerHandshakeSession {
@@ -367,6 +386,7 @@ pub struct ServerHandshakeSession {
     attestation: Option<Box<dyn ServerAttestation>>,
     oak_handshaker: Option<Box<dyn OakServerHandshaker>>,
     state: State,
+    session_keys: SessionKeys,
 }
 
 impl ServerHandshakeSession {
@@ -384,6 +404,7 @@ impl ServerHandshakeSession {
             attestation: Some(attestation),
             oak_handshaker: Some(oak_handshaker),
             state: State::Unknown,
+            session_keys: SessionKeys::default(),
         }
     }
 
@@ -484,11 +505,10 @@ impl ServerHandshakeSession {
         }
     }
 
-    fn init_encryptor(&mut self) -> Result<(), PalError> {
+    fn init_session_keys(&mut self) -> Result<(), PalError> {
         // Take out `self.oak_handshaker` out of `self` so that it can be consumed.
         let oak_handshaker = self.oak_handshaker.take();
-        //TODO: Use session keys to create Encryptor.
-        let _session_keys = oak_handshaker
+        self.session_keys = oak_handshaker
             .unwrap()
             .derive_session_keys()
             .ok_or_else(|| {
@@ -568,7 +588,7 @@ impl HandshakeSession for ServerHandshakeSession {
             }
             State::KeyExchange => {
                 let handshake_response = self.get_handshake_response()?;
-                self.init_encryptor()?;
+                self.init_session_keys()?;
                 self.state = State::Completed;
                 Ok(Some(handshake_response))
             }
@@ -588,6 +608,14 @@ impl HandshakeSession for ServerHandshakeSession {
 
     fn is_completed(&self) -> bool {
         self.state == State::Completed
+    }
+
+    fn get_encryptor(self: Box<Self>) -> Option<Box<dyn Encryptor>> {
+        if self.state != State::Completed {
+            return None;
+        }
+
+        Some(Box::new(DefaultEncryptor::new(self.session_keys)))
     }
 }
 
@@ -1050,6 +1078,8 @@ mod test {
             client_handshake_session.process_message(&attest_response)
         );
         assert_eq!(Ok(None), client_handshake_session.take_out_message());
+
+        assert!(Box::new(client_handshake_session).get_encryptor().is_some());
     }
 
     #[test]
@@ -1083,6 +1113,7 @@ mod test {
             client_handshake_session.take_out_message()
         );
         assert_eq!(false, client_handshake_session.is_completed());
+        assert!(Box::new(client_handshake_session).get_encryptor().is_none());
     }
 
     #[test]
@@ -1337,6 +1368,8 @@ mod test {
             server_handshake_session.process_message(&attest_request)
         );
         assert_eq!(Ok(None), server_handshake_session.take_out_message());
+
+        assert!(Box::new(server_handshake_session).get_encryptor().is_some());
     }
 
     #[test]
@@ -1373,6 +1406,7 @@ mod test {
             server_handshake_session.take_out_message()
         );
         assert_eq!(false, server_handshake_session.is_completed());
+        assert!(Box::new(server_handshake_session).get_encryptor().is_none());
     }
 
     #[test]
