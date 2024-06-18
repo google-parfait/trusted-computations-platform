@@ -83,7 +83,7 @@ impl LedgerActor {
                 ledger_request.name()
             );
             return Err(micro_rpc::Status::new_with_message(
-                micro_rpc::StatusCode::Unavailable,
+                micro_rpc::StatusCode::Aborted,
                 "Command rejected",
             ));
         }
