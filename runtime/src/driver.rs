@@ -781,13 +781,17 @@ impl<
     ) -> Result<(), PalError> {
         self.check_driver_started()?;
 
-        let message = self
-            .communication
-            .process_in_message(in_message::Msg::DeliverSystemMessage(
-                deliver_system_message,
-            ))?
-            .unwrap();
+        let message =
+            self.communication
+                .process_in_message(in_message::Msg::DeliverSystemMessage(
+                    deliver_system_message,
+                ))?;
 
+        if message.is_none() {
+            return Ok(());
+        }
+
+        let message = message.unwrap();
         match message {
             in_message::Msg::DeliverSystemMessage(m) => self.make_raft_step(
                 m.sender_replica_id,
@@ -823,13 +827,17 @@ impl<
         &mut self,
         deliver_snapshot_request: DeliverSnapshotRequest,
     ) -> Result<(), PalError> {
-        let message = self
-            .communication
-            .process_in_message(in_message::Msg::DeliverSnapshotRequest(
-                deliver_snapshot_request,
-            ))?
-            .unwrap();
+        let message =
+            self.communication
+                .process_in_message(in_message::Msg::DeliverSnapshotRequest(
+                    deliver_snapshot_request,
+                ))?;
 
+        if message.is_none() {
+            return Ok(());
+        }
+
+        let message = message.unwrap();
         match message {
             in_message::Msg::DeliverSnapshotRequest(m) => {
                 let deliver_snapshot_response = match self.snapshot.mut_processor(self.instant) {
@@ -858,13 +866,17 @@ impl<
         &mut self,
         deliver_snapshot_response: DeliverSnapshotResponse,
     ) -> Result<(), PalError> {
-        let message = self
-            .communication
-            .process_in_message(in_message::Msg::DeliverSnapshotResponse(
-                deliver_snapshot_response,
-            ))?
-            .unwrap();
+        let message =
+            self.communication
+                .process_in_message(in_message::Msg::DeliverSnapshotResponse(
+                    deliver_snapshot_response,
+                ))?;
 
+        if message.is_none() {
+            return Ok(());
+        }
+
+        let message = message.unwrap();
         match message {
             in_message::Msg::DeliverSnapshotResponse(m) => {
                 match self.snapshot.mut_processor(self.instant) {
@@ -878,7 +890,6 @@ impl<
                         );
                     }
                 }
-
                 Ok(())
             }
             _ => {

@@ -195,7 +195,7 @@ pub struct CommunicationState {
     handshake_session: Option<Box<dyn HandshakeSession>>,
     // Unencrypted stashed messages that will be encrypted and sent out once
     // handshake completes.
-    unencrypted_messages: Vec<OutMessage>,
+    unencrypted_messages: Vec<out_message::Msg>,
     encryptor: Option<Box<dyn Encryptor>>,
 }
 
@@ -237,14 +237,12 @@ impl CommunicationState {
                     warn!(self.logger, "No initial handshake message found.");
                     return Err(PalError::Internal);
                 }
-                self.unencrypted_messages
-                    .push(OutMessage { msg: Some(message) });
+                self.unencrypted_messages.push(message);
                 self.handshake_state = HandshakeState::Initiated;
                 Ok(())
             }
             HandshakeState::Initiated | HandshakeState::Completed => {
-                self.unencrypted_messages
-                    .push(OutMessage { msg: Some(message) });
+                self.unencrypted_messages.push(message);
                 Ok(())
             }
             HandshakeState::Failed => {
@@ -273,7 +271,7 @@ impl CommunicationState {
                             .unwrap()
                             .take_out_message()?;
                         if self.handshake_session.as_ref().unwrap().is_completed() {
-                            // Consume `self.handshake_session``.
+                            // Consume `self.handshake_session`.
                             let handshake_session = self.handshake_session.take();
                             self.encryptor = handshake_session.unwrap().get_encryptor();
                             self.handshake_state = HandshakeState::Completed;
@@ -292,15 +290,99 @@ impl CommunicationState {
                     }
                 }
             }
-            HandshakeState::Completed => {
-                // TODO: Decrypt message.
-                Ok(Some(message))
-            }
+            HandshakeState::Completed => Ok(self.decrypt_message(message)),
             HandshakeState::Failed => {
                 warn!(self.logger, "HandshakeState Failed.");
                 return Err(PalError::Internal);
             }
         }
+    }
+
+    fn decrypt_message(&self, message: in_message::Msg) -> Option<in_message::Msg> {
+        let encryptor = self.encryptor.as_ref().unwrap();
+        let result = match message {
+            in_message::Msg::DeliverSystemMessage(mut msg) => encryptor
+                .decrypt(&msg.message_contents)
+                .and_then(|decrypted_msg| {
+                    msg.message_contents = decrypted_msg.into();
+                    Ok(in_message::Msg::DeliverSystemMessage(msg))
+                }),
+            in_message::Msg::DeliverSnapshotRequest(mut msg) => encryptor
+                .decrypt(&msg.payload_contents)
+                .and_then(|decrypted_msg| {
+                    msg.payload_contents = decrypted_msg.into();
+                    Ok(in_message::Msg::DeliverSnapshotRequest(msg))
+                }),
+            in_message::Msg::DeliverSnapshotResponse(mut msg) => encryptor
+                .decrypt(&msg.payload_contents)
+                .and_then(|decrypted_msg| {
+                    msg.payload_contents = decrypted_msg.into();
+                    Ok(in_message::Msg::DeliverSnapshotResponse(msg))
+                }),
+            _ => {
+                warn!(
+                    self.logger,
+                    "Unexpected message encountered for decryption {:?}", message
+                );
+                Err(PalError::Internal)
+            }
+        };
+
+        if result.is_err() {
+            warn!(self.logger, "Failed to decrypt message {:?}", result.err());
+            return None;
+        }
+        Some(result.unwrap())
+    }
+
+    fn take_encrypted_messages(&mut self) -> Vec<OutMessage> {
+        let mut messages = Vec::new();
+        let unencrypted_msgs = mem::take(&mut self.unencrypted_messages);
+        let encryptor = self.encryptor.as_ref().unwrap();
+
+        for unencrypted_message in unencrypted_msgs {
+            let result = match unencrypted_message {
+                out_message::Msg::DeliverSystemMessage(mut message) => encryptor
+                    .encrypt(&message.message_contents)
+                    .and_then(|encrypted_message| {
+                        message.message_contents = encrypted_message.into();
+                        messages.push(OutMessage {
+                            msg: Some(out_message::Msg::DeliverSystemMessage(message)),
+                        });
+                        Ok(())
+                    }),
+                out_message::Msg::DeliverSnapshotRequest(mut message) => encryptor
+                    .encrypt(&message.payload_contents)
+                    .and_then(|encrypted_message| {
+                        message.payload_contents = encrypted_message.into();
+                        messages.push(OutMessage {
+                            msg: Some(out_message::Msg::DeliverSnapshotRequest(message)),
+                        });
+                        Ok(())
+                    }),
+                out_message::Msg::DeliverSnapshotResponse(mut message) => encryptor
+                    .encrypt(&message.payload_contents)
+                    .and_then(|encrypted_message| {
+                        message.payload_contents = encrypted_message.into();
+                        messages.push(OutMessage {
+                            msg: Some(out_message::Msg::DeliverSnapshotResponse(message)),
+                        });
+                        Ok(())
+                    }),
+                _ => {
+                    warn!(
+                        self.logger,
+                        "Unexpected message encountered for encryption {:?}", unencrypted_message
+                    );
+                    Err(PalError::Internal)
+                }
+            };
+
+            if result.is_err() {
+                warn!(self.logger, "Failed to encrypt {:?}", result.err());
+            }
+        }
+        messages
     }
 
     fn take_out_messages(&mut self) -> Vec<OutMessage> {
@@ -312,9 +394,9 @@ impl CommunicationState {
                 )),
             }];
         } else if self.handshake_state == HandshakeState::Completed {
-            // TODO: Encrypt message.
-            messages = mem::take(&mut self.unencrypted_messages);
+            messages = self.take_encrypted_messages();
         }
+
         messages
     }
 }
@@ -347,6 +429,18 @@ mod test {
         }
     }
 
+    fn create_deliver_system_message_with_contents(
+        sender_replica_id: u64,
+        recipient_replica_id: u64,
+        message_contents: Bytes,
+    ) -> DeliverSystemMessage {
+        DeliverSystemMessage {
+            recipient_replica_id,
+            sender_replica_id,
+            message_contents,
+        }
+    }
+
     fn create_deliver_snapshot_request(
         sender_replica_id: u64,
         recipient_replica_id: u64,
@@ -359,6 +453,19 @@ mod test {
         }
     }
 
+    fn create_deliver_snapshot_request_with_contents(
+        sender_replica_id: u64,
+        recipient_replica_id: u64,
+        payload_contents: Bytes,
+    ) -> DeliverSnapshotRequest {
+        DeliverSnapshotRequest {
+            recipient_replica_id,
+            sender_replica_id,
+            delivery_id: 0,
+            payload_contents,
+        }
+    }
+
     fn create_deliver_snapshot_response(
         sender_replica_id: u64,
         recipient_replica_id: u64,
@@ -368,6 +475,19 @@ mod test {
             sender_replica_id,
             delivery_id: 0,
             payload_contents: Bytes::new(),
+        }
+    }
+
+    fn create_deliver_snapshot_response_with_contents(
+        sender_replica_id: u64,
+        recipient_replica_id: u64,
+        payload_contents: Bytes,
+    ) -> DeliverSnapshotResponse {
+        DeliverSnapshotResponse {
+            recipient_replica_id,
+            sender_replica_id,
+            delivery_id: 0,
+            payload_contents,
         }
     }
 
@@ -486,6 +606,48 @@ mod test {
         }
     }
 
+    struct EncryptorBuilder {
+        mock_encryptor: MockEncryptor,
+    }
+
+    impl EncryptorBuilder {
+        fn new() -> EncryptorBuilder {
+            EncryptorBuilder {
+                mock_encryptor: MockEncryptor::new(),
+            }
+        }
+
+        fn expect_encrypt(
+            mut self,
+            plaintext: Bytes,
+            result: Result<Vec<u8>, PalError>,
+        ) -> EncryptorBuilder {
+            self.mock_encryptor
+                .expect_encrypt()
+                .with(eq(plaintext))
+                .once()
+                .return_once(move |_| result);
+            self
+        }
+
+        fn expect_decrypt(
+            mut self,
+            ciphertext: Bytes,
+            result: Result<Vec<u8>, PalError>,
+        ) -> EncryptorBuilder {
+            self.mock_encryptor
+                .expect_decrypt()
+                .with(eq(ciphertext))
+                .once()
+                .return_once(move |_| result);
+            self
+        }
+
+        fn take(mut self) -> MockEncryptor {
+            mem::take(&mut self.mock_encryptor)
+        }
+    }
+
     #[test]
     fn test_process_out_message() {
         let self_replica_id = 11111;
@@ -582,11 +744,55 @@ mod test {
             create_secure_channel_handshake(peer_replica_id_a, self_replica_id);
         let handshake_message_b =
             create_secure_channel_handshake(peer_replica_id_b, self_replica_id);
+        let deliver_sys_msg_encrypted = create_deliver_system_message_with_contents(
+            peer_replica_id_a,
+            self_replica_id,
+            "sys_msg_ciphertext".into(),
+        );
+        let deliver_sys_msg_unencrypted = create_deliver_system_message_with_contents(
+            peer_replica_id_a,
+            self_replica_id,
+            "sys_msg_plaintext".into(),
+        );
+        let deliver_snapshot_req_encrypted = create_deliver_snapshot_request_with_contents(
+            peer_replica_id_a,
+            self_replica_id,
+            "snapshot_req_ciphertext".into(),
+        );
+        let deliver_snapshot_req_unencrypted = create_deliver_snapshot_request_with_contents(
+            peer_replica_id_a,
+            self_replica_id,
+            "snapshot_req_plaintext".into(),
+        );
+        let deliver_snapshot_resp_encrypted = create_deliver_snapshot_response_with_contents(
+            peer_replica_id_a,
+            self_replica_id,
+            "snapshot_resp_ciphertext".into(),
+        );
+        let deliver_snapshot_resp_unencrypted = create_deliver_snapshot_response_with_contents(
+            peer_replica_id_a,
+            self_replica_id,
+            "snapshot_resp_plaintext".into(),
+        );
+        let mock_encryptor = EncryptorBuilder::new()
+            .expect_decrypt(
+                deliver_sys_msg_encrypted.message_contents.clone(),
+                Ok(deliver_sys_msg_unencrypted.message_contents.to_vec()),
+            )
+            .expect_decrypt(
+                deliver_snapshot_req_encrypted.payload_contents.clone(),
+                Ok(deliver_snapshot_req_unencrypted.payload_contents.to_vec()),
+            )
+            .expect_decrypt(
+                deliver_snapshot_resp_encrypted.payload_contents.clone(),
+                Ok(deliver_snapshot_resp_unencrypted.payload_contents.to_vec()),
+            )
+            .take();
         let mock_handshake_session_a = HandshakeSessionBuilder::new()
             .expect_process_message(handshake_message_a.clone(), Ok(()))
             .expect_take_out_message(Ok(Some(handshake_message_a.clone())))
             .expect_is_completed(true)
-            .expect_get_encryptor(MockEncryptor::new())
+            .expect_get_encryptor(mock_encryptor)
             .take();
         let mock_handshake_session_b = HandshakeSessionBuilder::new()
             .expect_process_message(handshake_message_b.clone(), Ok(()))
@@ -629,26 +835,26 @@ mod test {
         );
         assert_eq!(
             Ok(Some(in_message::Msg::DeliverSystemMessage(
-                create_deliver_system_message(peer_replica_id_a, self_replica_id)
+                deliver_sys_msg_unencrypted
             ))),
             communication_module.process_in_message(in_message::Msg::DeliverSystemMessage(
-                create_deliver_system_message(peer_replica_id_a, self_replica_id)
+                deliver_sys_msg_encrypted
             ))
         );
         assert_eq!(
             Ok(Some(in_message::Msg::DeliverSnapshotRequest(
-                create_deliver_snapshot_request(peer_replica_id_a, self_replica_id)
+                deliver_snapshot_req_unencrypted
             ))),
             communication_module.process_in_message(in_message::Msg::DeliverSnapshotRequest(
-                create_deliver_snapshot_request(peer_replica_id_a, self_replica_id)
+                deliver_snapshot_req_encrypted
             ))
         );
         assert_eq!(
             Ok(Some(in_message::Msg::DeliverSnapshotResponse(
-                create_deliver_snapshot_response(peer_replica_id_a, self_replica_id)
+                deliver_snapshot_resp_unencrypted
             ))),
             communication_module.process_in_message(in_message::Msg::DeliverSnapshotResponse(
-                create_deliver_snapshot_response(peer_replica_id_a, self_replica_id)
+                deliver_snapshot_resp_encrypted
             ))
         );
         assert_eq!(
@@ -686,18 +892,54 @@ mod test {
             create_secure_channel_handshake(peer_replica_id_a, peer_replica_id_b);
         let handshake_message_b_to_a =
             create_secure_channel_handshake(peer_replica_id_b, peer_replica_id_a);
+        let deliver_sys_msg_encrypted = create_deliver_system_message_with_contents(
+            peer_replica_id_a,
+            peer_replica_id_b,
+            "sys_msg_ciphertext".into(),
+        );
+        let deliver_sys_msg_unencrypted = create_deliver_system_message_with_contents(
+            peer_replica_id_a,
+            peer_replica_id_b,
+            "sys_msg_plaintext".into(),
+        );
+        let deliver_snapshot_req_encrypted = create_deliver_snapshot_request_with_contents(
+            peer_replica_id_a,
+            peer_replica_id_b,
+            "snapshot_req_ciphertext".into(),
+        );
+        let deliver_snapshot_req_unencrypted = create_deliver_snapshot_request_with_contents(
+            peer_replica_id_a,
+            peer_replica_id_b,
+            "snapshot_req_plaintext".into(),
+        );
+        let mock_encryptor_a = EncryptorBuilder::new()
+            .expect_encrypt(
+                deliver_sys_msg_unencrypted.message_contents.clone(),
+                Ok(deliver_sys_msg_encrypted.message_contents.to_vec()),
+            )
+            .expect_encrypt(
+                deliver_snapshot_req_unencrypted.payload_contents.clone(),
+                Ok(deliver_snapshot_req_encrypted.payload_contents.to_vec()),
+            )
+            .take();
+        let mock_encryptor_b = EncryptorBuilder::new()
+            .expect_decrypt(
+                deliver_sys_msg_encrypted.message_contents.clone(),
+                Ok(deliver_sys_msg_unencrypted.message_contents.to_vec()),
+            )
+            .take();
         let mock_handshake_session_a = HandshakeSessionBuilder::new()
             .expect_take_out_message(Ok(Some(handshake_message_a_to_b.clone())))
             .expect_process_message(handshake_message_b_to_a.clone(), Ok(()))
             .expect_take_out_message(Ok(None))
             .expect_is_completed(true)
-            .expect_get_encryptor(MockEncryptor::new())
+            .expect_get_encryptor(mock_encryptor_a)
             .take();
         let mock_handshake_session_b = HandshakeSessionBuilder::new()
             .expect_process_message(handshake_message_a_to_b.clone(), Ok(()))
             .expect_take_out_message(Ok(Some(handshake_message_b_to_a.clone())))
             .expect_is_completed(true)
-            .expect_get_encryptor(MockEncryptor::new())
+            .expect_get_encryptor(mock_encryptor_b)
             .take();
         let mock_handshake_session_provider_a = HandshakeSessionProviderBuilder::new()
             .expect_get(
@@ -720,11 +962,6 @@ mod test {
         let mut communication_module_b =
             DefaultCommunicationModule::new(Box::new(mock_handshake_session_provider_b));
 
-        let deliver_system_message =
-            create_deliver_system_message(peer_replica_id_a, peer_replica_id_b);
-        let deliver_snapshot_request =
-            create_deliver_snapshot_request(peer_replica_id_a, peer_replica_id_b);
-
         communication_module_a.init(peer_replica_id_a);
         communication_module_b.init(peer_replica_id_b);
 
@@ -732,7 +969,7 @@ mod test {
         assert_eq!(
             Ok(()),
             communication_module_a.process_out_message(out_message::Msg::DeliverSystemMessage(
-                deliver_system_message.clone()
+                deliver_sys_msg_unencrypted.clone()
             ))
         );
         assert_eq!(
@@ -776,19 +1013,19 @@ mod test {
         assert_eq!(
             Ok(()),
             communication_module_a.process_out_message(out_message::Msg::DeliverSnapshotRequest(
-                deliver_snapshot_request.clone()
+                deliver_snapshot_req_unencrypted.clone()
             ))
         );
         assert_eq!(
             vec![
                 OutMessage {
                     msg: Some(out_message::Msg::DeliverSystemMessage(
-                        deliver_system_message.clone()
+                        deliver_sys_msg_encrypted.clone()
                     ))
                 },
                 OutMessage {
                     msg: Some(out_message::Msg::DeliverSnapshotRequest(
-                        deliver_snapshot_request.clone()
+                        deliver_snapshot_req_encrypted.clone()
                     ))
                 }
             ],
@@ -797,10 +1034,10 @@ mod test {
 
         assert_eq!(
             Ok(Some(in_message::Msg::DeliverSystemMessage(
-                deliver_system_message.clone()
+                deliver_sys_msg_unencrypted.clone()
             ))),
             communication_module_b.process_in_message(in_message::Msg::DeliverSystemMessage(
-                deliver_system_message.clone()
+                deliver_sys_msg_encrypted.clone()
             ))
         );
     }
@@ -813,6 +1050,42 @@ mod test {
             create_secure_channel_handshake(peer_replica_id_a, peer_replica_id_b);
         let handshake_message_b_to_a =
             create_secure_channel_handshake(peer_replica_id_b, peer_replica_id_a);
+        let deliver_sys_msg_encrypted = create_deliver_system_message_with_contents(
+            peer_replica_id_a,
+            peer_replica_id_b,
+            "sys_msg_ciphertext".into(),
+        );
+        let deliver_sys_msg_unencrypted = create_deliver_system_message_with_contents(
+            peer_replica_id_a,
+            peer_replica_id_b,
+            "sys_msg_plaintext".into(),
+        );
+        let deliver_snapshot_req_encrypted = create_deliver_snapshot_request_with_contents(
+            peer_replica_id_a,
+            peer_replica_id_b,
+            "snapshot_req_ciphertext".into(),
+        );
+        let deliver_snapshot_req_unencrypted = create_deliver_snapshot_request_with_contents(
+            peer_replica_id_a,
+            peer_replica_id_b,
+            "snapshot_req_plaintext".into(),
+        );
+        let mock_encryptor_a = EncryptorBuilder::new()
+            .expect_encrypt(
+                deliver_sys_msg_unencrypted.message_contents.clone(),
+                Ok(deliver_sys_msg_encrypted.message_contents.to_vec()),
+            )
+            .expect_encrypt(
+                deliver_snapshot_req_unencrypted.payload_contents.clone(),
+                Ok(deliver_snapshot_req_encrypted.payload_contents.to_vec()),
+            )
+            .take();
+        let mock_encryptor_b = EncryptorBuilder::new()
+            .expect_decrypt(
+                deliver_sys_msg_encrypted.message_contents.clone(),
+                Ok(deliver_sys_msg_unencrypted.message_contents.to_vec()),
+            )
+            .take();
         let mock_handshake_session_a = HandshakeSessionBuilder::new()
             .expect_take_out_message(Ok(Some(handshake_message_a_to_b.clone())))
             .expect_process_message(handshake_message_b_to_a.clone(), Ok(()))
@@ -821,7 +1094,7 @@ mod test {
             .expect_process_message(handshake_message_b_to_a.clone(), Ok(()))
             .expect_take_out_message(Ok(None))
             .expect_is_completed(true)
-            .expect_get_encryptor(MockEncryptor::new())
+            .expect_get_encryptor(mock_encryptor_a)
             .take();
         let mock_handshake_session_b = HandshakeSessionBuilder::new()
             .expect_process_message(handshake_message_a_to_b.clone(), Ok(()))
@@ -830,7 +1103,7 @@ mod test {
             .expect_process_message(handshake_message_a_to_b.clone(), Ok(()))
             .expect_take_out_message(Ok(Some(handshake_message_b_to_a.clone())))
             .expect_is_completed(true)
-            .expect_get_encryptor(MockEncryptor::new())
+            .expect_get_encryptor(mock_encryptor_b)
             .take();
         let mock_handshake_session_provider_a = HandshakeSessionProviderBuilder::new()
             .expect_get(
@@ -853,11 +1126,6 @@ mod test {
         let mut communication_module_b =
             DefaultCommunicationModule::new(Box::new(mock_handshake_session_provider_b));
 
-        let deliver_system_message =
-            create_deliver_system_message(peer_replica_id_a, peer_replica_id_b);
-        let deliver_snapshot_request =
-            create_deliver_snapshot_request(peer_replica_id_a, peer_replica_id_b);
-
         communication_module_a.init(peer_replica_id_a);
         communication_module_b.init(peer_replica_id_b);
 
@@ -865,7 +1133,7 @@ mod test {
         assert_eq!(
             Ok(()),
             communication_module_a.process_out_message(out_message::Msg::DeliverSystemMessage(
-                deliver_system_message.clone()
+                deliver_sys_msg_unencrypted.clone()
             ))
         );
         assert_eq!(
@@ -931,19 +1199,19 @@ mod test {
         assert_eq!(
             Ok(()),
             communication_module_a.process_out_message(out_message::Msg::DeliverSnapshotRequest(
-                deliver_snapshot_request.clone()
+                deliver_snapshot_req_unencrypted.clone()
             ))
         );
         assert_eq!(
             vec![
                 OutMessage {
                     msg: Some(out_message::Msg::DeliverSystemMessage(
-                        deliver_system_message.clone()
+                        deliver_sys_msg_encrypted.clone()
                     ))
                 },
                 OutMessage {
                     msg: Some(out_message::Msg::DeliverSnapshotRequest(
-                        deliver_snapshot_request.clone()
+                        deliver_snapshot_req_encrypted.clone()
                     ))
                 }
             ],
@@ -952,10 +1220,10 @@ mod test {
 
         assert_eq!(
             Ok(Some(in_message::Msg::DeliverSystemMessage(
-                deliver_system_message.clone()
+                deliver_sys_msg_unencrypted.clone()
             ))),
             communication_module_b.process_in_message(in_message::Msg::DeliverSystemMessage(
-                deliver_system_message.clone()
+                deliver_sys_msg_encrypted.clone()
             ))
         );
     }
