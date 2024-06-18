@@ -265,6 +265,8 @@ mock! {
         ) -> Result<Option<in_message::Msg>, PalError>;
 
         fn take_out_messages(&mut self) -> Vec<OutMessage>;
+
+        fn process_cluster_change(&mut self, new_replica_ids: &[u64]);
     }
 }
 

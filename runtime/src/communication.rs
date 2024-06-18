@@ -69,6 +69,12 @@ pub trait CommunicationModule {
     /// This can include encrypted raft messages and/or handshake messages if this is
     /// the first time talking to a peer replica.
     fn take_out_messages(&mut self) -> Vec<OutMessage>;
+
+    // Processes change in the cluster state by cleaning up resources for replicas
+    // that are no longer part of the cluster.
+    // `new_replica_ids` contains a list of all replica_ids currently part of the Raft
+    // cluster.
+    fn process_cluster_change(&mut self, new_replica_ids: &[u64]);
 }
 
 // Default implementation of CommunicationModule.
@@ -184,6 +190,21 @@ impl CommunicationModule for DefaultCommunicationModule {
             messages.append(&mut replica_state.take_out_messages())
         }
         messages
+    }
+
+    fn process_cluster_change(&mut self, new_replica_ids: &[u64]) {
+        // If replica is no longer part of cluster, clear all state.
+        if !new_replica_ids.contains(&self.replica_id) {
+            self.replicas.clear();
+            return;
+        }
+
+        // Remove replicas that are no longer part of the raft cluster.
+        // Any new replicas part of `new_replica_ids` that weren't previously part of the
+        // cluster will be added to `self.replicas` list on demand when communication is first
+        // initiatiated with that replica.
+        self.replicas
+            .retain(|&key, _| new_replica_ids.contains(&key));
     }
 }
 
@@ -537,6 +558,7 @@ mod test {
             self.mock_handshake_session_provider
                 .expect_get()
                 .with(eq(self_replica_id), eq(peer_replica_id), eq(role))
+                .once()
                 .return_once(move |_, _, _| Box::new(mock_handshake_session));
             self
         }
@@ -1311,6 +1333,105 @@ mod test {
             communication_module_b.process_out_message(out_message::Msg::DeliverSystemMessage(
                 deliver_system_message_b_to_a.clone()
             ))
+        );
+    }
+
+    #[test]
+    fn test_process_cluster_change() {
+        let peer_replica_id_a = 11111;
+        let peer_replica_id_b = 22222;
+        let handshake_message_a_to_b =
+            create_secure_channel_handshake(peer_replica_id_a, peer_replica_id_b);
+        let handshake_message_b_to_a =
+            create_secure_channel_handshake(peer_replica_id_b, peer_replica_id_a);
+        let deliver_system_message = create_deliver_system_message_with_contents(
+            peer_replica_id_a,
+            peer_replica_id_b,
+            "foo".into(),
+        );
+        let mock_encryptor = EncryptorBuilder::new()
+            .expect_encrypt(
+                deliver_system_message.message_contents.clone(),
+                Ok(deliver_system_message.message_contents.to_vec()),
+            )
+            .take();
+        let mock_handshake_session_a1 = HandshakeSessionBuilder::new()
+            .expect_take_out_message(Ok(Some(handshake_message_a_to_b.clone())))
+            .take();
+        let mock_handshake_session_a2 = HandshakeSessionBuilder::new()
+            .expect_take_out_message(Ok(Some(handshake_message_a_to_b.clone())))
+            .expect_process_message(handshake_message_b_to_a.clone(), Ok(()))
+            .expect_take_out_message(Ok(None))
+            .expect_is_completed(true)
+            .expect_get_encryptor(mock_encryptor)
+            .take();
+        let mock_handshake_session_provider_a = HandshakeSessionProviderBuilder::new()
+            .expect_get(
+                peer_replica_id_a,
+                peer_replica_id_b,
+                Role::Initiator,
+                mock_handshake_session_a1,
+            )
+            .expect_get(
+                peer_replica_id_a,
+                peer_replica_id_b,
+                Role::Initiator,
+                mock_handshake_session_a2,
+            )
+            .take();
+        let mut communication_module_a =
+            DefaultCommunicationModule::new(Box::new(mock_handshake_session_provider_a));
+
+        communication_module_a.init(peer_replica_id_a);
+
+        // Handshake initiated from a to b.
+        assert_eq!(
+            Ok(()),
+            communication_module_a.process_out_message(out_message::Msg::DeliverSystemMessage(
+                deliver_system_message.clone()
+            ))
+        );
+        assert_eq!(
+            vec![OutMessage {
+                msg: Some(out_message::Msg::SecureChannelHandshake(
+                    handshake_message_a_to_b.clone()
+                ))
+            }],
+            communication_module_a.take_out_messages()
+        );
+
+        // Process cluster change such that `peer_replica_id_b` is no longer part of
+        // cluster.
+        communication_module_a.process_cluster_change(&vec![peer_replica_id_a]);
+
+        // Handshake is re-initiated when talking to `peer_replica_id_b` again later.
+        assert_eq!(
+            Ok(()),
+            communication_module_a.process_out_message(out_message::Msg::DeliverSystemMessage(
+                deliver_system_message.clone()
+            ))
+        );
+        assert_eq!(
+            vec![OutMessage {
+                msg: Some(out_message::Msg::SecureChannelHandshake(
+                    handshake_message_a_to_b.clone()
+                ))
+            }],
+            communication_module_a.take_out_messages()
+        );
+        assert_eq!(
+            Ok(None),
+            communication_module_a.process_in_message(in_message::Msg::SecureChannelHandshake(
+                handshake_message_b_to_a.clone()
+            ))
+        );
+        assert_eq!(
+            vec![OutMessage {
+                msg: Some(out_message::Msg::DeliverSystemMessage(
+                    deliver_system_message.clone()
+                ))
+            },],
+            communication_module_a.take_out_messages()
         );
     }
 }

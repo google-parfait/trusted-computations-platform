@@ -623,6 +623,10 @@ impl<
         // Update snapshot processor with the latest raft cluster state.
         self.update_snapshot_cluster_change();
 
+        // Update communication module with the latest raft cluster state.
+        self.communication
+            .process_cluster_change(&self.raft_state.committed_cluster_config);
+
         // Sent out cluster check message with the update.
         self.stash_message(out_message::Msg::CheckCluster(CheckClusterResponse {
             leader_replica_id: self.raft_state.leader_replica_id,
@@ -1933,6 +1937,15 @@ mod test {
             self
         }
 
+        fn expect_process_cluster_change(mut self, replicas: Vec<u64>) -> CommunicationBuilder {
+            self.mock_communication_module
+                .expect_process_cluster_change()
+                .with(eq(replicas))
+                .once()
+                .return_const(());
+            self
+        }
+
         fn take(mut self) -> MockCommunicationModule {
             mem::take(&mut self.mock_communication_module)
         }
@@ -2456,6 +2469,7 @@ mod test {
         let communication_builder = CommunicationBuilder::new()
             .expect_init(node_id)
             .expect_take_out_messages(Vec::new())
+            .expect_process_cluster_change(vec![node_id])
             .expect_take_out_messages(Vec::new());
 
         let mut driver = DriverBuilder::new()
@@ -3135,6 +3149,7 @@ mod test {
 
         let communication_builder = CommunicationBuilder::new()
             .expect_init(node_id)
+            .expect_process_cluster_change(vec![node_id])
             .expect_process_out_message(
                 wrap_deliver_snapshot_request_out(deliver_snapshot_request.clone()),
                 Ok(()),
