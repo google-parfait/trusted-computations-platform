@@ -155,16 +155,19 @@ message RemoveTabletOp {
 
 // Result of an op execution.
 message TabletOpResult {
+  // Name of the table to apply tablet op result to.
+  string table_name = 1;
+
   // Inidicates if tablet op has been successfully executed or not. Specific
   // details are inside of the result.
-  TabletOpStatus status = 1;
+  TabletOpStatus status = 2;
 
   oneof op_result {
-    ListTabletResult list_tablet = 2;
-    CheckTabletResult check_tablet = 3;
-    AddTabletResult add_tablet = 4;
-    UpdateTabletResult update_tablet = 5;
-    RemoveTabletResult remove_tablet = 6;
+    ListTabletResult list_tablet = 3;
+    CheckTabletResult check_tablet = 4;
+    AddTabletResult add_tablet = 5;
+    UpdateTabletResult update_tablet = 6;
+    RemoveTabletResult remove_tablet = 7;
   }
 }
 
@@ -184,9 +187,17 @@ enum TabletOpStatus {
 // Result of listing tablets in a given consistent hashing ring of a table in
 // the Tablet Store.
 message ListTabletResult {
+  // Id on the consistent hashing ring to start looking tablets from clockwise.
+  // Inclusive.
+  uint32 tablet_id_from = 1;
+
+  // Id on the consistent hashing ring to end looking tablets to clockwise.
+  // Exclusive.
+  uint32 tablet_id_to = 2;
+
   // Metadata for the tablets that belong to the requested consistent hashing
   // ring region.
-  repeated TabletMetadata tablets = 1;
+  repeated TabletMetadata tablets = 3;
 }
 
 // Result of checking if tablet at the time of execution is of the same version.

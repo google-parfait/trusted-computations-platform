@@ -14,7 +14,7 @@
 
 use core::mem;
 
-use alloc::{boxed::Box, vec::Vec};
+use alloc::{boxed::Box, string::String, vec::Vec};
 use hashbrown::HashMap;
 use prost::bytes::Bytes;
 use tcp_tablet_store_service::apps::tablet_store::service::{
@@ -181,8 +181,9 @@ impl<T> TabletTransactionCoordinator<T> for DefaultTabletTransactionCoordinator<
                                 transaction_state.complete(tablet_op_results);
                             *transaction = TabletTransactionState::Completed(transaction_outcome);
 
-                            for (tablet_metadata, conflict) in metadata_to_update_cache {
-                                metadata_cache.update_tablet(tablet_metadata, conflict);
+                            for (table_name, tablet_metadata, conflict) in metadata_to_update_cache
+                            {
+                                metadata_cache.update_tablet(table_name, tablet_metadata, conflict);
                             }
                         }
                     }
@@ -523,7 +524,10 @@ impl CommittingTabletTransactionState {
     fn complete(
         &self,
         tablet_op_results: Vec<TabletOpResult>,
-    ) -> (TabletTransactionOutcome, Vec<(TabletMetadata, bool)>) {
+    ) -> (
+        TabletTransactionOutcome,
+        Vec<(String, TabletMetadata, bool)>,
+    ) {
         // Technically we need to check that tablet ops correspond to tablet results
         // but for the time being we are doing a simple check of that all tablet ops
         // succeeded.
@@ -541,6 +545,7 @@ impl CommittingTabletTransactionState {
                 ) => {
                     if !op_succeeded {
                         metadata_to_update_cache.push((
+                            tablet_op.table_name.clone(),
                             check_tablet_op_result
                                 .existing_tablet
                                 .as_ref()
@@ -556,6 +561,7 @@ impl CommittingTabletTransactionState {
                 ) => {
                     if !op_succeeded {
                         metadata_to_update_cache.push((
+                            tablet_op.table_name.clone(),
                             update_tablet_op_result
                                 .existing_tablet
                                 .as_ref()
@@ -565,6 +571,7 @@ impl CommittingTabletTransactionState {
                         ));
                     } else {
                         metadata_to_update_cache.push((
+                            tablet_op.table_name.clone(),
                             update_tablet_op.tablet_metadata.as_ref().unwrap().clone(),
                             false,
                         ));
@@ -743,10 +750,12 @@ mod tests {
     }
 
     fn create_update_tablet_result(
+        table_name: String,
         tablet_op_status: TabletOpStatus,
         tablet_metadata: Option<TabletMetadata>,
     ) -> TabletOpResult {
         TabletOpResult {
+            table_name,
             status: tablet_op_status.into(),
             op_result: Some(tablet_op_result::OpResult::UpdateTablet(
                 UpdateTabletResult {
@@ -789,7 +798,11 @@ mod tests {
             self.mock_tablet_metadata_cache
                 .expect_update_tablet()
                 .times(1)
-                .with(eq(tablet_metadata), eq(conflict))
+                .with(
+                    eq(TABLE_NAME.to_string()),
+                    eq(tablet_metadata),
+                    eq(conflict),
+                )
                 .return_const(());
 
             self
@@ -1011,7 +1024,11 @@ mod tests {
                 Some(
                     TabletTransactionCoordinatorInMessage::ExecuteTabletOpsResponse(
                         CORRELATION_ID_1,
-                        vec![create_update_tablet_result(TabletOpStatus::Succeeded, None)]
+                        vec![create_update_tablet_result(
+                            TABLE_NAME.to_string(),
+                            TabletOpStatus::Succeeded,
+                            None
+                        )]
                     )
                 )
             )

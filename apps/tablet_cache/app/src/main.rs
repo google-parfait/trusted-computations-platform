@@ -17,11 +17,13 @@
 #![feature(alloc_error_handler)]
 
 extern crate alloc;
+extern crate hashbrown;
 extern crate prost;
 extern crate tcp_proto;
 extern crate tcp_runtime;
 
 use alloc::{boxed::Box, string::ToString};
+use hashbrown::HashMap;
 use oak_restricted_kernel_sdk::{
     channel::{start_blocking_server, FileDescriptorChannel},
     entrypoint,
@@ -43,6 +45,7 @@ use tcp_tablet_cache_service::{
 
 const TRANSACTION_COORDINATOR_CORRELATION_COUNTER: u64 = 1 << 56;
 const DATA_CACHE_CORRELATION_COUNTER: u64 = 2 << 56;
+const METADATA_CACHE_CORRELATION_COUNTER: u64 = 3 << 56;
 
 #[entrypoint]
 fn run_server() -> ! {
@@ -58,7 +61,10 @@ fn run_server() -> ! {
             Box::new(DefaultTabletTransactionCoordinator::create(
                 TRANSACTION_COORDINATOR_CORRELATION_COUNTER,
             )),
-            Box::new(DefaultTabletMetadataCache::create()),
+            Box::new(DefaultTabletMetadataCache::create(
+                METADATA_CACHE_CORRELATION_COUNTER,
+                &HashMap::new(),
+            )),
             Box::new(DefaultTabletDataCache::create(
                 DATA_CACHE_CORRELATION_COUNTER,
                 1024 * 1024 * 1024 * 16,

@@ -14,7 +14,13 @@
 
 use core::{cell::RefCell, clone::Clone, mem};
 
-use alloc::{boxed::Box, rc::Rc, string::String, vec::Vec};
+use alloc::{
+    boxed::Box,
+    collections::{BTreeMap, BTreeSet},
+    rc::Rc,
+    string::String,
+    vec::Vec,
+};
 use data::TabletData;
 use prost::bytes::Bytes;
 use tcp_tablet_store_service::apps::tablet_store::service::{
@@ -201,12 +207,12 @@ impl TabletDescriptor {
 pub struct TableQuery {
     query_id: u64,
     table_name: String,
-    key_hashes: HashSet<u32>,
+    key_hashes: BTreeSet<u32>,
 }
 
 impl TableQuery {
     pub fn create(query_id: u64, table_name: String, key_hashes: Vec<u32>) -> TableQuery {
-        let mut key_hash_set = HashSet::with_capacity(key_hashes.len());
+        let mut key_hash_set = BTreeSet::new();
         for key_hash in key_hashes {
             key_hash_set.insert(key_hash);
         }
@@ -215,6 +221,10 @@ impl TableQuery {
             table_name,
             key_hashes: key_hash_set,
         }
+    }
+
+    pub fn create_from(&self, key_hashes: Vec<u32>) -> TableQuery {
+        Self::create(self.query_id, self.table_name.clone(), key_hashes)
     }
 
     // Gets query id.
@@ -228,7 +238,7 @@ impl TableQuery {
     }
 
     // Gets set of key hashes to query.
-    pub fn get_key_hashes(&self) -> &HashSet<u32> {
+    pub fn get_key_hashes(&self) -> &BTreeSet<u32> {
         &self.key_hashes
     }
 }

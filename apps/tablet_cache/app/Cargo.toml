@@ -15,6 +15,7 @@ tcp_proto = { path = "../../../proto" }
 tcp_runtime = { path = "../../../runtime" }
 tcp_tablet_cache_service = { path = "../service" }
 prost = { workspace = true }
+hashbrown = { workspace = true }
 
 [[bin]]
 name = "tcp_tablet_cache_enclave_app"
