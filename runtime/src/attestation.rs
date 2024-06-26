@@ -23,7 +23,6 @@ use oak_session::attestation::{
     AttestationType, ClientAttestationProvider, ServerAttestationProvider,
 };
 use oak_session::config::AttestationProviderConfig;
-use platform::PalError;
 
 pub trait ClientAttestation = Attestation<AttestResponse, AttestRequest>;
 pub trait ServerAttestation = Attestation<AttestRequest, AttestResponse>;
@@ -46,8 +45,8 @@ pub trait AttestationProvider {
 // completed after an initial exchange of messages.
 pub trait Attestation<I, O> {
     fn get_attestation_results(self: Box<Self>) -> Option<AttestationResults>;
-    fn put_incoming_message(&mut self, incoming_message: &I) -> Result<Option<()>, PalError>;
-    fn get_outgoing_message(&mut self) -> Result<Option<O>, PalError>;
+    fn put_incoming_message(&mut self, incoming_message: &I) -> anyhow::Result<Option<()>>;
+    fn get_outgoing_message(&mut self) -> anyhow::Result<Option<O>>;
 }
 
 // Default implementation of `AttestationProvider`.
@@ -97,7 +96,7 @@ impl<'a> Attestation<AttestResponse, AttestRequest> for DefaultClientAttestation
         })
     }
 
-    fn get_outgoing_message(&mut self) -> Result<Option<AttestRequest>, PalError> {
+    fn get_outgoing_message(&mut self) -> anyhow::Result<Option<AttestRequest>> {
         Ok(Some(AttestRequest {
             endorsed_evidence: vec![],
         }))
@@ -106,7 +105,7 @@ impl<'a> Attestation<AttestResponse, AttestRequest> for DefaultClientAttestation
     fn put_incoming_message(
         &mut self,
         _incoming_message: &AttestResponse,
-    ) -> Result<Option<()>, PalError> {
+    ) -> anyhow::Result<Option<()>> {
         Ok(Some(()))
     }
 }
@@ -145,7 +144,7 @@ impl<'a> Attestation<AttestRequest, AttestResponse> for DefaultServerAttestation
         })
     }
 
-    fn get_outgoing_message(&mut self) -> Result<Option<AttestResponse>, PalError> {
+    fn get_outgoing_message(&mut self) -> anyhow::Result<Option<AttestResponse>> {
         Ok(Some(AttestResponse {
             endorsed_evidence: vec![],
         }))
@@ -154,7 +153,7 @@ impl<'a> Attestation<AttestRequest, AttestResponse> for DefaultServerAttestation
     fn put_incoming_message(
         &mut self,
         _incoming_message: &AttestRequest,
-    ) -> Result<Option<()>, PalError> {
+    ) -> anyhow::Result<Option<()>> {
         Ok(Some(()))
     }
 }

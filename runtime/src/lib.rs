@@ -19,6 +19,7 @@
 #![cfg_attr(not(feature = "std"), feature(error_in_core))]
 
 extern crate alloc;
+extern crate anyhow;
 #[cfg(feature = "std")]
 extern crate core;
 extern crate hashbrown;

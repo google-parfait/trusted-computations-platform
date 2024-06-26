@@ -39,19 +39,12 @@ use core::fmt;
 use core::result::Result;
 use tcp_proto::runtime::endpoint::{InMessage, OutMessage};
 
+// Unrecoverable errors that lead to program termination.
 #[derive(Debug, PartialEq)]
 pub enum PalError {
-    Decoding,
-    Encoding,
-    InvalidArgument,
-    //
-    InvalidOperation,
-    //
-    Storage,
-    //
-    Raft,
     Internal,
-    // Actor experiences unrecoverable error and must be terminated.
+    InvalidOperation,
+    Raft,
     Actor,
 }
 
@@ -64,13 +57,9 @@ impl StdError for PalError {
 impl fmt::Display for PalError {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         match *self {
-            PalError::Decoding => write!(f, "Failed to decode"),
-            PalError::Encoding => write!(f, "Failed to encode"),
-            PalError::InvalidArgument => write!(f, "Invalid argument"),
-            PalError::InvalidOperation => write!(f, "Invalid operation"),
             PalError::Internal => write!(f, "Intern error"),
+            PalError::InvalidOperation => write!(f, "Invalid operation"),
             PalError::Actor => write!(f, "Actor unrecoverable error"),
-            PalError::Storage => write!(f, "Storage unrecoverable error"),
             PalError::Raft => write!(f, "Raft unrecoverable error"),
         }
     }

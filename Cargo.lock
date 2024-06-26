@@ -1994,6 +1994,7 @@ dependencies = [
 name = "tcp_runtime"
 version = "0.1.0"
 dependencies = [
+ "anyhow",
  "hashbrown",
  "micro_rpc",
  "mockall",

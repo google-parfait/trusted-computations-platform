@@ -14,14 +14,13 @@
 
 use alloc::vec::Vec;
 use oak_proto_rust::oak::crypto::v1::SessionKeys;
-use platform::PalError;
 
 // Encryptor trait responsible for encrypting/decrypting messages between TCP
 // replicas after handshake has successfully completed.
 pub trait Encryptor {
-    fn encrypt(&self, plaintext: &[u8]) -> Result<Vec<u8>, PalError>;
+    fn encrypt(&self, plaintext: &[u8]) -> anyhow::Result<Vec<u8>>;
 
-    fn decrypt(&self, ciphertext: &[u8]) -> Result<Vec<u8>, PalError>;
+    fn decrypt(&self, ciphertext: &[u8]) -> anyhow::Result<Vec<u8>>;
 }
 
 // Default implementation for Encryptor trait.
@@ -39,11 +38,11 @@ impl DefaultEncryptor {
 }
 
 impl Encryptor for DefaultEncryptor {
-    fn encrypt(&self, plaintext: &[u8]) -> Result<Vec<u8>, PalError> {
+    fn encrypt(&self, plaintext: &[u8]) -> anyhow::Result<Vec<u8>> {
         Ok(plaintext.to_vec())
     }
 
-    fn decrypt(&self, ciphertext: &[u8]) -> Result<Vec<u8>, PalError> {
+    fn decrypt(&self, ciphertext: &[u8]) -> anyhow::Result<Vec<u8>> {
         Ok(ciphertext.to_vec())
     }
 }

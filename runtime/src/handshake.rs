@@ -18,9 +18,9 @@ use crate::{
     encryptor::Encryptor,
     logger::log::create_logger,
     oak_handshaker::{OakClientHandshaker, OakHandshakerFactory, OakServerHandshaker},
-    platform::PalError,
 };
 use alloc::{boxed::Box, format};
+use anyhow::{anyhow, Error, Result};
 use oak_proto_rust::oak::crypto::v1::SessionKeys;
 use oak_proto_rust::oak::session::v1::{
     AttestRequest as OakAttestRequest, AttestResponse as OakAttestResponse,
@@ -65,11 +65,11 @@ pub trait HandshakeSessionProvider {
 /// payloads.
 pub trait HandshakeSession {
     // Process an incoming SecureChanneHandshake message.
-    fn process_message(&mut self, message: &SecureChannelHandshake) -> Result<(), PalError>;
+    fn process_message(&mut self, message: &SecureChannelHandshake) -> Result<()>;
 
     // Take out any pending handshake messages that need to be sent out for this session.
     // Returns None if no such message exists.
-    fn take_out_message(&mut self) -> Result<Option<SecureChannelHandshake>, PalError>;
+    fn take_out_message(&mut self) -> Result<Option<SecureChannelHandshake>>;
 
     // Returns true if this handshake session is now complete.
     fn is_completed(&self) -> bool;
@@ -181,48 +181,34 @@ impl ClientHandshakeSession {
         }
     }
 
-    fn transition_to_failed(&mut self, msg: &str) {
-        warn!(self.logger, "{}", msg);
+    fn transition_to_failed(&mut self, err: &Error) {
+        warn!(self.logger, "{}", err);
         self.state = State::Failed;
     }
 
-    fn get_attest_request(&mut self) -> Result<SecureChannelHandshake, PalError> {
-        if let Ok(Some(attest_request)) = self.attestation.as_mut().unwrap().get_outgoing_message()
-        {
-            Ok(
-                self.create_secure_channel_handshake(noise_protocol::InitiatorRequest {
+    fn get_attest_request(&mut self) -> Result<SecureChannelHandshake> {
+        match self.attestation.as_mut().unwrap().get_outgoing_message()? {
+            Some(attest_request) => Ok(self.create_secure_channel_handshake(
+                noise_protocol::InitiatorRequest {
                     message: Some(AttestRequest(attest_request)),
-                }),
-            )
-        } else {
-            self.transition_to_failed("No outgoing `AttestRequest` message retrieved.");
-            Err(PalError::Internal)
+                },
+            )),
+            _ => Err(anyhow!("No outgoing `AttestRequest` message retrieved.")),
         }
     }
 
-    fn handle_attest_response(
-        &mut self,
-        attest_response: &OakAttestResponse,
-    ) -> Result<(), PalError> {
+    fn handle_attest_response(&mut self, attest_response: &OakAttestResponse) -> Result<()> {
         self.attestation
             .as_mut()
             .unwrap()
-            .put_incoming_message(attest_response)
-            .or_else(|err| {
-                self.transition_to_failed(&format!("Failed to put incoming message {}.", err));
-                Err(PalError::Internal)
-            })?;
+            .put_incoming_message(attest_response)?;
 
         // Take out `self.attestation` out of `self` so that it can be consumed.
         let attestation = self.attestation.take();
-        let attestation_results =
-            attestation
-                .unwrap()
-                .get_attestation_results()
-                .ok_or_else(|| {
-                    self.transition_to_failed("Failed to get AttestationResults.");
-                    PalError::Internal
-                })?;
+        let attestation_results = attestation
+            .unwrap()
+            .get_attestation_results()
+            .ok_or_else(|| anyhow!("Failed to get AttestationResults."))?;
 
         // Initialize `self.oak_handshaker` with the peer's public key.
         self.oak_handshaker.as_mut().unwrap().init(
@@ -235,72 +221,69 @@ impl ClientHandshakeSession {
         Ok(())
     }
 
-    fn get_handshake_request(&mut self) -> Result<SecureChannelHandshake, PalError> {
-        if let Ok(Some(handshake_request)) =
-            self.oak_handshaker.as_mut().unwrap().get_outgoing_message()
+    fn get_handshake_request(&mut self) -> Result<SecureChannelHandshake> {
+        match self
+            .oak_handshaker
+            .as_mut()
+            .unwrap()
+            .get_outgoing_message()?
         {
-            Ok(
-                self.create_secure_channel_handshake(noise_protocol::InitiatorRequest {
+            Some(handshake_request) => Ok(self.create_secure_channel_handshake(
+                noise_protocol::InitiatorRequest {
                     message: Some(HandshakeRequest(handshake_request)),
-                }),
-            )
-        } else {
-            self.transition_to_failed("No outgoing `HandshakeRequest` message retrieved.");
-            Err(PalError::Internal)
+                },
+            )),
+            _ => Err(anyhow!("No outgoing `HandshakeRequest` message retrieved.")),
         }
     }
 
     fn handle_handshake_response(
         &mut self,
         handshake_response: &OakHandshakeResponse,
-    ) -> Result<(), PalError> {
+    ) -> Result<()> {
         self.oak_handshaker
             .as_mut()
             .unwrap()
-            .put_incoming_message(handshake_response)
-            .or_else(|err| {
-                self.transition_to_failed(&format!("Failed to put incoming message {}.", err));
-                Err(PalError::Internal)
-            })?;
+            .put_incoming_message(handshake_response)?;
 
         // Take out `self.oak_handshaker` out of `self` so that it can be consumed.
         let oak_handshaker = self.oak_handshaker.take();
         self.session_keys = oak_handshaker
             .unwrap()
             .derive_session_keys()
-            .ok_or_else(|| {
-                self.transition_to_failed("Failed to derive SessionKeys.");
-                PalError::Internal
-            })?;
+            .ok_or_else(|| anyhow!("Failed to derive SessionKeys."))?;
 
         Ok(())
     }
 }
 
 impl HandshakeSession for ClientHandshakeSession {
-    fn process_message(&mut self, message: &SecureChannelHandshake) -> Result<(), PalError> {
+    fn process_message(&mut self, message: &SecureChannelHandshake) -> Result<()> {
         return match self.state {
             State::Unknown => {
-                self.transition_to_failed(&format!(
+                let err = anyhow!(format!(
                     "Unexpected handshake message {:?} received in state Unknown.",
                     message
                 ));
-                Err(PalError::Internal)
+                self.transition_to_failed(&err);
+                Err(err)
             }
             State::Attesting => {
                 if let Some(Encryption::NoiseProtocol(ref noise_protocol)) = message.encryption
                     && let Some(RecipientResponse(ref recipient_response)) = noise_protocol.message
                     && let Some(AttestResponse(ref attest_response)) = recipient_response.message
                 {
-                    self.handle_attest_response(attest_response)?;
+                    self.handle_attest_response(attest_response)
+                        .inspect_err(|err| self.transition_to_failed(err))?;
                     self.state = State::KeyExchange;
                     Ok(())
                 } else {
-                    self.transition_to_failed(&format!(
+                    let err = anyhow!(format!(
                         "Unexpected handshake message {:?} received in state Attesting.",
                         message
                     ));
-                    Err(PalError::Internal)
+                    self.transition_to_failed(&err);
+                    Err(err)
                 }
             }
             State::KeyExchange => {
@@ -309,15 +292,17 @@ impl HandshakeSession for ClientHandshakeSession {
                     && let Some(HandshakeResponse(ref handshake_response)) =
                         recipient_response.message
                 {
-                    self.handle_handshake_response(handshake_response)?;
+                    self.handle_handshake_response(handshake_response)
+                        .inspect_err(|err| self.transition_to_failed(err))?;
                     self.state = State::Completed;
                     Ok(())
                 } else {
-                    self.transition_to_failed(&format!(
+                    let err = anyhow!(format!(
                         "Unexpected handshake message {:?} received in state KeyExchange.",
                         message
                     ));
-                    Err(PalError::Internal)
+                    self.transition_to_failed(&err);
+                    Err(err)
                 }
             }
             State::Completed => {
@@ -329,15 +314,17 @@ impl HandshakeSession for ClientHandshakeSession {
             }
             State::Failed => {
                 warn!(self.logger, "Cannot process messages in state Failed.");
-                Err(PalError::Internal)
+                Ok(())
             }
         };
     }
 
-    fn take_out_message(&mut self) -> Result<Option<SecureChannelHandshake>, PalError> {
+    fn take_out_message(&mut self) -> Result<Option<SecureChannelHandshake>> {
         return match self.state {
             State::Unknown => {
-                let attest_request = self.get_attest_request()?;
+                let attest_request = self
+                    .get_attest_request()
+                    .inspect_err(|err| self.transition_to_failed(err))?;
                 self.state = State::Attesting;
                 Ok(Some(attest_request))
             }
@@ -349,7 +336,9 @@ impl HandshakeSession for ClientHandshakeSession {
                 Ok(None)
             }
             State::KeyExchange => {
-                let handshake_request = self.get_handshake_request()?;
+                let handshake_request = self
+                    .get_handshake_request()
+                    .inspect_err(|err| self.transition_to_failed(err))?;
                 Ok(Some(handshake_request))
             }
             State::Completed => {
@@ -361,7 +350,7 @@ impl HandshakeSession for ClientHandshakeSession {
             }
             State::Failed => {
                 warn!(self.logger, "Cannot take out messages in state Failed.");
-                Err(PalError::Internal)
+                Ok(None)
             }
         };
     }
@@ -421,48 +410,37 @@ impl ServerHandshakeSession {
         }
     }
 
-    fn transition_to_failed(&mut self, msg: &str) {
-        warn!(self.logger, "{}", msg);
+    fn transition_to_failed(&mut self, err: &Error) {
+        warn!(self.logger, "{}", err);
         self.state = State::Failed;
     }
 
-    fn handle_attest_request(&mut self, attest_request: &OakAttestRequest) -> Result<(), PalError> {
+    fn handle_attest_request(&mut self, attest_request: &OakAttestRequest) -> Result<()> {
         self.attestation
             .as_mut()
             .unwrap()
-            .put_incoming_message(attest_request)
-            .or_else(|err| {
-                self.transition_to_failed(&format!("Failed to put incoming message {}.", err));
-                Err(PalError::Internal)
-            })?;
+            .put_incoming_message(attest_request)?;
         Ok(())
     }
 
-    fn get_attest_response(&mut self) -> Result<SecureChannelHandshake, PalError> {
-        if let Ok(Some(attest_response)) = self.attestation.as_mut().unwrap().get_outgoing_message()
-        {
-            Ok(
-                self.create_secure_channel_handshake(noise_protocol::RecipientResponse {
+    fn get_attest_response(&mut self) -> Result<SecureChannelHandshake> {
+        match self.attestation.as_mut().unwrap().get_outgoing_message()? {
+            Some(attest_response) => Ok(self.create_secure_channel_handshake(
+                noise_protocol::RecipientResponse {
                     message: Some(AttestResponse(attest_response)),
-                }),
-            )
-        } else {
-            self.transition_to_failed("No outgoing `AttestResponse` message retrieved.");
-            Err(PalError::Internal)
+                },
+            )),
+            _ => Err(anyhow!("No outgoing `AttestResponse` message retrieved.")),
         }
     }
 
-    fn init_oak_handshaker(&mut self) -> Result<(), PalError> {
+    fn init_oak_handshaker(&mut self) -> Result<()> {
         // Take out `self.attestation` out of `self` so that it can be consumed.
         let attestation = self.attestation.take();
-        let attestation_results =
-            attestation
-                .unwrap()
-                .get_attestation_results()
-                .ok_or_else(|| {
-                    self.transition_to_failed("Failed to get AttestationResults.");
-                    PalError::Internal
-                })?;
+        let attestation_results = attestation
+            .unwrap()
+            .get_attestation_results()
+            .ok_or_else(|| anyhow!("Failed to get AttestationResults."))?;
 
         // Initialize `self.oak_handshaker` with the peer's public key.
         self.oak_handshaker.as_mut().unwrap().init(
@@ -475,76 +453,72 @@ impl ServerHandshakeSession {
         Ok(())
     }
 
-    fn handle_handshake_request(
-        &mut self,
-        handshake_request: &OakHandshakeRequest,
-    ) -> Result<(), PalError> {
+    fn handle_handshake_request(&mut self, handshake_request: &OakHandshakeRequest) -> Result<()> {
         self.oak_handshaker
             .as_mut()
             .unwrap()
-            .put_incoming_message(handshake_request)
-            .or_else(|err| {
-                self.transition_to_failed(&format!("Failed to put incoming message {}.", err));
-                Err(PalError::Internal)
-            })?;
+            .put_incoming_message(handshake_request)?;
         Ok(())
     }
 
-    fn get_handshake_response(&mut self) -> Result<SecureChannelHandshake, PalError> {
-        if let Ok(Some(handshake_response)) =
-            self.oak_handshaker.as_mut().unwrap().get_outgoing_message()
+    fn get_handshake_response(&mut self) -> Result<SecureChannelHandshake> {
+        match self
+            .oak_handshaker
+            .as_mut()
+            .unwrap()
+            .get_outgoing_message()?
         {
-            Ok(
-                self.create_secure_channel_handshake(noise_protocol::RecipientResponse {
+            Some(handshake_response) => Ok(self.create_secure_channel_handshake(
+                noise_protocol::RecipientResponse {
                     message: Some(HandshakeResponse(handshake_response)),
-                }),
-            )
-        } else {
-            self.transition_to_failed("No outgoing `HandshakeResponse` message retrieved.");
-            Err(PalError::Internal)
+                },
+            )),
+            _ => Err(anyhow!(
+                "No outgoing `HandshakeResponse` message retrieved."
+            )),
         }
     }
 
-    fn init_session_keys(&mut self) -> Result<(), PalError> {
+    fn init_session_keys(&mut self) -> Result<()> {
         // Take out `self.oak_handshaker` out of `self` so that it can be consumed.
         let oak_handshaker = self.oak_handshaker.take();
         self.session_keys = oak_handshaker
             .unwrap()
             .derive_session_keys()
-            .ok_or_else(|| {
-                self.transition_to_failed("Failed to derive SessionKeys.");
-                PalError::Internal
-            })?;
+            .ok_or_else(|| anyhow!("Failed to derive SessionKeys."))?;
 
         Ok(())
     }
 }
 
 impl HandshakeSession for ServerHandshakeSession {
-    fn process_message(&mut self, message: &SecureChannelHandshake) -> Result<(), PalError> {
+    fn process_message(&mut self, message: &SecureChannelHandshake) -> Result<()> {
         return match self.state {
             State::Unknown => {
                 if let Some(Encryption::NoiseProtocol(ref noise_protocol)) = message.encryption
                     && let Some(InitiatorRequest(ref initiator_request)) = noise_protocol.message
                     && let Some(AttestRequest(ref attest_request)) = initiator_request.message
                 {
-                    self.handle_attest_request(attest_request)?;
+                    self.handle_attest_request(attest_request)
+                        .inspect_err(|err| self.transition_to_failed(err))?;
                     self.state = State::Attesting;
                     Ok(())
                 } else {
-                    self.transition_to_failed(&format!(
+                    let err = anyhow!(format!(
                         "Unexpected handshake message {:?} received in state Unknown.",
                         message
                     ));
-                    Err(PalError::Internal)
+                    self.transition_to_failed(&err);
+                    Err(err)
                 }
             }
             State::Attesting => {
-                self.transition_to_failed(&format!(
+                let err = anyhow!(format!(
                     "Unexpected handshake message {:?} received in state Attesting.",
                     message
                 ));
-                Err(PalError::Internal)
+                self.transition_to_failed(&err);
+                Err(err)
             }
             State::KeyExchange => {
                 if let Some(Encryption::NoiseProtocol(ref noise_protocol)) = message.encryption
@@ -552,12 +526,14 @@ impl HandshakeSession for ServerHandshakeSession {
                     && let Some(HandshakeRequest(ref handshake_request)) = initiator_request.message
                 {
                     self.handle_handshake_request(handshake_request)
+                        .inspect_err(|err| self.transition_to_failed(err))
                 } else {
-                    self.transition_to_failed(&format!(
+                    let err = anyhow!(format!(
                         "Unexpected handshake message {:?} received in state KeyExchange.",
                         message
                     ));
-                    Err(PalError::Internal)
+                    self.transition_to_failed(&err);
+                    Err(err)
                 }
             }
             State::Completed => {
@@ -569,26 +545,32 @@ impl HandshakeSession for ServerHandshakeSession {
             }
             State::Failed => {
                 warn!(self.logger, "Cannot process messages in state Failed.");
-                Err(PalError::Internal)
+                Ok(())
             }
         };
     }
 
-    fn take_out_message(&mut self) -> Result<Option<SecureChannelHandshake>, PalError> {
+    fn take_out_message(&mut self) -> Result<Option<SecureChannelHandshake>> {
         return match self.state {
             State::Unknown => {
                 debug!(self.logger, "No messages to take out in state Unknown");
                 Ok(None)
             }
             State::Attesting => {
-                let attest_response = self.get_attest_response()?;
-                self.init_oak_handshaker()?;
+                let attest_response = self
+                    .get_attest_response()
+                    .inspect_err(|err| self.transition_to_failed(err))?;
+                self.init_oak_handshaker()
+                    .inspect_err(|err| self.transition_to_failed(err))?;
                 self.state = State::KeyExchange;
                 Ok(Some(attest_response))
             }
             State::KeyExchange => {
-                let handshake_response = self.get_handshake_response()?;
-                self.init_session_keys()?;
+                let handshake_response = self
+                    .get_handshake_response()
+                    .inspect_err(|err| self.transition_to_failed(err))?;
+                self.init_session_keys()
+                    .inspect_err(|err| self.transition_to_failed(err))?;
                 self.state = State::Completed;
                 Ok(Some(handshake_response))
             }
@@ -601,7 +583,7 @@ impl HandshakeSession for ServerHandshakeSession {
             }
             State::Failed => {
                 warn!(self.logger, "Cannot take out messages in state Failed.");
-                Err(PalError::Internal)
+                Ok(None)
             }
         };
     }
@@ -630,6 +612,7 @@ mod test {
     };
     use crate::logger::log::create_logger;
     use alloc::vec;
+    use anyhow::{anyhow, Result};
     use core::mem;
     use mock::{
         MockAttestationProvider, MockClientAttestation, MockOakClientHandshaker,
@@ -641,7 +624,6 @@ mod test {
         AttestRequest as OakAttestRequest, AttestResponse as OakAttestResponse,
         HandshakeRequest as OakHandshakeRequest, HandshakeResponse as OakHandshakeResponse,
     };
-    use platform::PalError;
     use tcp_proto::runtime::endpoint::{
         secure_channel_handshake::{
             noise_protocol, noise_protocol::initiator_request::Message::AttestRequest,
@@ -763,7 +745,7 @@ mod test {
 
         fn expect_get_outgoing_message(
             mut self,
-            message: Result<Option<OakAttestRequest>, PalError>,
+            message: Result<Option<OakAttestRequest>>,
         ) -> ClientAttestationBuilder {
             self.mock_client_attestation
                 .expect_get_outgoing_message()
@@ -775,7 +757,7 @@ mod test {
         fn expect_put_incoming_message(
             mut self,
             message: OakAttestResponse,
-            result: Result<Option<()>, PalError>,
+            result: Result<Option<()>>,
         ) -> ClientAttestationBuilder {
             self.mock_client_attestation
                 .expect_put_incoming_message()
@@ -821,7 +803,7 @@ mod test {
 
         fn expect_get_outgoing_message(
             mut self,
-            message: Result<Option<OakAttestResponse>, PalError>,
+            message: Result<Option<OakAttestResponse>>,
         ) -> ServerAttestationBuilder {
             self.mock_server_attestation
                 .expect_get_outgoing_message()
@@ -833,7 +815,7 @@ mod test {
         fn expect_put_incoming_message(
             mut self,
             message: OakAttestRequest,
-            result: Result<Option<()>, PalError>,
+            result: Result<Option<()>>,
         ) -> ServerAttestationBuilder {
             self.mock_server_attestation
                 .expect_put_incoming_message()
@@ -923,7 +905,7 @@ mod test {
 
         fn expect_get_outgoing_message(
             mut self,
-            message: Result<Option<OakHandshakeRequest>, PalError>,
+            message: Result<Option<OakHandshakeRequest>>,
         ) -> OakClientHandshakerBuilder {
             self.mock_oak_client_handshaker
                 .expect_get_outgoing_message()
@@ -935,7 +917,7 @@ mod test {
         fn expect_put_incoming_message(
             mut self,
             message: OakHandshakeResponse,
-            result: Result<Option<()>, PalError>,
+            result: Result<Option<()>>,
         ) -> OakClientHandshakerBuilder {
             self.mock_oak_client_handshaker
                 .expect_put_incoming_message()
@@ -982,7 +964,7 @@ mod test {
 
         fn expect_get_outgoing_message(
             mut self,
-            message: Result<Option<OakHandshakeResponse>, PalError>,
+            message: Result<Option<OakHandshakeResponse>>,
         ) -> OakServerHandshakerBuilder {
             self.mock_oak_server_handshaker
                 .expect_get_outgoing_message()
@@ -994,7 +976,7 @@ mod test {
         fn expect_put_incoming_message(
             mut self,
             message: OakHandshakeRequest,
-            result: Result<Option<()>, PalError>,
+            result: Result<Option<()>>,
         ) -> OakServerHandshakerBuilder {
             self.mock_oak_server_handshaker
                 .expect_put_incoming_message()
@@ -1053,31 +1035,37 @@ mod test {
             handshake_session_provider.get(self_replica_id, peer_replica_id, Role::Initiator);
 
         assert_eq!(
-            Ok(Some(attest_request)),
-            client_handshake_session.take_out_message()
+            Some(attest_request),
+            client_handshake_session.take_out_message().unwrap()
         );
-        assert_eq!(Ok(None), client_handshake_session.take_out_message());
+        assert_eq!(None, client_handshake_session.take_out_message().unwrap());
         assert_eq!(
-            Ok(()),
-            client_handshake_session.process_message(&attest_response)
+            true,
+            client_handshake_session
+                .process_message(&attest_response)
+                .is_ok()
         );
         assert_eq!(false, client_handshake_session.is_completed());
         assert_eq!(
-            Ok(Some(handshake_request)),
-            client_handshake_session.take_out_message()
+            Some(handshake_request),
+            client_handshake_session.take_out_message().unwrap()
         );
         assert_eq!(
-            Ok(()),
-            client_handshake_session.process_message(&handshake_response)
+            true,
+            client_handshake_session
+                .process_message(&handshake_response)
+                .is_ok()
         );
         assert_eq!(true, client_handshake_session.is_completed());
 
         // Processing messages in COMPLETED state is ignored.
         assert_eq!(
-            Ok(()),
-            client_handshake_session.process_message(&attest_response)
+            true,
+            client_handshake_session
+                .process_message(&attest_response)
+                .is_ok()
         );
-        assert_eq!(Ok(None), client_handshake_session.take_out_message());
+        assert_eq!(None, client_handshake_session.take_out_message().unwrap());
 
         assert!(Box::new(client_handshake_session).get_encryptor().is_some());
     }
@@ -1088,7 +1076,7 @@ mod test {
         let peer_replica_id = 22222;
         let attest_response = create_attest_response(self_replica_id, peer_replica_id);
         let mock_client_attestation = ClientAttestationBuilder::new()
-            .expect_get_outgoing_message(Err(PalError::InvalidOperation))
+            .expect_get_outgoing_message(Err(anyhow!("Error")))
             .take();
         let mut client_handshake_session = ClientHandshakeSession::new(
             create_logger(),
@@ -1098,20 +1086,16 @@ mod test {
             Box::new(MockOakClientHandshaker::new()),
         );
 
-        assert_eq!(
-            Err(PalError::Internal),
-            client_handshake_session.take_out_message()
-        );
+        assert_eq!(true, client_handshake_session.take_out_message().is_err());
 
-        // Processing any messages in FAILED state should fail.
+        // Verify processing messages in FAILED.
         assert_eq!(
-            Err(PalError::Internal),
-            client_handshake_session.process_message(&attest_response)
+            true,
+            client_handshake_session
+                .process_message(&attest_response)
+                .is_ok()
         );
-        assert_eq!(
-            Err(PalError::Internal),
-            client_handshake_session.take_out_message()
-        );
+        assert_eq!(None, client_handshake_session.take_out_message().unwrap());
         assert_eq!(false, client_handshake_session.is_completed());
         assert!(Box::new(client_handshake_session).get_encryptor().is_none());
     }
@@ -1124,10 +1108,7 @@ mod test {
         let attest_response = create_attest_response(self_replica_id, peer_replica_id);
         let mock_client_attestation = ClientAttestationBuilder::new()
             .expect_get_outgoing_message(Ok(Some(OakAttestRequest::default())))
-            .expect_put_incoming_message(
-                OakAttestResponse::default(),
-                Err(PalError::InvalidOperation),
-            )
+            .expect_put_incoming_message(OakAttestResponse::default(), Err(anyhow!("Error")))
             .take();
         let mut client_handshake_session = ClientHandshakeSession::new(
             create_logger(),
@@ -1138,12 +1119,14 @@ mod test {
         );
 
         assert_eq!(
-            Ok(Some(attest_request)),
-            client_handshake_session.take_out_message()
+            Some(attest_request),
+            client_handshake_session.take_out_message().unwrap()
         );
         assert_eq!(
-            Err(PalError::Internal),
-            client_handshake_session.process_message(&attest_response)
+            true,
+            client_handshake_session
+                .process_message(&attest_response)
+                .is_err()
         );
     }
 
@@ -1160,7 +1143,7 @@ mod test {
             .take();
         let mock_oak_client_handshaker = OakClientHandshakerBuilder::new()
             .expect_init()
-            .expect_get_outgoing_message(Err(PalError::InvalidOperation))
+            .expect_get_outgoing_message(Err(anyhow!("Error")))
             .take();
         let mut client_handshake_session = ClientHandshakeSession::new(
             create_logger(),
@@ -1171,17 +1154,16 @@ mod test {
         );
 
         assert_eq!(
-            Ok(Some(attest_request)),
-            client_handshake_session.take_out_message()
+            Some(attest_request),
+            client_handshake_session.take_out_message().unwrap()
         );
         assert_eq!(
-            Ok(()),
-            client_handshake_session.process_message(&attest_response)
+            true,
+            client_handshake_session
+                .process_message(&attest_response)
+                .is_ok()
         );
-        assert_eq!(
-            Err(PalError::Internal),
-            client_handshake_session.take_out_message()
-        );
+        assert_eq!(true, client_handshake_session.take_out_message().is_err());
     }
 
     #[test]
@@ -1200,10 +1182,7 @@ mod test {
         let mock_oak_client_handshaker = OakClientHandshakerBuilder::new()
             .expect_init()
             .expect_get_outgoing_message(Ok(Some(OakHandshakeRequest::default())))
-            .expect_put_incoming_message(
-                OakHandshakeResponse::default(),
-                Err(PalError::InvalidOperation),
-            )
+            .expect_put_incoming_message(OakHandshakeResponse::default(), Err(anyhow!("Error")))
             .take();
         let mut client_handshake_session = ClientHandshakeSession::new(
             create_logger(),
@@ -1214,20 +1193,24 @@ mod test {
         );
 
         assert_eq!(
-            Ok(Some(attest_request)),
-            client_handshake_session.take_out_message()
+            Some(attest_request),
+            client_handshake_session.take_out_message().unwrap()
         );
         assert_eq!(
-            Ok(()),
-            client_handshake_session.process_message(&attest_response)
+            true,
+            client_handshake_session
+                .process_message(&attest_response)
+                .is_ok()
         );
         assert_eq!(
-            Ok(Some(handshake_request)),
-            client_handshake_session.take_out_message()
+            Some(handshake_request),
+            client_handshake_session.take_out_message().unwrap()
         );
         assert_eq!(
-            Err(PalError::Internal),
-            client_handshake_session.process_message(&handshake_response)
+            true,
+            client_handshake_session
+                .process_message(&handshake_response)
+                .is_err()
         );
     }
 
@@ -1245,8 +1228,10 @@ mod test {
         );
 
         assert_eq!(
-            Err(PalError::Internal),
-            client_handshake_session.process_message(&attest_response)
+            true,
+            client_handshake_session
+                .process_message(&attest_response)
+                .is_err()
         );
     }
 
@@ -1267,12 +1252,14 @@ mod test {
         );
 
         assert_eq!(
-            Ok(Some(attest_request.clone())),
-            client_handshake_session.take_out_message()
+            Some(attest_request.clone()),
+            client_handshake_session.take_out_message().unwrap()
         );
         assert_eq!(
-            Err(PalError::Internal),
-            client_handshake_session.process_message(&attest_request)
+            true,
+            client_handshake_session
+                .process_message(&attest_request)
+                .is_err()
         );
     }
 
@@ -1297,16 +1284,20 @@ mod test {
         );
 
         assert_eq!(
-            Ok(Some(attest_request)),
-            client_handshake_session.take_out_message()
+            Some(attest_request),
+            client_handshake_session.take_out_message().unwrap()
         );
         assert_eq!(
-            Ok(()),
-            client_handshake_session.process_message(&attest_response)
+            true,
+            client_handshake_session
+                .process_message(&attest_response)
+                .is_ok()
         );
         assert_eq!(
-            Err(PalError::Internal),
-            client_handshake_session.process_message(&attest_response)
+            true,
+            client_handshake_session
+                .process_message(&attest_response)
+                .is_err()
         );
     }
 
@@ -1342,32 +1333,38 @@ mod test {
         let mut server_handshake_session =
             handshake_session_provider.get(self_replica_id, peer_replica_id, Role::Recipient);
 
-        assert_eq!(Ok(None), server_handshake_session.take_out_message());
+        assert_eq!(None, server_handshake_session.take_out_message().unwrap());
         assert_eq!(
-            Ok(()),
-            server_handshake_session.process_message(&attest_request)
+            true,
+            server_handshake_session
+                .process_message(&attest_request)
+                .is_ok()
         );
         assert_eq!(
-            Ok(Some(attest_response)),
-            server_handshake_session.take_out_message()
+            Some(attest_response),
+            server_handshake_session.take_out_message().unwrap()
         );
         assert_eq!(false, server_handshake_session.is_completed());
         assert_eq!(
-            Ok(()),
-            server_handshake_session.process_message(&handshake_request)
+            true,
+            server_handshake_session
+                .process_message(&handshake_request)
+                .is_ok()
         );
         assert_eq!(
-            Ok(Some(handshake_response)),
-            server_handshake_session.take_out_message()
+            Some(handshake_response),
+            server_handshake_session.take_out_message().unwrap()
         );
         assert_eq!(true, server_handshake_session.is_completed());
 
         // Processing messages in COMPLETED state is ignored.
         assert_eq!(
-            Ok(()),
-            server_handshake_session.process_message(&attest_request)
+            true,
+            server_handshake_session
+                .process_message(&attest_request)
+                .is_ok()
         );
-        assert_eq!(Ok(None), server_handshake_session.take_out_message());
+        assert_eq!(None, server_handshake_session.take_out_message().unwrap());
 
         assert!(Box::new(server_handshake_session).get_encryptor().is_some());
     }
@@ -1378,10 +1375,7 @@ mod test {
         let peer_replica_id = 22222;
         let attest_request = create_attest_request(self_replica_id, peer_replica_id);
         let mock_server_attestation = ServerAttestationBuilder::new()
-            .expect_put_incoming_message(
-                OakAttestRequest::default(),
-                Err(PalError::InvalidOperation),
-            )
+            .expect_put_incoming_message(OakAttestRequest::default(), Err(anyhow!("Error")))
             .take();
         let mut server_handshake_session = ServerHandshakeSession::new(
             create_logger(),
@@ -1392,19 +1386,20 @@ mod test {
         );
 
         assert_eq!(
-            Err(PalError::Internal),
-            server_handshake_session.process_message(&attest_request)
+            true,
+            server_handshake_session
+                .process_message(&attest_request)
+                .is_err()
         );
 
-        // Processing any messages in FAILED state should fail.
+        // Verify processing messages in FAILED state.
         assert_eq!(
-            Err(PalError::Internal),
-            server_handshake_session.process_message(&attest_request)
+            true,
+            server_handshake_session
+                .process_message(&attest_request)
+                .is_ok()
         );
-        assert_eq!(
-            Err(PalError::Internal),
-            server_handshake_session.take_out_message()
-        );
+        assert_eq!(None, server_handshake_session.take_out_message().unwrap());
         assert_eq!(false, server_handshake_session.is_completed());
         assert!(Box::new(server_handshake_session).get_encryptor().is_none());
     }
@@ -1416,7 +1411,7 @@ mod test {
         let attest_request = create_attest_request(self_replica_id, peer_replica_id);
         let mock_server_attestation = ServerAttestationBuilder::new()
             .expect_put_incoming_message(OakAttestRequest::default(), Ok(Some(())))
-            .expect_get_outgoing_message(Err(PalError::InvalidOperation))
+            .expect_get_outgoing_message(Err(anyhow!("Error")))
             .take();
         let mut server_handshake_session = ServerHandshakeSession::new(
             create_logger(),
@@ -1427,13 +1422,12 @@ mod test {
         );
 
         assert_eq!(
-            Ok(()),
-            server_handshake_session.process_message(&attest_request)
+            true,
+            server_handshake_session
+                .process_message(&attest_request)
+                .is_ok()
         );
-        assert_eq!(
-            Err(PalError::Internal),
-            server_handshake_session.take_out_message()
-        );
+        assert_eq!(true, server_handshake_session.take_out_message().is_err());
     }
 
     #[test]
@@ -1450,10 +1444,7 @@ mod test {
             .take();
         let mock_oak_server_handshaker = OakServerHandshakerBuilder::new()
             .expect_init()
-            .expect_put_incoming_message(
-                OakHandshakeRequest::default(),
-                Err(PalError::InvalidOperation),
-            )
+            .expect_put_incoming_message(OakHandshakeRequest::default(), Err(anyhow!("Error")))
             .take();
         let mut server_handshake_session = ServerHandshakeSession::new(
             create_logger(),
@@ -1464,16 +1455,20 @@ mod test {
         );
 
         assert_eq!(
-            Ok(()),
-            server_handshake_session.process_message(&attest_request)
+            true,
+            server_handshake_session
+                .process_message(&attest_request)
+                .is_ok()
         );
         assert_eq!(
-            Ok(Some(attest_response)),
-            server_handshake_session.take_out_message()
+            Some(attest_response),
+            server_handshake_session.take_out_message().unwrap()
         );
         assert_eq!(
-            Err(PalError::Internal),
-            server_handshake_session.process_message(&handshake_request)
+            true,
+            server_handshake_session
+                .process_message(&handshake_request)
+                .is_err()
         );
     }
 
@@ -1492,7 +1487,7 @@ mod test {
         let mock_oak_server_handshaker = OakServerHandshakerBuilder::new()
             .expect_init()
             .expect_put_incoming_message(OakHandshakeRequest::default(), Ok(Some(())))
-            .expect_get_outgoing_message(Err(PalError::InvalidOperation))
+            .expect_get_outgoing_message(Err(anyhow!("Error")))
             .take();
         let mut server_handshake_session = ServerHandshakeSession::new(
             create_logger(),
@@ -1503,21 +1498,22 @@ mod test {
         );
 
         assert_eq!(
-            Ok(()),
-            server_handshake_session.process_message(&attest_request)
+            true,
+            server_handshake_session
+                .process_message(&attest_request)
+                .is_ok()
         );
         assert_eq!(
-            Ok(Some(attest_response)),
-            server_handshake_session.take_out_message()
+            Some(attest_response),
+            server_handshake_session.take_out_message().unwrap()
         );
         assert_eq!(
-            Ok(()),
-            server_handshake_session.process_message(&handshake_request)
+            true,
+            server_handshake_session
+                .process_message(&handshake_request)
+                .is_ok()
         );
-        assert_eq!(
-            Err(PalError::Internal),
-            server_handshake_session.take_out_message()
-        );
+        assert_eq!(true, server_handshake_session.take_out_message().is_err());
     }
 
     #[test]
@@ -1534,8 +1530,10 @@ mod test {
         );
 
         assert_eq!(
-            Err(PalError::Internal),
-            server_handshake_session.process_message(&attest_response)
+            true,
+            server_handshake_session
+                .process_message(&attest_response)
+                .is_err()
         );
     }
 
@@ -1556,12 +1554,16 @@ mod test {
         );
 
         assert_eq!(
-            Ok(()),
-            server_handshake_session.process_message(&attest_request)
+            true,
+            server_handshake_session
+                .process_message(&attest_request)
+                .is_ok()
         );
         assert_eq!(
-            Err(PalError::Internal),
-            server_handshake_session.process_message(&attest_request)
+            true,
+            server_handshake_session
+                .process_message(&attest_request)
+                .is_err()
         );
     }
 
@@ -1586,16 +1588,20 @@ mod test {
         );
 
         assert_eq!(
-            Ok(()),
-            server_handshake_session.process_message(&attest_request)
+            true,
+            server_handshake_session
+                .process_message(&attest_request)
+                .is_ok()
         );
         assert_eq!(
-            Ok(Some(attest_response)),
-            server_handshake_session.take_out_message()
+            Some(attest_response),
+            server_handshake_session.take_out_message().unwrap()
         );
         assert_eq!(
-            Err(PalError::Internal),
-            server_handshake_session.process_message(&attest_request)
+            true,
+            server_handshake_session
+                .process_message(&attest_request)
+                .is_err()
         );
     }
 }

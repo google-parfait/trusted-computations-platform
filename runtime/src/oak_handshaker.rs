@@ -20,7 +20,6 @@ use oak_proto_rust::oak::{
 };
 use oak_session::config::HandshakerConfig;
 use oak_session::handshake::{ClientHandshaker, HandshakeType, ServerHandshaker};
-use platform::PalError;
 
 pub trait OakClientHandshaker = OakHandshaker<HandshakeResponse, HandshakeRequest>;
 pub trait OakServerHandshaker = OakHandshaker<HandshakeRequest, HandshakeResponse>;
@@ -43,8 +42,8 @@ pub trait OakHandshakerFactory {
 // completed after an initial exchange of messages.
 pub trait OakHandshaker<I, O> {
     fn init(&mut self, peer_static_public_key: Vec<u8>);
-    fn put_incoming_message(&mut self, incoming_message: &I) -> Result<Option<()>, PalError>;
-    fn get_outgoing_message(&mut self) -> Result<Option<O>, PalError>;
+    fn put_incoming_message(&mut self, incoming_message: &I) -> anyhow::Result<Option<()>>;
+    fn get_outgoing_message(&mut self) -> anyhow::Result<Option<O>>;
     fn derive_session_keys(self: Box<Self>) -> Option<SessionKeys>;
 }
 
@@ -85,7 +84,7 @@ impl<'a> OakHandshaker<HandshakeResponse, HandshakeRequest> for DefaultOakClient
         self.inner = Some(ClientHandshaker::new(config));
     }
 
-    fn get_outgoing_message(&mut self) -> Result<Option<HandshakeRequest>, PalError> {
+    fn get_outgoing_message(&mut self) -> anyhow::Result<Option<HandshakeRequest>> {
         Ok(Some(HandshakeRequest {
             ephemeral_public_key: vec![],
             ciphertext: vec![],
@@ -95,7 +94,7 @@ impl<'a> OakHandshaker<HandshakeResponse, HandshakeRequest> for DefaultOakClient
     fn put_incoming_message(
         &mut self,
         _incoming_message: &HandshakeResponse,
-    ) -> Result<Option<()>, PalError> {
+    ) -> anyhow::Result<Option<()>> {
         Ok(Some(()))
     }
 
@@ -129,7 +128,7 @@ impl<'a> OakHandshaker<HandshakeRequest, HandshakeResponse> for DefaultOakServer
         self.inner = Some(ServerHandshaker::new(config));
     }
 
-    fn get_outgoing_message(&mut self) -> Result<Option<HandshakeResponse>, PalError> {
+    fn get_outgoing_message(&mut self) -> anyhow::Result<Option<HandshakeResponse>> {
         Ok(Some(HandshakeResponse {
             ephemeral_public_key: vec![],
             ciphertext: vec![],
@@ -139,7 +138,7 @@ impl<'a> OakHandshaker<HandshakeRequest, HandshakeResponse> for DefaultOakServer
     fn put_incoming_message(
         &mut self,
         _incoming_message: &HandshakeRequest,
-    ) -> Result<Option<()>, PalError> {
+    ) -> anyhow::Result<Option<()>> {
         Ok(Some(()))
     }
 

@@ -289,9 +289,9 @@ mock! {
     }
 
     impl HandshakeSession for HandshakeSession {
-        fn process_message(&mut self, message: &SecureChannelHandshake) -> Result<(), PalError>;
+        fn process_message(&mut self, message: &SecureChannelHandshake) -> anyhow::Result<()>;
 
-        fn take_out_message(&mut self) -> Result<Option<SecureChannelHandshake>, PalError>;
+        fn take_out_message(&mut self) -> anyhow::Result<Option<SecureChannelHandshake>>;
 
         fn is_completed(&self) -> bool;
 
@@ -317,11 +317,11 @@ mock! {
     impl Attestation<AttestResponse, AttestRequest> for ClientAttestation {
         fn get_attestation_results(self: Box<Self>) -> Option<AttestationResults>;
 
-        fn get_outgoing_message(&mut self) -> Result<Option<AttestRequest>, PalError>;
+        fn get_outgoing_message(&mut self) -> anyhow::Result<Option<AttestRequest>>;
 
         fn put_incoming_message(
             &mut self,
-            incoming_message: &AttestResponse) -> Result<Option<()>, PalError>;
+            incoming_message: &AttestResponse) -> anyhow::Result<Option<()>>;
     }
 }
 
@@ -332,11 +332,11 @@ mock! {
     impl Attestation<AttestRequest, AttestResponse> for ServerAttestation {
         fn get_attestation_results(self: Box<Self>) -> Option<AttestationResults>;
 
-        fn get_outgoing_message(&mut self) -> Result<Option<AttestResponse>, PalError>;
+        fn get_outgoing_message(&mut self) -> anyhow::Result<Option<AttestResponse>>;
 
         fn put_incoming_message(
             &mut self,
-            incoming_message: &AttestRequest) -> Result<Option<()>, PalError>;
+            incoming_message: &AttestRequest) -> anyhow::Result<Option<()>>;
     }
 }
 
@@ -360,11 +360,11 @@ mock! {
 
         fn derive_session_keys(self: Box<Self>) -> Option<SessionKeys>;
 
-        fn get_outgoing_message(&mut self) -> Result<Option<HandshakeRequest>, PalError>;
+        fn get_outgoing_message(&mut self) -> anyhow::Result<Option<HandshakeRequest>>;
 
         fn put_incoming_message(
             &mut self,
-            incoming_message: &HandshakeResponse) -> Result<Option<()>, PalError>;
+            incoming_message: &HandshakeResponse) -> anyhow::Result<Option<()>>;
     }
 }
 
@@ -377,11 +377,11 @@ mock! {
 
         fn derive_session_keys(self: Box<Self>) -> Option<SessionKeys>;
 
-        fn get_outgoing_message(&mut self) -> Result<Option<HandshakeResponse>, PalError>;
+        fn get_outgoing_message(&mut self) -> anyhow::Result<Option<HandshakeResponse>>;
 
         fn put_incoming_message(
             &mut self,
-            incoming_message: &HandshakeRequest) -> Result<Option<()>, PalError>;
+            incoming_message: &HandshakeRequest) -> anyhow::Result<Option<()>>;
     }
 }
 
@@ -390,8 +390,8 @@ mock! {
     }
 
     impl Encryptor for Encryptor {
-        fn encrypt(&self, plaintext: &[u8]) -> Result<Vec<u8>, PalError>;
+        fn encrypt(&self, plaintext: &[u8]) -> anyhow::Result<Vec<u8>>;
 
-        fn decrypt(&self, ciphertext: &[u8]) -> Result<Vec<u8>, PalError>;
+        fn decrypt(&self, ciphertext: &[u8]) -> anyhow::Result<Vec<u8>>;
     }
 }

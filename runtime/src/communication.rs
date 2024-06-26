@@ -20,8 +20,10 @@ use crate::{
     logger::log::create_logger,
     platform::PalError,
 };
+use alloc::format;
 use alloc::vec::Vec;
 use alloc::{boxed::Box, vec};
+use anyhow::anyhow;
 use hashbrown::HashMap;
 use slog::{warn, Logger};
 use tcp_proto::runtime::endpoint::*;
@@ -48,6 +50,8 @@ pub trait CommunicationModule {
     ///
     /// Callers must invoke `take_out_messages` to extract any stashed messages that
     /// are ready to be sent.
+    ///
+    /// Returns `PalError` for unrecoverable errors which must lead to program termination.
     fn process_out_message(&mut self, message: out_message::Msg) -> Result<(), PalError>;
 
     /// Process an incoming message from another replica.
@@ -59,6 +63,8 @@ pub trait CommunicationModule {
     /// the handshake message in which case this method verifies the attestation report,
     /// stashes a handshake response (if needed) and returns None since there are no decrypted
     /// messages that need to be processed by the caller.
+    ///
+    /// Returns `PalError` for unrecoverable errors which must lead to program termination.
     fn process_in_message(
         &mut self,
         message: in_message::Msg,
@@ -125,7 +131,7 @@ impl CommunicationModule for DefaultCommunicationModule {
             }
             _ => {
                 warn!(self.logger, "Message type {:?} is not supported.", message);
-                return Err(PalError::InvalidArgument);
+                return Err(PalError::InvalidOperation);
             }
         };
 
@@ -141,7 +147,18 @@ impl CommunicationModule for DefaultCommunicationModule {
                 handshake_provider.get(replica_id, peer_replica_id, Role::Initiator),
             )
         });
-        replica_state.process_out_message(message)
+
+        // Failure to process message should not lead to program termination, so simply log and
+        // return.
+        let result = replica_state.process_out_message(message);
+        if result.is_err() {
+            warn!(
+                self.logger,
+                "Failed to process out_message {:?}",
+                result.err()
+            );
+        }
+        Ok(())
     }
 
     fn process_in_message(
@@ -165,7 +182,7 @@ impl CommunicationModule for DefaultCommunicationModule {
             }
             _ => {
                 warn!(self.logger, "Message type {:?} is not supported.", message);
-                return Err(PalError::InvalidArgument);
+                return Err(PalError::InvalidOperation);
             }
         };
 
@@ -181,7 +198,19 @@ impl CommunicationModule for DefaultCommunicationModule {
                 handshake_provider.get(replica_id, peer_replica_id, Role::Recipient),
             )
         });
-        replica_state.process_in_message(message)
+
+        // Failure to process message should not lead to program termination, so simply log and
+        // return.
+        let result = replica_state.process_in_message(message);
+        if result.is_err() {
+            warn!(
+                self.logger,
+                "Failed to process in_message {:?}",
+                result.err()
+            );
+            return Ok(None);
+        }
+        Ok(result.unwrap())
     }
 
     fn take_out_messages(&mut self) -> Vec<OutMessage> {
@@ -246,17 +275,27 @@ impl CommunicationState {
         }
     }
 
-    fn process_out_message(&mut self, message: out_message::Msg) -> Result<(), PalError> {
+    fn transition_to_failed(&mut self, err: &anyhow::Error) {
+        warn!(self.logger, "{}", err);
+        self.handshake_state = HandshakeState::Failed;
+    }
+
+    fn process_out_message(&mut self, message: out_message::Msg) -> anyhow::Result<()> {
         match &self.handshake_state {
             HandshakeState::Unknown => {
                 self.pending_handshake_message = self
                     .handshake_session
                     .as_mut()
                     .unwrap()
-                    .take_out_message()?;
+                    .take_out_message()
+                    .inspect_err(|err| {
+                        self.transition_to_failed(&err);
+                    })?;
+
                 if self.pending_handshake_message.is_none() {
-                    warn!(self.logger, "No initial handshake message found.");
-                    return Err(PalError::Internal);
+                    let err = anyhow!("No initial handshake message found.");
+                    self.transition_to_failed(&err);
+                    return Err(err);
                 }
                 self.unencrypted_messages.push(message);
                 self.handshake_state = HandshakeState::Initiated;
@@ -268,7 +307,7 @@ impl CommunicationState {
             }
             HandshakeState::Failed => {
                 warn!(self.logger, "HandshakeState Failed.");
-                return Err(PalError::Internal);
+                Ok(())
             }
         }
     }
@@ -276,7 +315,7 @@ impl CommunicationState {
     fn process_in_message(
         &mut self,
         message: in_message::Msg,
-    ) -> Result<Option<in_message::Msg>, PalError> {
+    ) -> anyhow::Result<Option<in_message::Msg>> {
         match &self.handshake_state {
             HandshakeState::Unknown | HandshakeState::Initiated => {
                 match message {
@@ -285,12 +324,18 @@ impl CommunicationState {
                         self.handshake_session
                             .as_mut()
                             .unwrap()
-                            .process_message(&handshake_message)?;
+                            .process_message(&handshake_message)
+                            .inspect_err(|err| {
+                                self.transition_to_failed(&err);
+                            })?;
                         self.pending_handshake_message = self
                             .handshake_session
                             .as_mut()
                             .unwrap()
-                            .take_out_message()?;
+                            .take_out_message()
+                            .inspect_err(|err| {
+                                self.transition_to_failed(&err);
+                            })?;
                         if self.handshake_session.as_ref().unwrap().is_completed() {
                             // Consume `self.handshake_session`.
                             let handshake_session = self.handshake_session.take();
@@ -302,19 +347,19 @@ impl CommunicationState {
                         Ok(None)
                     }
                     _ => {
-                        warn!(
-                            self.logger,
-                            "Message must be SecureChannelHandshake but found {:?}", message
-                        );
-                        self.handshake_state = HandshakeState::Failed;
-                        return Err(PalError::Internal);
+                        let err = anyhow!(format!(
+                            "Message must be SecureChannelHandshake but found {:?}",
+                            message
+                        ));
+                        self.transition_to_failed(&err);
+                        Err(err)
                     }
                 }
             }
             HandshakeState::Completed => Ok(self.decrypt_message(message)),
             HandshakeState::Failed => {
                 warn!(self.logger, "HandshakeState Failed.");
-                return Err(PalError::Internal);
+                Ok(None)
             }
         }
     }
@@ -340,13 +385,10 @@ impl CommunicationState {
                     msg.payload_contents = decrypted_msg.into();
                     Ok(in_message::Msg::DeliverSnapshotResponse(msg))
                 }),
-            _ => {
-                warn!(
-                    self.logger,
-                    "Unexpected message encountered for decryption {:?}", message
-                );
-                Err(PalError::Internal)
-            }
+            _ => Err(anyhow!(format!(
+                "Unexpected message encountered for decryption {:?}",
+                message
+            ))),
         };
 
         if result.is_err() {
@@ -390,13 +432,10 @@ impl CommunicationState {
                         });
                         Ok(())
                     }),
-                _ => {
-                    warn!(
-                        self.logger,
-                        "Unexpected message encountered for encryption {:?}", unencrypted_message
-                    );
-                    Err(PalError::Internal)
-                }
+                _ => Err(anyhow!(format!(
+                    "Unexpected message encountered for encryption {:?}",
+                    unencrypted_message
+                ))),
             };
 
             if result.is_err() {
@@ -582,7 +621,7 @@ mod test {
         fn expect_process_message(
             mut self,
             message: SecureChannelHandshake,
-            result: Result<(), PalError>,
+            result: anyhow::Result<()>,
         ) -> HandshakeSessionBuilder {
             self.mock_handshake_session
                 .expect_process_message()
@@ -594,7 +633,7 @@ mod test {
 
         fn expect_take_out_message(
             mut self,
-            message: Result<Option<SecureChannelHandshake>, PalError>,
+            message: anyhow::Result<Option<SecureChannelHandshake>>,
         ) -> HandshakeSessionBuilder {
             self.mock_handshake_session
                 .expect_take_out_message()
@@ -642,7 +681,7 @@ mod test {
         fn expect_encrypt(
             mut self,
             plaintext: Bytes,
-            result: Result<Vec<u8>, PalError>,
+            result: anyhow::Result<Vec<u8>>,
         ) -> EncryptorBuilder {
             self.mock_encryptor
                 .expect_encrypt()
@@ -655,7 +694,7 @@ mod test {
         fn expect_decrypt(
             mut self,
             ciphertext: Bytes,
-            result: Result<Vec<u8>, PalError>,
+            result: anyhow::Result<Vec<u8>>,
         ) -> EncryptorBuilder {
             self.mock_encryptor
                 .expect_decrypt()
@@ -737,7 +776,7 @@ mod test {
             ))
         );
         assert_eq!(
-            Err(PalError::InvalidArgument),
+            Err(PalError::InvalidOperation),
             communication_module.process_out_message(create_unsupported_out_message())
         );
         assert_eq!(
@@ -886,7 +925,7 @@ mod test {
             ))
         );
         assert_eq!(
-            Err(PalError::InvalidArgument),
+            Err(PalError::InvalidOperation),
             communication_module.process_in_message(create_unsupported_in_message())
         );
         assert_eq!(
@@ -1297,39 +1336,39 @@ mod test {
             ))
         );
         assert_eq!(
-            Err(PalError::Internal),
+            Ok(None),
             communication_module_b.process_in_message(in_message::Msg::DeliverSystemMessage(
                 deliver_system_message_a_to_b.clone()
             ))
         );
         assert_eq!(
-            Err(PalError::Internal),
+            Ok(None),
             communication_module_a.process_in_message(in_message::Msg::DeliverSystemMessage(
                 deliver_system_message_b_to_a.clone()
             ))
         );
         // Both a and b are in Failed state, so receiving or sending any subsequent messages should
-        // fail.
+        // be a no-op.
         assert_eq!(
-            Err(PalError::Internal),
+            Ok(None),
             communication_module_a.process_in_message(in_message::Msg::DeliverSystemMessage(
                 deliver_system_message_b_to_a.clone()
             ))
         );
         assert_eq!(
-            Err(PalError::Internal),
+            Ok(None),
             communication_module_b.process_in_message(in_message::Msg::DeliverSystemMessage(
                 deliver_system_message_a_to_b.clone()
             ))
         );
         assert_eq!(
-            Err(PalError::Internal),
+            Ok(()),
             communication_module_a.process_out_message(out_message::Msg::DeliverSystemMessage(
                 deliver_system_message_a_to_b.clone()
             ))
         );
         assert_eq!(
-            Err(PalError::Internal),
+            Ok(()),
             communication_module_b.process_out_message(out_message::Msg::DeliverSystemMessage(
                 deliver_system_message_b_to_a.clone()
             ))
