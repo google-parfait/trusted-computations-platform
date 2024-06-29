@@ -305,6 +305,7 @@ impl<A: Actor> FakePlatform<A> {
                 }),
                 app_config: app_config,
                 attestation_config: None,
+                is_ephemeral: false,
             })),
         });
     }

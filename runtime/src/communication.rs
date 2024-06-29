@@ -534,6 +534,7 @@ mod test {
             raft_config: None,
             app_config: Bytes::new(),
             attestation_config: None,
+            is_ephemeral: false,
         })
     }
 
