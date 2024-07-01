@@ -84,8 +84,9 @@ impl TableMetadata {
         }
     }
 
-    fn prepare_tablet_op(&self, tablet_op: &Op) -> TabletOpResult {
+    fn prepare_tablet_op(&self, table_name: String, tablet_op: &Op) -> TabletOpResult {
         let mut op_result = TabletOpResult {
+            table_name,
             status: TabletOpStatus::Failed.into(),
             ..Default::default()
         };
@@ -109,6 +110,8 @@ impl TableMetadata {
 
                 op_result.status = TabletOpStatus::Succeeded.into();
                 OpResult::ListTablet(ListTabletResult {
+                    tablet_id_from: tablet_from,
+                    tablet_id_to: tablet_to,
                     tablets: listed_tablets,
                 })
             }
@@ -290,13 +293,14 @@ impl<C: TabletConfigurator> TabletStoreActor<C> {
         let table_opt = self.tables.get(&tablet_op.table_name);
         if table_opt.is_none() || tablet_op.op.is_none() {
             return TabletOpResult {
+                table_name: tablet_op.table_name.clone(),
                 status: TabletOpStatus::Invalid.into(),
                 op_result: None,
             };
         }
         table_opt
             .unwrap()
-            .prepare_tablet_op(tablet_op.op.as_ref().unwrap())
+            .prepare_tablet_op(tablet_op.table_name.clone(), tablet_op.op.as_ref().unwrap())
     }
 
     fn commit_tablet_op(
@@ -528,10 +532,12 @@ mod tests {
     }
 
     fn create_check_tablet_result(
+        table_name: String,
         status: TabletOpStatus,
         tablet_metadata: Option<TabletMetadata>,
     ) -> TabletOpResult {
         TabletOpResult {
+            table_name,
             status: status.into(),
             op_result: Some(OpResult::CheckTablet(CheckTabletResult {
                 existing_tablet: tablet_metadata,
@@ -540,10 +546,12 @@ mod tests {
     }
 
     fn create_update_tablet_result(
+        table_name: String,
         status: TabletOpStatus,
         tablet_metadata: TabletMetadata,
     ) -> TabletOpResult {
         TabletOpResult {
+            table_name,
             status: status.into(),
             op_result: Some(OpResult::UpdateTablet(UpdateTabletResult {
                 existing_tablet: Some(tablet_metadata),
@@ -552,12 +560,20 @@ mod tests {
     }
 
     fn create_list_tablet_result(
+        table_name: String,
         status: TabletOpStatus,
+        tablet_id_from: u32,
+        tablet_id_to: u32,
         tablets: Vec<TabletMetadata>,
     ) -> TabletOpResult {
         TabletOpResult {
+            table_name,
             status: status.into(),
-            op_result: Some(OpResult::ListTablet(ListTabletResult { tablets })),
+            op_result: Some(OpResult::ListTablet(ListTabletResult {
+                tablet_id_from,
+                tablet_id_to,
+                tablets,
+            })),
         }
     }
 
@@ -692,7 +708,10 @@ mod tests {
             create_execute_tablet_ops_response(
                 TabletsRequestStatus::Succeeded,
                 vec![create_list_tablet_result(
+                    TABLE_NAME.to_string(),
                     TabletOpStatus::Succeeded,
+                    TABLET_ID_1 - 1,
+                    TABLET_ID_2,
                     vec![create_tablet_metadata(TABLET_ID_1, TABLET_VERSION_1),]
                 )]
             )
@@ -743,7 +762,11 @@ mod tests {
             tablets_response,
             create_execute_tablet_ops_response(
                 TabletsRequestStatus::Succeeded,
-                vec![create_check_tablet_result(TabletOpStatus::Succeeded, None)]
+                vec![create_check_tablet_result(
+                    TABLE_NAME.to_string(),
+                    TabletOpStatus::Succeeded,
+                    None
+                )]
             )
         );
     }
@@ -792,6 +815,7 @@ mod tests {
             create_execute_tablet_ops_response(
                 TabletsRequestStatus::Succeeded,
                 vec![create_update_tablet_result(
+                    TABLE_NAME.to_string(),
                     TabletOpStatus::Succeeded,
                     create_tablet_metadata(TABLET_ID_1, TABLET_VERSION_1)
                 )]
@@ -846,8 +870,13 @@ mod tests {
             create_execute_tablet_ops_response(
                 TabletsRequestStatus::Succeeded,
                 vec![
-                    create_check_tablet_result(TabletOpStatus::Succeeded, None),
+                    create_check_tablet_result(
+                        TABLE_NAME.to_string(),
+                        TabletOpStatus::Succeeded,
+                        None
+                    ),
                     create_update_tablet_result(
+                        TABLE_NAME.to_string(),
                         TabletOpStatus::Succeeded,
                         create_tablet_metadata(TABLET_ID_1, TABLET_VERSION_1)
                     )
@@ -909,14 +938,19 @@ mod tests {
                 TabletsRequestStatus::Failed,
                 vec![
                     create_list_tablet_result(
+                        TABLE_NAME.to_string(),
                         TabletOpStatus::Succeeded,
+                        TABLET_ID_1 - 1,
+                        TABLET_ID_2,
                         vec![create_tablet_metadata(TABLET_ID_1, TABLET_VERSION_1),]
                     ),
                     create_check_tablet_result(
+                        TABLE_NAME.to_string(),
                         TabletOpStatus::Failed,
                         Some(create_tablet_metadata(TABLET_ID_1, TABLET_VERSION_1))
                     ),
                     create_update_tablet_result(
+                        TABLE_NAME.to_string(),
                         TabletOpStatus::Failed,
                         create_tablet_metadata(TABLET_ID_1, TABLET_VERSION_1)
                     )

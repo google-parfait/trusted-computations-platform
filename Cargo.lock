@@ -2018,6 +2018,7 @@ dependencies = [
 name = "tcp_tablet_cache_enclave_app"
 version = "0.1.0"
 dependencies = [
+ "hashbrown",
  "micro_rpc",
  "oak_restricted_kernel_interface",
  "oak_restricted_kernel_sdk",
