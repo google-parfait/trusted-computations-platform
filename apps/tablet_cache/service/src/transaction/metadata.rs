@@ -175,7 +175,7 @@ impl TabletMetadataCache for DefaultTabletMetadataCache {
                             // Update tablets covered by the region.
                             let (table_region_idx, resolve_requests_to_notify) = table_metadata
                                 .update_region(
-                                    list_tablet_result.tablet_id_from,
+                                    list_tablet_result.key_hash_from,
                                     if op_succeeded {
                                         Some(list_tablet_result.tablets)
                                     } else {
@@ -239,8 +239,8 @@ impl TableRegion {
             if !*prepared_op && !resolve_requests.is_empty() {
                 *prepared_op = true;
                 return Some(tablet_op::Op::ListTablet(ListTabletOp {
-                    tablet_id_from: region_from,
-                    tablet_id_to: region_to,
+                    key_hash_from: region_from,
+                    key_hash_to: region_to,
                 }));
             }
         }
@@ -692,20 +692,20 @@ mod tests {
         }
     }
 
-    fn create_list_op(table_name: String, tablet_id_from: u32, tablet_id_to: u32) -> TabletOp {
+    fn create_list_op(table_name: String, key_hash_from: u32, key_hash_to: u32) -> TabletOp {
         TabletOp {
             table_name,
             op: Some(tablet_op::Op::ListTablet(ListTabletOp {
-                tablet_id_from,
-                tablet_id_to,
+                key_hash_from,
+                key_hash_to,
             })),
         }
     }
 
     fn create_list_op_result(
         table_name: String,
-        tablet_id_from: u32,
-        tablet_id_to: u32,
+        key_hash_from: u32,
+        key_hash_to: u32,
         tablet_op_status: TabletOpStatus,
         tablets: Vec<TabletMetadata>,
     ) -> TabletOpResult {
@@ -713,8 +713,8 @@ mod tests {
             table_name,
             status: tablet_op_status.into(),
             op_result: Some(tablet_op_result::OpResult::ListTablet(ListTabletResult {
-                tablet_id_from,
-                tablet_id_to,
+                key_hash_from,
+                key_hash_to,
                 tablets,
             })),
         }

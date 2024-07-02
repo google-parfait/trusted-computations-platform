@@ -114,13 +114,13 @@ message TabletOp {
 // Op to list tablets in the given range of the consistent hashing ring in
 // the Tablet Store.
 message ListTabletOp {
-  // Id on the consistent hashing ring to start looking tablets from clockwise.
-  // Inclusive.
-  uint32 tablet_id_from = 2;
+  // Value on the consistent hashing ring to start looking tablets from
+  // clockwise. Inclusive.
+  uint32 key_hash_from = 2;
 
-  // Id on the consistent hashing ring to end looking tablets to clockwise.
+  // Value on the consistent hashing ring to end looking tablets to clockwise.
   // Exclusive.
-  uint32 tablet_id_to = 3;
+  uint32 key_hash_to = 3;
 }
 
 // Op to check that a tablet has given version in the Tablet Store.
@@ -187,13 +187,13 @@ enum TabletOpStatus {
 // Result of listing tablets in a given consistent hashing ring of a table in
 // the Tablet Store.
 message ListTabletResult {
-  // Id on the consistent hashing ring to start looking tablets from clockwise.
-  // Inclusive.
-  uint32 tablet_id_from = 1;
+  // Value on the consistent hashing ring to start looking tablets from
+  // clockwise. Inclusive.
+  uint32 key_hash_from = 1;
 
-  // Id on the consistent hashing ring to end looking tablets to clockwise.
+  // Value on the consistent hashing ring to end looking tablets to clockwise.
   // Exclusive.
-  uint32 tablet_id_to = 2;
+  uint32 key_hash_to = 2;
 
   // Metadata for the tablets that belong to the requested consistent hashing
   // ring region.

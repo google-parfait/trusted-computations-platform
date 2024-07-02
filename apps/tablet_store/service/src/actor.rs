@@ -17,6 +17,7 @@ use crate::actor::{
 };
 use crate::apps::tablet_store::service::*;
 use alloc::boxed::Box;
+use alloc::collections::BTreeMap;
 use alloc::format;
 use alloc::string::String;
 use alloc::vec::Vec;
@@ -41,13 +42,13 @@ impl ExecuteTabletOpsError {
 
 struct TableMetadata {
     config: TableConfig,
-    tablets: HashMap<u32, TabletMetadata>,
+    tablets: BTreeMap<u32, TabletMetadata>,
 }
 
 impl TableMetadata {
     fn create(config: &TableConfig, configurator: &mut dyn TabletConfigurator) -> TableMetadata {
         let configured_tablets = configurator.generate(config.initial_tablet_count);
-        let mut tablets = HashMap::with_capacity(configured_tablets.len());
+        let mut tablets = BTreeMap::new();
         for tablet_id in configured_tablets {
             tablets.insert(
                 tablet_id,
@@ -84,6 +85,56 @@ impl TableMetadata {
         }
     }
 
+    fn find_tablets(&self, key_hash_from: u32, key_hash_to: u32) -> Vec<TabletMetadata> {
+        let mut seen_tablet_ids = HashSet::new();
+        let mut listed_tablets = Vec::new();
+
+        let mut key_hash_intervals = Vec::new();
+
+        if key_hash_from < key_hash_to {
+            // The range doesn't wrap around zero, hence all tablets
+            // can be found in one shot.
+            key_hash_intervals.push((key_hash_from, key_hash_to));
+        } else {
+            // Range wraps around zero and therefore we split it into
+            // two subranges.
+            key_hash_intervals.push((key_hash_from, u32::MAX));
+            key_hash_intervals.push((0, key_hash_to));
+        }
+
+        for (key_hash_from, key_hash_to) in key_hash_intervals {
+            let mut found_last = false;
+            // Starting from the first tablet id that equal or larger than range start
+            for (tablet_id, tablet_metadata) in self.tablets.range(key_hash_from..) {
+                // Check if we have seen that tablet id before due to wrap around.
+                // and remember its metadata if needed.
+                if seen_tablet_ids.insert(*tablet_id) {
+                    listed_tablets.push(tablet_metadata.clone());
+                }
+                // If current tablet fully covers the end of the range
+                if *tablet_id >= key_hash_to {
+                    // Remember that and break.
+                    found_last = true;
+                    break;
+                }
+            }
+
+            // It is possible that we haven't found the last tablet covering the
+            // end of the range due to wrap around zero.
+            if !found_last {
+                if let Some((tablet_id, tablet_metadata)) = self.tablets.first_key_value() {
+                    // If so, wee need to remember the very first tablet after zero
+                    // wrap around.
+                    if seen_tablet_ids.insert(*tablet_id) {
+                        listed_tablets.push(tablet_metadata.clone());
+                    }
+                }
+            }
+        }
+
+        listed_tablets
+    }
+
     fn prepare_tablet_op(&self, table_name: String, tablet_op: &Op) -> TabletOpResult {
         let mut op_result = TabletOpResult {
             table_name,
@@ -93,25 +144,17 @@ impl TableMetadata {
 
         op_result.op_result = Some(match tablet_op {
             Op::ListTablet(list_tablet_op) => {
-                let mut negate = false;
-                let (mut tablet_from, mut tablet_to) =
-                    (list_tablet_op.tablet_id_from, list_tablet_op.tablet_id_to);
-                if tablet_from > tablet_to {
-                    negate = true;
-                    swap(&mut tablet_to, &mut tablet_from);
-                }
-
-                let mut listed_tablets = Vec::new();
-                for (tablet_id, tablet_metadata) in &self.tablets {
-                    if negate ^ (*tablet_id >= tablet_from && *tablet_id < tablet_to) {
-                        listed_tablets.push(tablet_metadata.clone());
-                    }
-                }
+                // In order to execute list op we need to find all tablets that are
+                // responsible for the given range. These tablets maybe outside of the
+                // range and must be found by traversing the consistent hashing
+                // ring clockwise, and possible wrap around zero.
+                let listed_tablets =
+                    self.find_tablets(list_tablet_op.key_hash_from, list_tablet_op.key_hash_to);
 
                 op_result.status = TabletOpStatus::Succeeded.into();
                 OpResult::ListTablet(ListTabletResult {
-                    tablet_id_from: tablet_from,
-                    tablet_id_to: tablet_to,
+                    key_hash_from: list_tablet_op.key_hash_from,
+                    key_hash_to: list_tablet_op.key_hash_to,
                     tablets: listed_tablets,
                 })
             }
@@ -498,16 +541,12 @@ mod tests {
         }
     }
 
-    fn create_list_tablet_op(
-        table_name: String,
-        tablet_id_from: u32,
-        tablet_id_to: u32,
-    ) -> TabletOp {
+    fn create_list_tablet_op(table_name: String, key_hash_from: u32, key_hash_to: u32) -> TabletOp {
         TabletOp {
             table_name,
             op: Some(Op::ListTablet(ListTabletOp {
-                tablet_id_from,
-                tablet_id_to,
+                key_hash_from,
+                key_hash_to,
             })),
         }
     }
@@ -562,16 +601,16 @@ mod tests {
     fn create_list_tablet_result(
         table_name: String,
         status: TabletOpStatus,
-        tablet_id_from: u32,
-        tablet_id_to: u32,
+        key_hash_from: u32,
+        key_hash_to: u32,
         tablets: Vec<TabletMetadata>,
     ) -> TabletOpResult {
         TabletOpResult {
             table_name,
             status: status.into(),
             op_result: Some(OpResult::ListTablet(ListTabletResult {
-                tablet_id_from,
-                tablet_id_to,
+                key_hash_from,
+                key_hash_to,
                 tablets,
             })),
         }
@@ -681,7 +720,7 @@ mod tests {
                 vec![create_list_tablet_op(
                     TABLE_NAME.to_string(),
                     TABLET_ID_1 - 1,
-                    TABLET_ID_2,
+                    TABLET_ID_2 + 1,
                 )],
             )))
             .unwrap();
@@ -711,8 +750,11 @@ mod tests {
                     TABLE_NAME.to_string(),
                     TabletOpStatus::Succeeded,
                     TABLET_ID_1 - 1,
-                    TABLET_ID_2,
-                    vec![create_tablet_metadata(TABLET_ID_1, TABLET_VERSION_1),]
+                    TABLET_ID_2 + 1,
+                    vec![
+                        create_tablet_metadata(TABLET_ID_1, TABLET_VERSION_1),
+                        create_tablet_metadata(TABLET_ID_2, TABLET_VERSION_2),
+                    ]
                 )]
             )
         );
@@ -901,7 +943,7 @@ mod tests {
             .on_process_command(Some(create_execute_tablet_ops_request(
                 CORRELATION_ID_1,
                 vec![
-                    create_list_tablet_op(TABLE_NAME.to_string(), TABLET_ID_1 - 1, TABLET_ID_2),
+                    create_list_tablet_op(TABLE_NAME.to_string(), TABLET_ID_2 + 1, TABLET_ID_2 + 2),
                     create_check_tablet_op(
                         TABLE_NAME.to_string(),
                         TABLET_ID_1,
@@ -940,8 +982,8 @@ mod tests {
                     create_list_tablet_result(
                         TABLE_NAME.to_string(),
                         TabletOpStatus::Succeeded,
-                        TABLET_ID_1 - 1,
-                        TABLET_ID_2,
+                        TABLET_ID_2 + 1,
+                        TABLET_ID_2 + 2,
                         vec![create_tablet_metadata(TABLET_ID_1, TABLET_VERSION_1),]
                     ),
                     create_check_tablet_result(
