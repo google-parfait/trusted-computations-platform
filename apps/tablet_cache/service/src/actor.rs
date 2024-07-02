@@ -21,7 +21,7 @@ use crate::{
 };
 use alloc::boxed::Box;
 use prost::{bytes::Bytes, Message};
-use slog::debug;
+use slog::{debug, o};
 use tcp_runtime::model::{
     Actor, ActorCommand, ActorContext, ActorError, ActorEvent, ActorEventContext, CommandOutcome,
     EventOutcome,
@@ -91,7 +91,12 @@ impl<T: transaction::TabletTransactionManager<Bytes>, S: store::KeyValueStore> A
         let config = TabletCacheConfig::decode(self.get_context().config().as_ref())
             .map_err(|_| ActorError::ConfigLoading)?;
 
-        self.transaction_manager.init(config.tablet_cache_capacity);
+        let key_value_store_logger = self.get_context().logger().new(o!("type" => "store"));
+        self.key_value_store.init(key_value_store_logger);
+
+        let transaction_manager_logger = self.get_context().logger().new(o!("type" => "manager"));
+        self.transaction_manager
+            .init(config.tablet_cache_capacity, transaction_manager_logger);
 
         debug!(self.get_context().logger(), "Initialized");
 

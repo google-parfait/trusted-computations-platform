@@ -20,6 +20,7 @@ use crate::apps::tablet_cache::service::*;
 use crate::transaction::{coordinator::*, data::*, manager::*, metadata::*, result::*, *};
 use mockall::mock;
 use prost::bytes::Bytes;
+use slog::Logger;
 use tcp_tablet_store_service::apps::tablet_store::service::*;
 
 mock! {
@@ -72,6 +73,8 @@ mock! {
     }
 
     impl<T> TabletDataCache<T> for TabletDataCache<T> {
+        fn init(&mut self, logger: Logger);
+
         fn make_progress(&mut self, instant: u64);
 
         fn load_tablets(
@@ -95,6 +98,8 @@ mock! {
     }
 
     impl TabletMetadataCache for TabletMetadataCache {
+        fn init(&mut self, logger: Logger);
+
         fn make_progress(&mut self, instant: u64);
 
         fn resolve_tablets(
@@ -115,6 +120,8 @@ mock! {
     }
 
     impl<T> TabletTransactionCoordinator<T> for TabletTransactionCoordinator<T> {
+        fn init(&mut self, logger: Logger);
+
         fn make_progress(
             &mut self,
             instant: u64,

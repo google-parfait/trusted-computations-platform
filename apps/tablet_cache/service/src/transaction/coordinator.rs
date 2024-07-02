@@ -17,6 +17,8 @@ use core::mem;
 use alloc::{boxed::Box, string::String, vec::Vec};
 use hashbrown::HashMap;
 use prost::bytes::Bytes;
+use slog::Logger;
+use tcp_runtime::logger::log::create_logger;
 use tcp_tablet_store_service::apps::tablet_store::service::{
     tablet_op, tablet_op_result, CheckTabletOp, TabletMetadata, TabletOp, TabletOpResult,
     TabletOpStatus, TabletsRequestStatus, UpdateTabletOp,
@@ -53,6 +55,9 @@ pub enum TabletTransactionCoordinatorOutMessage {
 // Type parameter T represents a union type for the tablet data representation. For example
 // it can be a protobuf message with a oneof representing specific tables.
 pub trait TabletTransactionCoordinator<T> {
+    // Initializes transaction coordinator.
+    fn init(&mut self, logger: Logger);
+
     // Advances internal state machine of the Tablet Transaction Coordinator.
     fn make_progress(
         &mut self,
@@ -102,6 +107,7 @@ pub trait TabletTransactionCoordinator<T> {
 }
 
 pub struct DefaultTabletTransactionCoordinator<T> {
+    logger: Logger,
     // Counter that is used to produce unique correlation id for outgoing
     // messages.
     correlation_counter: u64,
@@ -119,6 +125,7 @@ pub struct DefaultTabletTransactionCoordinator<T> {
 impl<T> DefaultTabletTransactionCoordinator<T> {
     pub fn create(correlation_counter: u64) -> Self {
         Self {
+            logger: create_logger(),
             correlation_counter,
             transaction_counter: 1,
             transactions: HashMap::new(),
@@ -144,6 +151,10 @@ impl<T> DefaultTabletTransactionCoordinator<T> {
 }
 
 impl<T> TabletTransactionCoordinator<T> for DefaultTabletTransactionCoordinator<T> {
+    fn init(&mut self, logger: Logger) {
+        self.logger = logger;
+    }
+
     fn make_progress(
         &mut self,
         instant: u64,

@@ -23,6 +23,7 @@ use alloc::{
 };
 use data::TabletData;
 use prost::bytes::Bytes;
+use slog::Logger;
 use tcp_tablet_store_service::apps::tablet_store::service::{
     tablet_op, tablet_op_result::OpResult, CheckTabletOp, TabletMetadata, TabletOp, TabletOpResult,
     TabletOpStatus, TabletsRequest, TabletsRequestStatus, TabletsResponse, UpdateTabletOp,
@@ -75,7 +76,7 @@ pub enum OutMessage {
 // it can be a protobuf message with a oneof representing specific tables.
 pub trait TabletTransactionManager<T>: TabletTransactionContext<T> {
     // Initializes transaction manager with tablet cache capacity.
-    fn init(&mut self, cache_capacity: u64);
+    fn init(&mut self, cache_capacity: u64, logger: Logger);
 
     // Advances internal state machine of the transaction manager. Essentially
     // it tries to make progress on all pending tablet resolutions and transactions.

@@ -21,6 +21,8 @@ use alloc::{
     vec::Vec,
 };
 use hashbrown::{hash_map::Entry, HashMap, HashSet};
+use slog::Logger;
+use tcp_runtime::logger::log::create_logger;
 use tcp_tablet_store_service::apps::tablet_store::service::{
     tablet_op::{self, Op},
     tablet_op_result, ExecuteTabletOpsRequest, ListTabletOp, ListTabletResult, TabletMetadata,
@@ -53,6 +55,9 @@ pub enum TabletMetadataCacheOutMessage {
 // Maintains last known state of the tablets metadata. Requests listing
 // of tablets from Tablet Store to resolve metadata of unknown tablets.
 pub trait TabletMetadataCache {
+    // Initializes tablet metadata cache.
+    fn init(&mut self, logger: Logger);
+
     // Advances internal state machine of the tablet metadata cache.
     fn make_progress(&mut self, instant: u64);
 
@@ -81,6 +86,7 @@ pub trait TabletMetadataCache {
 }
 
 pub struct DefaultTabletMetadataCache {
+    logger: Logger,
     correlation_counter: u64,
     resolve_request_counter: u64,
     tables: HashMap<String, TableMetadata>,
@@ -98,6 +104,7 @@ impl DefaultTabletMetadataCache {
             );
         }
         Self {
+            logger: create_logger(),
             correlation_counter,
             resolve_request_counter: 1,
             tables,
@@ -108,6 +115,10 @@ impl DefaultTabletMetadataCache {
 }
 
 impl TabletMetadataCache for DefaultTabletMetadataCache {
+    fn init(&mut self, logger: Logger) {
+        self.logger = logger;
+    }
+
     fn make_progress(&mut self, _instant: u64) {
         let mut list_ops = Vec::new();
         for table_metadata in self.tables.values_mut() {
