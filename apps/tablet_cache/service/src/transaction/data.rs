@@ -28,6 +28,8 @@ use hashbrown::{
 };
 use prost::bytes::Bytes;
 use sha2::{Digest, Sha256};
+use slog::Logger;
+use tcp_runtime::logger::log::create_logger;
 use tcp_tablet_store_service::apps::tablet_store::service::TabletMetadata;
 
 use crate::apps::tablet_cache::service::{
@@ -57,6 +59,9 @@ pub enum TabletDataCacheOutMessage {
 // where each variant represents specific table. Note that a single cache instance is used
 // to store tablets for various tables.
 pub trait TabletDataCache<T> {
+    // Initializes tablet data cache.
+    fn init(&mut self, logger: Logger);
+
     // Advances internal state machine of the tablet data cache.
     fn make_progress(&mut self, instant: u64);
 
@@ -232,6 +237,7 @@ fn format_blob_uri(tablet_id: u32, tablet_version: u32, blob_hash: Bytes) -> Str
 //
 // Type parameter T represents a variant type for the deserialized tablet data.
 pub struct DefaultTabletDataCache<T> {
+    logger: Logger,
     correlation_counter: u64,
     batch_counter: u64,
     cache_capacity: u64,
@@ -253,6 +259,7 @@ impl<T> DefaultTabletDataCache<T> {
         tablet_cache_policy: Box<dyn TabletDataCachePolicy<T>>,
     ) -> Self {
         Self {
+            logger: create_logger(),
             correlation_counter,
             batch_counter: 0,
             cache_capacity,
@@ -319,6 +326,10 @@ impl<T> DefaultTabletDataCache<T> {
 }
 
 impl<T> TabletDataCache<T> for DefaultTabletDataCache<T> {
+    fn init(&mut self, logger: Logger) {
+        self.logger = logger;
+    }
+
     fn make_progress(&mut self, instant: u64) {
         let mut failed_tablet_cache_entries = Vec::new();
 

@@ -21,6 +21,8 @@ use core::{
 use ahash::AHasher;
 use alloc::{boxed::Box, rc::Rc, string::String, vec::Vec};
 use hashbrown::HashMap;
+use slog::Logger;
+use tcp_runtime::logger::log::create_logger;
 
 use crate::{
     apps::tablet_cache::service::{
@@ -55,6 +57,9 @@ pub enum KeyValueResponse {
 // calling. Therefore we will continue this loop until app is terminated. Some iterations
 // will produce responses.
 pub trait KeyValueStore {
+    // Initializes key value store.
+    fn init(&mut self, logger: Logger);
+
     // Periodically called with the current instant and reference to the transaction
     // context. Key value store may start a new transaction after enough consumer
     // requests has been batched together, process consumer requests, commit
@@ -102,6 +107,7 @@ impl SimpleKeyValueStore {
     ) -> SimpleKeyValueStore {
         SimpleKeyValueStore {
             core: Rc::new(RefCell::new(SimpleKeyValueStoreCore::new(
+                create_logger(),
                 table_name,
                 min_pending_before_resolve,
                 min_pending_before_process,
@@ -111,6 +117,11 @@ impl SimpleKeyValueStore {
 }
 
 impl KeyValueStore for SimpleKeyValueStore {
+    fn init(&mut self, logger: Logger) {
+        let mut core = self.core.borrow_mut();
+        core.logger = logger;
+    }
+
     fn make_progress(
         &mut self,
         _instant: u64,
@@ -161,6 +172,7 @@ impl KeyValueStore for SimpleKeyValueStore {
 
 // Holds mutable shared state of the key value store.
 struct SimpleKeyValueStoreCore {
+    logger: Logger,
     table_accessor: TableAccessor,
     request_tracker: RequestTracker,
     tablet_trackers: HashMap<u32, TabletTracker>,
@@ -171,11 +183,13 @@ struct SimpleKeyValueStoreCore {
 
 impl SimpleKeyValueStoreCore {
     fn new(
+        logger: Logger,
         table_name: String,
         min_pending_before_resolve: usize,
         min_pending_before_process: usize,
     ) -> SimpleKeyValueStoreCore {
         SimpleKeyValueStoreCore {
+            logger,
             table_accessor: TableAccessor::create(table_name),
             request_tracker: RequestTracker::create(min_pending_before_resolve),
             tablet_trackers: HashMap::new(),

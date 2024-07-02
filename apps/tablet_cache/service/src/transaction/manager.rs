@@ -15,6 +15,8 @@
 use core::cell::RefCell;
 
 use alloc::{boxed::Box, rc::Rc, vec::Vec};
+use slog::{o, Logger};
+use tcp_runtime::logger::log::create_logger;
 use tcp_tablet_store_service::apps::tablet_store::service::{
     tablet_op_result::OpResult, TabletsRequest,
 };
@@ -51,6 +53,7 @@ impl<T> DefaultTabletTransactionManager<T> {
     ) -> Self {
         Self {
             core: Rc::new(RefCell::new(TabletTransactionManagerCore::<T>::create(
+                create_logger(),
                 transaction_coordinator,
                 metadata_cache,
                 data_cache,
@@ -60,8 +63,8 @@ impl<T> DefaultTabletTransactionManager<T> {
 }
 
 impl<T: 'static> TabletTransactionManager<T> for DefaultTabletTransactionManager<T> {
-    fn init(&mut self, _capacity: u64) {
-        todo!()
+    fn init(&mut self, capacity: u64, logger: Logger) {
+        self.core.borrow_mut().init(capacity, logger);
     }
 
     fn make_progress(&mut self, instant: u64) {
@@ -152,6 +155,7 @@ impl<T> TabletTransactionCommit for DefaultTabletTransaction<T> {
 // Manages tablet transaction execution. Coordinates metadata and data
 // loading and updating.
 struct TabletTransactionManagerCore<T> {
+    logger: Logger,
     transaction_coordinator: Box<dyn TabletTransactionCoordinator<T>>,
     metadata_cache: Box<dyn TabletMetadataCache>,
     data_cache: Box<dyn TabletDataCache<T>>,
@@ -160,15 +164,31 @@ struct TabletTransactionManagerCore<T> {
 // Delegates processing to metadata cache, data cache and transaction coordinator.
 impl<T> TabletTransactionManagerCore<T> {
     fn create(
+        logger: Logger,
         transaction_coordinator: Box<dyn TabletTransactionCoordinator<T>>,
         metadata_cache: Box<dyn TabletMetadataCache>,
         data_cache: Box<dyn TabletDataCache<T>>,
     ) -> Self {
         Self {
+            logger,
             transaction_coordinator,
             metadata_cache,
             data_cache,
         }
+    }
+
+    fn init(&mut self, _capacity: u64, logger: Logger) {
+        self.logger = logger;
+
+        let data_cache_logger = self.logger.new(o!("type" => "data"));
+        self.data_cache.init(data_cache_logger);
+
+        let metadata_cache_logger = self.logger.new(o!("type" => "metadata"));
+        self.metadata_cache.init(metadata_cache_logger);
+
+        let transaction_coordinator_logger = self.logger.new(o!("type" => "coordinator"));
+        self.transaction_coordinator
+            .init(transaction_coordinator_logger);
     }
 
     fn make_progress(&mut self, instant: u64) {
