@@ -22,10 +22,10 @@ import "proto/session/session.proto";
 // Messages coming from the Untrusted Launcher to the Trusted Host.
 message InMessage {
   oneof msg {
-    // Requests the Trusted Host to start a new Raft replica. Must be the first
+    // Requests the Trusted Host to start a new replica. Must be the first
     // message sent by the Untrusted Launcher to the Trusted Host.
     StartReplicaRequest start_replica = 1;
-    // Requests the Trusted Host to stop an already running Raft replica. Must
+    // Requests the Trusted Host to stop an already running replica. Must
     // be the last message sent by the Untrusted Launcher to the Trusted Host.
     StopReplicaRequest stop_replica = 2;
     // Requests the Trusted Host to issue a command to change Raft cluster that
@@ -42,10 +42,10 @@ message InMessage {
     // Requests the Trusted Host to deliver part of the Raft snapshot from
     // leader replica to the hosted replica.
     DeliverSnapshotRequest deliver_snapshot_request = 7;
-    // Requests the Trusted Host to deliver snapshot response to the leader
+    // Requests the Trusted Host to deliver Raft snapshot response to the leader
     // replica from the hosted replica.
     DeliverSnapshotResponse deliver_snapshot_response = 8;
-    // Signifies that an attempt to deliver snapshot has failed.
+    // Signifies that an attempt to deliver Raft snapshot has failed.
     DeliverSnapshotFailure deliver_snapshot_failure = 9;
     // Requests the Trusted Host to report the current state of this replica.
     GetReplicaStateRequest get_replica_state = 10;
@@ -69,7 +69,7 @@ message OutMessage {
     // indication status. The generated replica identity will be used to route
     // messages between replicas.
     StartReplicaResponse start_replica = 1;
-    // Responds to the Untrsuted Launcher with the stop replica result.
+    // Responds to the Untrusted Launcher with the stop replica result.
     StopReplicaResponse stop_replica = 2;
     // Requests the Untrusted Launcher to log given message for troubleshooting.
     LogMessage log = 3;
@@ -92,7 +92,6 @@ message OutMessage {
     // follower replica to the leader replica hosted in a different Trusted
     // Host.
     DeliverSnapshotResponse deliver_snapshot_response = 9;
-    // Responds to the Untrusted Launcher with the proposal result in case of
     // Responds to the Untrusted Launcher with the current state of this
     // replica.
     GetReplicaStateResponse get_replica_state = 10;
@@ -112,18 +111,22 @@ message OutMessage {
 // first message sent by the untrusted launcher to the trusted application.
 message StartReplicaRequest {
   // Indicates if the new Raft replica to be started as the leader of the Raft
-  // cluster.
+  // cluster. Must be false if `is_ephemeral` is true.
   bool is_leader = 1;
   // If set is used as the started replica id. Must only be used for testing
   // purposes.
   uint64 replica_id_hint = 2;
   // If set is used to configure Raft node, otherwise default values are used.
+  // Must only be specified if `is_ephemeral` is false.
   RaftConfig raft_config = 3;
   // Serialized application configuration, accessible through the actor context.
   bytes app_config = 4;
-  // Attestation configuration for this raft replica. Used for verification
-  // during initial handshake with other raft peers.
+  // Attestation configuration for this replica. Can be used for verification
+  // with other peers.
   AttestationConfig attestation_config = 5;
+  // Indicates if this is an ephemeral node i.e. it is not replicated and raft is
+  // disabled.
+  bool is_ephemeral = 6;
 }
 
 message StartReplicaResponse {
@@ -175,7 +178,7 @@ message AttestationConfig {
   oak.attestation.v1.ReferenceValues reference_values = 1;
 }
 
-// Instructs the trusted application to stop the corresponding raft replica.
+// Instructs the trusted application to stop the corresponding replica.
 // This must be the last message sent by the untrusted launcher to the trusted
 // application.
 message StopReplicaRequest {}
@@ -382,11 +385,11 @@ message GetReplicaStateRequest {}
 
 // Response to GetReplicaStateRequest.
 message GetReplicaStateResponse {
-  // Index of the last committed entry that has been applied to the actor on
-  // this replica.
+  // Index of the last Raft committed entry that has been applied to the actor
+  // on this replica.
   uint64 applied_index = 1;
 
-  // Size (in bytes) of the latest snapshot.
+  // Size (in bytes) of the latest Raft snapshot.
   uint64 latest_snapshot_size = 2;
 }
 

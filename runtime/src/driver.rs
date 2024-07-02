@@ -177,6 +177,7 @@ pub struct Driver<R: Raft, S: Store, P: SnapshotProcessor, A: Actor, C: Communic
     prev_raft_state: RaftState,
     raft_progress: RaftProgress,
     communication: C,
+    is_ephemeral: bool,
 }
 
 impl<
@@ -217,6 +218,7 @@ impl<
             prev_raft_state: RaftState::new(),
             raft_progress: RaftProgress::new(),
             communication,
+            is_ephemeral: false,
         }
     }
 
@@ -224,7 +226,7 @@ impl<
         self.core.borrow_mut()
     }
 
-    fn initilize_raft_node(
+    fn initialize_raft_node(
         &mut self,
         raft_config: &Option<RaftConfig>,
         snapshot: Bytes,
@@ -656,6 +658,13 @@ impl<
         self.check_driver_state(DriverState::Started)
     }
 
+    fn check_non_ephemeral(&self) -> Result<(), PalError> {
+        if self.is_ephemeral {
+            return Err(PalError::InvalidOperation);
+        }
+        Ok(())
+    }
+
     fn initialize_driver(&mut self, _app_signing_key: Vec<u8>, replica_id_hint: u64) {
         self.id = replica_id_hint;
         self.logger = self.logger.new(o!("raft_id" => self.id));
@@ -685,31 +694,36 @@ impl<
             // Failure to initialize actor must lead to termination.
             PalError::Actor
         })?;
+        self.is_ephemeral = start_replica_request.is_ephemeral;
 
-        let snapshot = self.actor.on_save_snapshot().map_err(|e| {
-            error!(self.logger, "Failed to save actor snapshot: {}", e);
+        // Initialize Raft and Snapshot only for non-ephemeral nodes.
+        if !self.is_ephemeral {
+            let snapshot = self.actor.on_save_snapshot().map_err(|e| {
+                error!(self.logger, "Failed to save actor snapshot: {}", e);
 
-            // Failure to save actor snapshot must lead to termination.
-            PalError::Actor
-        })?;
+                // Failure to save actor snapshot must lead to termination.
+                PalError::Actor
+            })?;
 
-        // Initialize snapshot processor.
-        let snapshot_config = match &start_replica_request.raft_config {
-            Some(raft_config) => &raft_config.snapshot_config,
-            None => &None,
-        };
-        self.snapshot.init(
-            self.logger.new(o!("type" => "snapshot")),
-            self.id,
-            snapshot_config,
-        );
+            // Initialize snapshot processor.
+            let snapshot_config = match &start_replica_request.raft_config {
+                Some(raft_config) => &raft_config.snapshot_config,
+                None => &None,
+            };
+            self.snapshot.init(
+                self.logger.new(o!("type" => "snapshot")),
+                self.id,
+                snapshot_config,
+            );
+
+            self.initialize_raft_node(
+                &start_replica_request.raft_config,
+                snapshot,
+                start_replica_request.is_leader,
+            )?;
+        }
+
         self.communication.init(self.id);
-
-        self.initilize_raft_node(
-            &start_replica_request.raft_config,
-            snapshot,
-            start_replica_request.is_leader,
-        )?;
 
         self.driver_state = DriverState::Started;
 
@@ -742,6 +756,7 @@ impl<
         change_cluster_request: &ChangeClusterRequest,
     ) -> Result<(), PalError> {
         self.check_driver_started()?;
+        self.check_non_ephemeral()?;
 
         let change_status = match ChangeClusterType::try_from(change_cluster_request.change_type) {
             Ok(ChangeClusterType::ChangeTypeAddReplica) => self.make_raft_config_change_proposal(
@@ -773,6 +788,7 @@ impl<
         _check_cluster_request: &CheckClusterRequest,
     ) -> Result<(), PalError> {
         self.check_driver_started()?;
+        self.check_non_ephemeral()?;
 
         self.reset_leader_state();
 
@@ -784,6 +800,7 @@ impl<
         deliver_system_message: DeliverSystemMessage,
     ) -> Result<(), PalError> {
         self.check_driver_started()?;
+        self.check_non_ephemeral()?;
 
         let message =
             self.communication
@@ -831,6 +848,7 @@ impl<
         &mut self,
         deliver_snapshot_request: DeliverSnapshotRequest,
     ) -> Result<(), PalError> {
+        self.check_non_ephemeral()?;
         let message =
             self.communication
                 .process_in_message(in_message::Msg::DeliverSnapshotRequest(
@@ -870,6 +888,7 @@ impl<
         &mut self,
         deliver_snapshot_response: DeliverSnapshotResponse,
     ) -> Result<(), PalError> {
+        self.check_non_ephemeral()?;
         let message =
             self.communication
                 .process_in_message(in_message::Msg::DeliverSnapshotResponse(
@@ -907,6 +926,7 @@ impl<
         &mut self,
         deliver_snapshot_failure: DeliverSnapshotFailure,
     ) -> Result<(), PalError> {
+        self.check_non_ephemeral()?;
         match self.snapshot.mut_processor(self.instant) {
             SnapshotProcessorRole::Sender(sender) => sender.process_response(
                 deliver_snapshot_failure.sender_replica_id,
@@ -1025,15 +1045,41 @@ impl<
         }
 
         if let Some(actor_event) = message_outcome.event {
-            let entry = create_entry(
-                EntryId {
-                    entry_id: actor_event.correlation_id,
-                    replica_id: self.id,
-                },
-                actor_event.contents,
-            );
-            self.mut_core()
-                .append_proposal(entry.encode_to_vec().into())
+            if self.is_ephemeral {
+                // For ephemeral replica, apply the event immediately since it is not replicated.
+                let event_outcome = self
+                    .actor
+                    .on_apply_event(
+                        ActorEventContext {
+                            index: 0,
+                            owned: true,
+                        },
+                        actor_event,
+                    )
+                    .map_err(|e| {
+                        error!(self.logger, "Failed to apply event to actor state: {}", e);
+                        // Failure to apply event to actor state must lead to termination.
+                        PalError::Actor
+                    })?;
+
+                for actor_command in event_outcome.commands {
+                    self.stash_message(out_message::Msg::DeliverAppMessage(DeliverAppMessage {
+                        correlation_id: actor_command.correlation_id,
+                        message_header: actor_command.header,
+                        message_payload: actor_command.payload,
+                    }));
+                }
+            } else {
+                let entry = create_entry(
+                    EntryId {
+                        entry_id: actor_event.correlation_id,
+                        replica_id: self.id,
+                    },
+                    actor_event.contents,
+                );
+                self.mut_core()
+                    .append_proposal(entry.encode_to_vec().into())
+            }
         }
 
         Ok(())
@@ -1045,11 +1091,17 @@ impl<
     ) -> Result<(), PalError> {
         self.check_driver_started()?;
 
-        let latest_snapshot_size = self.raft.mut_store().latest_snapshot_size();
-        self.stash_message(out_message::Msg::GetReplicaState(GetReplicaStateResponse {
-            applied_index: self.raft_progress.applied_index,
-            latest_snapshot_size,
-        }));
+        if self.is_ephemeral {
+            self.stash_message(out_message::Msg::GetReplicaState(
+                GetReplicaStateResponse::default(),
+            ));
+        } else {
+            let latest_snapshot_size = self.raft.mut_store().latest_snapshot_size();
+            self.stash_message(out_message::Msg::GetReplicaState(GetReplicaStateResponse {
+                applied_index: self.raft_progress.applied_index,
+                latest_snapshot_size,
+            }));
+        }
 
         Ok(())
     }
@@ -1067,7 +1119,7 @@ impl<
         Ok(())
     }
 
-    fn process_actor_output(&mut self) {
+    fn process_actor_raft_proposals(&mut self) {
         let proposals = self.mut_core().take_outputs();
 
         for proposal in proposals {
@@ -1087,8 +1139,6 @@ impl<
             self.stash_leader_state();
         }
 
-        self.stash_log_entries();
-
         Ok(())
     }
 
@@ -1101,6 +1151,11 @@ impl<
         for log_message in self.logger_output.take_entries() {
             self.stash_message(out_message::Msg::Log(log_message));
         }
+    }
+
+    fn stash_comms_module_entries(&mut self) {
+        self.messages
+            .append(&mut self.communication.take_out_messages());
     }
 
     fn stash_message(&mut self, message: out_message::Msg) {
@@ -1184,26 +1239,25 @@ impl<
             self.process_deliver_app_message(deliver_app_message_opt)?;
         }
 
-        // Process snapshot transfer completion or failures.
-        self.process_snapshot_progress();
+        if !self.is_ephemeral {
+            // Processes outputs from the actor to make raft proposals.
+            self.process_actor_raft_proposals();
 
-        // Collect outpus like messages, log entries and proposals from the actor.
-        self.process_actor_output();
+            // Process snapshot transfer completion or failures.
+            self.process_snapshot_progress();
 
-        // Advance the Raft and collect results messages.
-        self.process_state_machine()?;
+            // Advance the Raft and collect results messages.
+            self.process_state_machine()?;
 
-        // Initiate if needed snapshot sending.
-        self.process_snapshot_sending()?;
+            // Initiate if needed snapshot sending.
+            self.process_snapshot_sending()?;
+        }
 
-        // Get stashed messages to be sent to Raft peers.
-        let mut messages = self.communication.take_out_messages();
-
-        // Append stashed messages with messages to be sent to the consumers.
-        messages.append(&mut self.take_out_messages());
+        self.stash_log_entries();
+        self.stash_comms_module_entries();
 
         // Send messages to Raft peers and consumers through the trusted host.
-        host.send_messages(messages);
+        host.send_messages(self.take_out_messages());
 
         Ok(())
     }
@@ -1234,10 +1288,6 @@ mod test {
         ConfChange as RaftConfigChange, EntryType as RaftEntryType, MessageType as RaftMessageType,
     };
     use tcp_proto::runtime::endpoint::raft_config::SnapshotConfig;
-
-    fn create_actor_config() -> Vec<u8> {
-        Vec::new()
-    }
 
     const REPLICA_1: u64 = 1;
     const REPLICA_2: u64 = 2;
@@ -1293,6 +1343,7 @@ mod test {
                 raft_config: Some(raft_config),
                 app_config: app_config,
                 attestation_config: None,
+                is_ephemeral: false,
             })),
         };
         envelope
@@ -1973,13 +2024,8 @@ mod test {
             self
         }
 
-        fn expect_on_shutdown(
-            &mut self,
-            shutdown_handler: impl Fn() + 'static,
-        ) -> &mut DriverBuilder {
-            self.mock_actor
-                .expect_on_shutdown()
-                .return_once_st(shutdown_handler);
+        fn expect_on_shutdown(&mut self) -> &mut DriverBuilder {
+            self.mock_actor.expect_on_shutdown().once().return_const(());
 
             self
         }
@@ -2159,7 +2205,7 @@ mod test {
             .expect_on_init(|_| Ok(()))
             .expect_on_save_snapshot(Ok(init_snapshot.clone()))
             .expect_on_process_command(None, Ok(CommandOutcome::with_none()))
-            .expect_on_shutdown(|| ())
+            .expect_on_shutdown()
             .take(raft_builder, snapshot_builder, communication_builder);
 
         assert_eq!(
@@ -2187,11 +2233,10 @@ mod test {
     }
 
     #[test]
-    fn test_driver_execute_proposal_request() {
+    fn test_driver_deliver_app_message_request() {
         let (node_id, instant, raft_config) = create_default_parameters();
         let init_snapshot = Bytes::from(vec![2, 3, 4]);
         let proposal_contents_1 = Bytes::from(vec![1, 2, 3]);
-        let proposal_pending_1 = Bytes::from(vec![3, 4, 5]);
         let proposal_contents_2 = Bytes::from(vec![4, 5, 6]);
         let proposal_result_2 = vec![4, 4, 6];
         let correlation_id_1 = 1;
@@ -2357,6 +2402,116 @@ mod test {
                     node_id,
                     self_config.into()
                 )),
+            )
+        );
+    }
+
+    #[test]
+    fn test_driver_ephemeral_replica() {
+        let (node_id, instant, _) = create_default_parameters();
+        let self_config = vec![1, 2, 3];
+        let correlation_id = 1;
+        let proposal_contents = Bytes::from(vec![1, 2, 3]);
+        let actor_command_1 = ActorCommand {
+            correlation_id,
+            header: proposal_contents.clone(),
+            payload: Bytes::new(),
+        };
+        let actor_event = ActorEvent {
+            correlation_id,
+            contents: proposal_contents.clone(),
+        };
+        let proposal_result = vec![4, 4, 6];
+        let actor_command_2 = ActorCommand {
+            correlation_id,
+            header: proposal_result.clone().into(),
+            payload: Bytes::new(),
+        };
+
+        let mut mock_host = MockHostBuilder::new()
+            .expect_public_signing_key(vec![])
+            .expect_send_messages(vec![create_start_replica_response(node_id)])
+            .expect_send_messages(vec![
+                create_out_deliver_app_message(correlation_id, proposal_contents.clone().into()),
+                create_out_deliver_app_message(correlation_id, proposal_result.clone().into()),
+            ])
+            .expect_send_messages(vec![create_stop_replica_response()])
+            .take();
+
+        let raft_builder = RaftBuilder::new().expect_leader(false);
+        let snapshot_builder = SnapshotBuilder::new();
+        let communication_builder = CommunicationBuilder::new()
+            .expect_init(node_id)
+            .expect_take_out_messages(Vec::new())
+            .expect_take_out_messages(Vec::new())
+            .expect_take_out_messages(Vec::new());
+
+        let exp_self_config = self_config.clone();
+
+        let mut driver = DriverBuilder::new()
+            .expect_on_init(move |actor_context| {
+                assert_eq!(node_id, actor_context.id());
+                assert_eq!(instant, actor_context.instant());
+                assert_eq!(exp_self_config, actor_context.config());
+                assert!(!actor_context.leader());
+
+                Ok(())
+            })
+            .expect_on_process_command(None, Ok(CommandOutcome::with_none()))
+            .expect_on_process_command(
+                Some(actor_command_1.clone()),
+                Ok(CommandOutcome::with_command_and_event(
+                    actor_command_1.clone(),
+                    actor_event.clone(),
+                )),
+            )
+            .expect_on_apply_event(
+                ActorEventContext {
+                    index: 0,
+                    owned: true,
+                },
+                actor_event.clone(),
+                Ok(EventOutcome::with_command(actor_command_2.clone())),
+            )
+            .expect_on_shutdown()
+            .take(raft_builder, snapshot_builder, communication_builder);
+
+        assert_eq!(
+            Ok(()),
+            driver.receive_message(
+                &mut mock_host,
+                instant,
+                Some(InMessage {
+                    msg: Some(in_message::Msg::StartReplica(StartReplicaRequest {
+                        is_leader: false,
+                        replica_id_hint: node_id,
+                        raft_config: None,
+                        app_config: self_config.into(),
+                        attestation_config: None,
+                        is_ephemeral: true,
+                    })),
+                }),
+            )
+        );
+
+        assert_eq!(
+            Ok(()),
+            driver.receive_message(
+                &mut mock_host,
+                instant + 10,
+                Some(create_in_deliver_app_message(
+                    correlation_id,
+                    proposal_contents.clone().into()
+                )),
+            )
+        );
+
+        assert_eq!(
+            Ok(()),
+            driver.receive_message(
+                &mut mock_host,
+                instant + 20,
+                Some(create_stop_replica_request()),
             )
         );
     }
