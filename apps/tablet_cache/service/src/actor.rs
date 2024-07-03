@@ -164,9 +164,12 @@ impl<T: transaction::TabletTransactionManager<Bytes>, S: store::KeyValueStore> A
                             ),
                         )
                     }
-                    InMsg::ExecuteTabletOpsError(_error) => {
-                        todo!()
-                    }
+                    InMsg::ExecuteTabletOpsError(error) => self
+                        .transaction_manager
+                        .process_in_message(transaction::InMessage::ExecuteTabletOpsError(
+                            command.correlation_id,
+                            error,
+                        )),
                 },
                 None => {
                     return Err(ActorError::Internal);

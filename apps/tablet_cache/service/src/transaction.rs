@@ -30,8 +30,8 @@ use tcp_tablet_store_service::apps::tablet_store::service::{
 };
 
 use crate::apps::tablet_cache::service::{
-    ExecuteTabletOpsRequest, ExecuteTabletOpsResponse, LoadTabletRequest, LoadTabletResponse,
-    StoreTabletRequest, StoreTabletResponse, TabletDataStorageStatus,
+    ExecuteTabletOpsError, ExecuteTabletOpsRequest, ExecuteTabletOpsResponse, LoadTabletRequest,
+    LoadTabletResponse, StoreTabletRequest, StoreTabletResponse, TabletDataStorageStatus,
 };
 use hashbrown::{HashMap, HashSet};
 
@@ -50,6 +50,8 @@ pub enum InMessage {
     StoreTabletResponse(u64, StoreTabletResponse),
     // Response to tablet ops executing in tablet store along with tablets response and correlation id.
     ExecuteTabletOpsResponse(u64, ExecuteTabletOpsResponse, TabletsResponse),
+    // Error to tablet ops executing in tablet store along with correlation id.
+    ExecuteTabletOpsError(u64, ExecuteTabletOpsError),
 }
 
 // Messages that may go from the transction manager.

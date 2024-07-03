@@ -15,10 +15,13 @@
 use core::cell::RefCell;
 
 use alloc::{boxed::Box, rc::Rc, vec::Vec};
+use hashbrown::HashMap;
 use slog::{o, Logger};
 use tcp_runtime::logger::log::create_logger;
 use tcp_tablet_store_service::apps::tablet_store::service::{
-    tablet_op_result::OpResult, TabletsRequest,
+    tablet_op::Op, tablet_op_result::OpResult, AddTabletResult, CheckTabletResult,
+    ListTabletResult, RemoveTabletResult, TabletOp, TabletOpResult, TabletsRequest,
+    TabletsRequestStatus, TabletsResponse, UpdateTabletResult,
 };
 
 use crate::apps::tablet_cache::service::ExecuteTabletOpsRequest;
@@ -159,6 +162,11 @@ struct TabletTransactionManagerCore<T> {
     transaction_coordinator: Box<dyn TabletTransactionCoordinator<T>>,
     metadata_cache: Box<dyn TabletMetadataCache>,
     data_cache: Box<dyn TabletDataCache<T>>,
+    // Maps correlation id to the precomputed tablets responses where each
+    // response is created from  the original request converted with every
+    // operation failed. These responses are used when original tablets
+    // request ends with an error (for example, an rpc error).
+    tablets_errors: HashMap<u64, TabletsResponse>,
 }
 
 // Delegates processing to metadata cache, data cache and transaction coordinator.
@@ -174,6 +182,7 @@ impl<T> TabletTransactionManagerCore<T> {
             transaction_coordinator,
             metadata_cache,
             data_cache,
+            tablets_errors: HashMap::new(),
         }
     }
 
@@ -259,33 +268,12 @@ impl<T> TabletTransactionManagerCore<T> {
                 _execute_ops_response,
                 tablets_response,
             ) => {
-                let mut list_op_results = Vec::new();
-                let mut execute_op_results = Vec::new();
-
-                for tablet_op_result in tablets_response.tablet_results {
-                    if let Some(op_result) = &tablet_op_result.op_result {
-                        if let OpResult::ListTablet(_) = op_result {
-                            list_op_results.push(tablet_op_result);
-                        } else {
-                            execute_op_results.push(tablet_op_result);
-                        }
-                    }
-                }
-
-                if !list_op_results.is_empty() {
-                    self.metadata_cache.process_in_message(
-                        TabletMetadataCacheInMessage::ListResponse(correlation_id, list_op_results),
-                    );
-                }
-
-                if !execute_op_results.is_empty() {
-                    self.transaction_coordinator.process_in_message(
-                        &mut *self.metadata_cache,
-                        TabletTransactionCoordinatorInMessage::ExecuteTabletOpsResponse(
-                            correlation_id,
-                            execute_op_results,
-                        ),
-                    );
+                self.tablets_errors.remove(&correlation_id);
+                self.process_in_tablets_op_response(correlation_id, tablets_response);
+            }
+            InMessage::ExecuteTabletOpsError(correlation_id, _execute_ops_error) => {
+                if let Some(tablets_error) = self.tablets_errors.remove(&correlation_id) {
+                    self.process_in_tablets_op_response(correlation_id, tablets_error);
                 }
             }
         }
@@ -299,25 +287,57 @@ impl<T> TabletTransactionManagerCore<T> {
                 TabletTransactionCoordinatorOutMessage::ExecuteTabletOpsRequest(
                     correlation_id,
                     execute_ops,
-                ) => OutMessage::ExecuteTabletOpsRequest(
-                    correlation_id,
-                    ExecuteTabletOpsRequest::default(),
-                    TabletsRequest {
+                ) => {
+                    let tablets_error = TabletsResponse {
+                        status: TabletsRequestStatus::Failed.into(),
+                        tablet_results: execute_ops
+                            .iter()
+                            .map(|tablet_op| create_failed_op_result(tablet_op))
+                            .collect(),
+                    };
+
+                    assert!(self
+                        .tablets_errors
+                        .insert(correlation_id, tablets_error)
+                        .is_none());
+
+                    let tablets_request = TabletsRequest {
                         tablet_ops: execute_ops,
-                    },
-                ),
+                    };
+
+                    OutMessage::ExecuteTabletOpsRequest(
+                        correlation_id,
+                        ExecuteTabletOpsRequest::default(),
+                        tablets_request,
+                    )
+                }
             });
         }
 
         for metadata_out_message in self.metadata_cache.take_out_messages() {
             out_messages.push(match metadata_out_message {
                 TabletMetadataCacheOutMessage::ListRequest(correlation_id, list_ops) => {
+                    let tablets_error = TabletsResponse {
+                        status: TabletsRequestStatus::Failed.into(),
+                        tablet_results: list_ops
+                            .iter()
+                            .map(|tablet_op| create_failed_op_result(tablet_op))
+                            .collect(),
+                    };
+
+                    assert!(self
+                        .tablets_errors
+                        .insert(correlation_id, tablets_error)
+                        .is_none());
+
+                    let tablets_request = TabletsRequest {
+                        tablet_ops: list_ops,
+                    };
+
                     OutMessage::ExecuteTabletOpsRequest(
                         correlation_id,
                         ExecuteTabletOpsRequest::default(),
-                        TabletsRequest {
-                            tablet_ops: list_ops,
-                        },
+                        tablets_request,
                     )
                 }
             });
@@ -341,5 +361,62 @@ impl<T> TabletTransactionManagerCore<T> {
         }
 
         out_messages
+    }
+
+    fn process_in_tablets_op_response(
+        &mut self,
+        correlation_id: u64,
+        tablets_response: TabletsResponse,
+    ) {
+        let mut list_op_results = Vec::new();
+        let mut execute_op_results = Vec::new();
+
+        for tablet_op_result in tablets_response.tablet_results {
+            if let Some(op_result) = &tablet_op_result.op_result {
+                if let OpResult::ListTablet(_) = op_result {
+                    list_op_results.push(tablet_op_result);
+                } else {
+                    execute_op_results.push(tablet_op_result);
+                }
+            }
+        }
+
+        if !list_op_results.is_empty() {
+            self.metadata_cache
+                .process_in_message(TabletMetadataCacheInMessage::ListResponse(
+                    correlation_id,
+                    list_op_results,
+                ));
+        }
+
+        if !execute_op_results.is_empty() {
+            self.transaction_coordinator.process_in_message(
+                &mut *self.metadata_cache,
+                TabletTransactionCoordinatorInMessage::ExecuteTabletOpsResponse(
+                    correlation_id,
+                    execute_op_results,
+                ),
+            );
+        }
+    }
+}
+
+fn create_failed_op_result(tablet_op: &TabletOp) -> TabletOpResult {
+    let tablet_op_result = match &tablet_op.op {
+        Some(Op::ListTablet(list_tablet_op)) => Some(OpResult::ListTablet(ListTabletResult {
+            key_hash_from: list_tablet_op.key_hash_from,
+            key_hash_to: list_tablet_op.key_hash_to,
+            tablets: Vec::new(),
+        })),
+        Some(Op::CheckTablet(_)) => Some(OpResult::CheckTablet(CheckTabletResult::default())),
+        Some(Op::UpdateTablet(_)) => Some(OpResult::UpdateTablet(UpdateTabletResult::default())),
+        Some(Op::AddTablet(_)) => Some(OpResult::AddTablet(AddTabletResult::default())),
+        Some(Op::RemoveTablet(_)) => Some(OpResult::RemoveTablet(RemoveTabletResult::default())),
+        None => None,
+    };
+    TabletOpResult {
+        table_name: tablet_op.table_name.clone(),
+        status: TabletsRequestStatus::Failed.into(),
+        op_result: tablet_op_result,
     }
 }
