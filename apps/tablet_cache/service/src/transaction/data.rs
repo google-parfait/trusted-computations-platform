@@ -34,7 +34,7 @@ use tcp_tablet_store_service::apps::tablet_store::service::TabletMetadata;
 
 use crate::apps::tablet_cache::service::{
     LoadTabletRequest, LoadTabletResponse, StoreTabletRequest, StoreTabletResponse,
-    TabletDataStorageStatus,
+    TabletDataCacheConfig, TabletDataStorageStatus,
 };
 
 use super::result::{create_eventual_result, create_result_from_error, ResultHandle, ResultSource};
@@ -60,7 +60,7 @@ pub enum TabletDataCacheOutMessage {
 // to store tablets for various tables.
 pub trait TabletDataCache<T> {
     // Initializes tablet data cache.
-    fn init(&mut self, logger: Logger);
+    fn init(&mut self, logger: Logger, config: TabletDataCacheConfig);
 
     // Advances internal state machine of the tablet data cache.
     fn make_progress(&mut self, instant: u64);
@@ -240,7 +240,7 @@ pub struct DefaultTabletDataCache<T> {
     logger: Logger,
     correlation_counter: u64,
     batch_counter: u64,
-    cache_capacity: u64,
+    config: TabletDataCacheConfig,
     tablet_serializer: Box<dyn TabletDataSerializer<T>>,
     tablet_cache_policy: Box<dyn TabletDataCachePolicy<T>>,
     tablet_cache_entries: HashMap<TabletCacheKey, TabletCacheEntry<T>>,
@@ -254,7 +254,6 @@ impl<T> DefaultTabletDataCache<T> {
     // a soft limit. Tablet data cache may grow larger temporarily than requested capacity.
     pub fn create(
         correlation_counter: u64,
-        cache_capacity: u64,
         tablet_serializer: Box<dyn TabletDataSerializer<T>>,
         tablet_cache_policy: Box<dyn TabletDataCachePolicy<T>>,
     ) -> Self {
@@ -262,7 +261,7 @@ impl<T> DefaultTabletDataCache<T> {
             logger: create_logger(),
             correlation_counter,
             batch_counter: 0,
-            cache_capacity,
+            config: TabletDataCacheConfig::default(),
             tablet_serializer,
             tablet_cache_policy,
             tablet_cache_entries: HashMap::new(),
@@ -326,8 +325,9 @@ impl<T> DefaultTabletDataCache<T> {
 }
 
 impl<T> TabletDataCache<T> for DefaultTabletDataCache<T> {
-    fn init(&mut self, logger: Logger) {
+    fn init(&mut self, logger: Logger, config: TabletDataCacheConfig) {
         self.logger = logger;
+        self.config = config;
     }
 
     fn make_progress(&mut self, instant: u64) {
@@ -359,10 +359,11 @@ impl<T> TabletDataCache<T> for DefaultTabletDataCache<T> {
         }
 
         // Consult with tablet cache policy and evict entries from tablet cache.
-        for evicted_tablet_cache_key in
-            self.tablet_cache_policy
-                .evict(instant, self.cache_capacity, &self.tablet_cache_entries)
-        {
+        for evicted_tablet_cache_key in self.tablet_cache_policy.evict(
+            instant,
+            self.config.tablet_cache_capacity,
+            &self.tablet_cache_entries,
+        ) {
             self.tablet_cache_entries.remove(&evicted_tablet_cache_key);
         }
     }
@@ -851,12 +852,20 @@ mod tests {
     const TABLET_BLOB_URI_2: &'static str = "blob 2";
 
     fn create_tablet_data_cache() -> DefaultTabletDataCache<Bytes> {
-        DefaultTabletDataCache::create(
+        let mut cache = DefaultTabletDataCache::create(
             0,
-            DATA_CACHE_CAPACITY,
             Box::new(BytesTabletDataSerializer {}),
             Box::new(DefaultTabletDataCachePolicy::new()),
-        )
+        );
+
+        cache.init(
+            create_logger(),
+            TabletDataCacheConfig {
+                tablet_cache_capacity: DATA_CACHE_CAPACITY,
+            },
+        );
+
+        cache
     }
 
     fn create_tablet_metadata(

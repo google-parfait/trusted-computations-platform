@@ -96,7 +96,7 @@ impl<T: transaction::TabletTransactionManager<Bytes>, S: store::KeyValueStore> A
 
         let transaction_manager_logger = self.get_context().logger().new(o!("type" => "manager"));
         self.transaction_manager
-            .init(config.tablet_cache_capacity, transaction_manager_logger);
+            .init(transaction_manager_logger, config);
 
         debug!(self.get_context().logger(), "Initialized");
 

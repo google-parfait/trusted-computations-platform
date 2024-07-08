@@ -24,7 +24,7 @@ use tcp_tablet_store_service::apps::tablet_store::service::{
     TabletsRequestStatus, TabletsResponse, UpdateTabletResult,
 };
 
-use crate::apps::tablet_cache::service::ExecuteTabletOpsRequest;
+use crate::apps::tablet_cache::service::{ExecuteTabletOpsRequest, TabletCacheConfig};
 
 use super::{
     coordinator::{
@@ -66,8 +66,8 @@ impl<T> DefaultTabletTransactionManager<T> {
 }
 
 impl<T: 'static> TabletTransactionManager<T> for DefaultTabletTransactionManager<T> {
-    fn init(&mut self, capacity: u64, logger: Logger) {
-        self.core.borrow_mut().init(capacity, logger);
+    fn init(&mut self, logger: Logger, config: TabletCacheConfig) {
+        self.core.borrow_mut().init(logger, config);
     }
 
     fn make_progress(&mut self, instant: u64) {
@@ -186,14 +186,16 @@ impl<T> TabletTransactionManagerCore<T> {
         }
     }
 
-    fn init(&mut self, _capacity: u64, logger: Logger) {
+    fn init(&mut self, logger: Logger, config: TabletCacheConfig) {
         self.logger = logger;
 
         let data_cache_logger = self.logger.new(o!("type" => "data"));
-        self.data_cache.init(data_cache_logger);
+        self.data_cache
+            .init(data_cache_logger, config.data_cache_config.unwrap());
 
         let metadata_cache_logger = self.logger.new(o!("type" => "metadata"));
-        self.metadata_cache.init(metadata_cache_logger);
+        self.metadata_cache
+            .init(metadata_cache_logger, config.metadata_cache_config.unwrap());
 
         let transaction_coordinator_logger = self.logger.new(o!("type" => "coordinator"));
         self.transaction_coordinator

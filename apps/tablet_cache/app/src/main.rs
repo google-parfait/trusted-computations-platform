@@ -63,11 +63,9 @@ fn run_server() -> ! {
             )),
             Box::new(DefaultTabletMetadataCache::create(
                 METADATA_CACHE_CORRELATION_COUNTER,
-                &HashMap::new(),
             )),
             Box::new(DefaultTabletDataCache::create(
                 DATA_CACHE_CORRELATION_COUNTER,
-                1024 * 1024 * 1024 * 16,
                 Box::new(BytesTabletDataSerializer {}),
                 Box::new(DefaultTabletDataCachePolicy::new()),
             )),

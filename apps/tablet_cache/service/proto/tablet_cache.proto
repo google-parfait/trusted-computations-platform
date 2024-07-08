@@ -138,10 +138,36 @@ message GetKeyResponse {
   bytes value = 2;
 }
 
-// Configuration for the Tablet Cache.
-message TabletCacheConfig {
+// Configuration for the metadata cache for a particular table.
+message TableMetadataCacheConfig {
+  // The name of the table configured.
+  string table_name = 1;
+
+  // The size of the consistent hashing ring to use when maintaining
+  // table metadata cache.
+  uint32 table_region_size = 2;
+}
+
+// Configuration for the Tablet Metadata Cache.
+message TabletMetadataCacheConfig {
+  // Configuration for the individual tables maintained by the
+  // Tablet Metadata Cache.
+  repeated TableMetadataCacheConfig table_configs = 1;
+}
+
+// Configuration for the tablet data cache.
+message TabletDataCacheConfig {
   // Maximum size in bytes of the tablet cache capacity.
   uint64 tablet_cache_capacity = 1;
+}
+
+// Configuration for the Tablet Cache.
+message TabletCacheConfig {
+  // Configuration for the Tablet Data Cache.
+  TabletDataCacheConfig data_cache_config = 1;
+
+  // Configuration for the Tablet Metadata Cache.
+  TabletMetadataCacheConfig metadata_cache_config = 2;
 }
 
 // Content of a single tablet.

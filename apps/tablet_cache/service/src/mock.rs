@@ -73,7 +73,7 @@ mock! {
     }
 
     impl<T> TabletDataCache<T> for TabletDataCache<T> {
-        fn init(&mut self, logger: Logger);
+        fn init(&mut self, logger: Logger, config: TabletDataCacheConfig);
 
         fn make_progress(&mut self, instant: u64);
 
@@ -98,7 +98,7 @@ mock! {
     }
 
     impl TabletMetadataCache for TabletMetadataCache {
-        fn init(&mut self, logger: Logger);
+        fn init(&mut self, logger: Logger, config: TabletMetadataCacheConfig);
 
         fn make_progress(&mut self, instant: u64);
 

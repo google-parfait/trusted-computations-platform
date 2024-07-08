@@ -14,6 +14,7 @@
 
 use core::mem;
 
+use crate::apps::tablet_cache::service::{TableMetadataCacheConfig, TabletMetadataCacheConfig};
 use alloc::{
     collections::BTreeSet,
     fmt::format,
@@ -56,7 +57,7 @@ pub enum TabletMetadataCacheOutMessage {
 // of tablets from Tablet Store to resolve metadata of unknown tablets.
 pub trait TabletMetadataCache {
     // Initializes tablet metadata cache.
-    fn init(&mut self, logger: Logger);
+    fn init(&mut self, logger: Logger, config: TabletMetadataCacheConfig);
 
     // Advances internal state machine of the tablet metadata cache.
     fn make_progress(&mut self, instant: u64);
@@ -89,25 +90,20 @@ pub struct DefaultTabletMetadataCache {
     logger: Logger,
     correlation_counter: u64,
     resolve_request_counter: u64,
+    config: TabletMetadataCacheConfig,
     tables: HashMap<String, TableMetadata>,
     resolve_requests: HashMap<u64, TabletResolve>,
     out_messages: Vec<TabletMetadataCacheOutMessage>,
 }
 
 impl DefaultTabletMetadataCache {
-    pub fn create(correlation_counter: u64, table_configs: &HashMap<String, u32>) -> Self {
-        let mut tables = HashMap::new();
-        for (table_name, region_size) in table_configs {
-            tables.insert(
-                table_name.clone(),
-                TableMetadata::create(table_name.clone(), *region_size),
-            );
-        }
+    pub fn create(correlation_counter: u64) -> Self {
         Self {
             logger: create_logger(),
             correlation_counter,
             resolve_request_counter: 1,
-            tables,
+            config: TabletMetadataCacheConfig::default(),
+            tables: HashMap::new(),
             resolve_requests: HashMap::new(),
             out_messages: Vec::new(),
         }
@@ -115,8 +111,19 @@ impl DefaultTabletMetadataCache {
 }
 
 impl TabletMetadataCache for DefaultTabletMetadataCache {
-    fn init(&mut self, logger: Logger) {
+    fn init(&mut self, logger: Logger, config: TabletMetadataCacheConfig) {
         self.logger = logger;
+        self.config = config;
+
+        for table_config in &self.config.table_configs {
+            self.tables.insert(
+                table_config.table_name.clone(),
+                TableMetadata::create(
+                    table_config.table_name.clone(),
+                    table_config.table_region_size,
+                ),
+            );
+        }
     }
 
     fn make_progress(&mut self, _instant: u64) {
@@ -675,9 +682,19 @@ mod tests {
         table_name: String,
         region_size: u32,
     ) -> DefaultTabletMetadataCache {
-        let mut table_configs = HashMap::new();
-        table_configs.insert(table_name, region_size);
-        DefaultTabletMetadataCache::create(0, &table_configs)
+        let mut cache = DefaultTabletMetadataCache::create(0);
+
+        cache.init(
+            create_logger(),
+            TabletMetadataCacheConfig {
+                table_configs: vec![TableMetadataCacheConfig {
+                    table_name,
+                    table_region_size: region_size,
+                }],
+            },
+        );
+
+        cache
     }
 
     fn create_table_query(query_id: u64, table_name: String, key_hashes: Vec<u32>) -> TableQuery {
