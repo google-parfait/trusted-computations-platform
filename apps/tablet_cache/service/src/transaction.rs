@@ -31,8 +31,8 @@ use tcp_tablet_store_service::apps::tablet_store::service::{
 
 use crate::apps::tablet_cache::service::{
     ExecuteTabletOpsError, ExecuteTabletOpsRequest, ExecuteTabletOpsResponse, LoadTabletRequest,
-    LoadTabletResponse, StoreTabletRequest, StoreTabletResponse, TabletCacheConfig,
-    TabletDataStorageStatus,
+    LoadTabletResponse, StoreTabletRequest, StoreTabletResponse, TabletDataStorageStatus,
+    TransactionManagerConfig,
 };
 use hashbrown::{HashMap, HashSet};
 
@@ -79,7 +79,7 @@ pub enum OutMessage {
 // it can be a protobuf message with a oneof representing specific tables.
 pub trait TabletTransactionManager<T>: TabletTransactionContext<T> {
     // Initializes transaction manager with tablet cache config.
-    fn init(&mut self, logger: Logger, config: TabletCacheConfig);
+    fn init(&mut self, logger: Logger, config: TransactionManagerConfig);
 
     // Advances internal state machine of the transaction manager. Essentially
     // it tries to make progress on all pending tablet resolutions and transactions.

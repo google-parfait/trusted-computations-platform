@@ -24,7 +24,7 @@ use tcp_tablet_store_service::apps::tablet_store::service::{
     TabletsRequestStatus, TabletsResponse, UpdateTabletResult,
 };
 
-use crate::apps::tablet_cache::service::{ExecuteTabletOpsRequest, TabletCacheConfig};
+use crate::apps::tablet_cache::service::{ExecuteTabletOpsRequest, TransactionManagerConfig};
 
 use super::{
     coordinator::{
@@ -66,7 +66,7 @@ impl<T> DefaultTabletTransactionManager<T> {
 }
 
 impl<T: 'static> TabletTransactionManager<T> for DefaultTabletTransactionManager<T> {
-    fn init(&mut self, logger: Logger, config: TabletCacheConfig) {
+    fn init(&mut self, logger: Logger, config: TransactionManagerConfig) {
         self.core.borrow_mut().init(logger, config);
     }
 
@@ -186,7 +186,7 @@ impl<T> TabletTransactionManagerCore<T> {
         }
     }
 
-    fn init(&mut self, logger: Logger, config: TabletCacheConfig) {
+    fn init(&mut self, logger: Logger, config: TransactionManagerConfig) {
         self.logger = logger;
 
         let data_cache_logger = self.logger.new(o!("type" => "data"));

@@ -70,7 +70,7 @@ fn run_server() -> ! {
                 Box::new(DefaultTabletDataCachePolicy::new()),
             )),
         ),
-        SimpleKeyValueStore::create("map".to_string(), 100, 100),
+        SimpleKeyValueStore::create(),
     ));
     let server = EndpointServiceServer::new(service);
     start_blocking_server(

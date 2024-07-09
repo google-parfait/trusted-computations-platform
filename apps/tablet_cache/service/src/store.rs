@@ -26,7 +26,7 @@ use tcp_runtime::logger::log::create_logger;
 
 use crate::{
     apps::tablet_cache::service::{
-        GetKeyRequest, GetKeyResponse, PutKeyRequest, PutKeyResponse, TabletContents,
+        GetKeyRequest, GetKeyResponse, PutKeyRequest, PutKeyResponse, StoreConfig, TabletContents,
     },
     transaction,
 };
@@ -58,7 +58,7 @@ pub enum KeyValueResponse {
 // will produce responses.
 pub trait KeyValueStore {
     // Initializes key value store.
-    fn init(&mut self, logger: Logger);
+    fn init(&mut self, logger: Logger, config: StoreConfig);
 
     // Periodically called with the current instant and reference to the transaction
     // context. Key value store may start a new transaction after enough consumer
@@ -96,30 +96,17 @@ pub struct SimpleKeyValueStore {
 }
 
 impl SimpleKeyValueStore {
-    // Creates key value store with configured single table, minimum
-    // number of requests to wait before trying to resolve which tablets
-    // they touch, minimum number of requests to wait on a single tablet
-    // before processing them.
-    pub fn create(
-        table_name: String,
-        min_pending_before_resolve: usize,
-        min_pending_before_process: usize,
-    ) -> SimpleKeyValueStore {
+    pub fn create() -> SimpleKeyValueStore {
         SimpleKeyValueStore {
-            core: Rc::new(RefCell::new(SimpleKeyValueStoreCore::new(
-                create_logger(),
-                table_name,
-                min_pending_before_resolve,
-                min_pending_before_process,
-            ))),
+            core: Rc::new(RefCell::new(SimpleKeyValueStoreCore::new())),
         }
     }
 }
 
 impl KeyValueStore for SimpleKeyValueStore {
-    fn init(&mut self, logger: Logger) {
+    fn init(&mut self, logger: Logger, config: StoreConfig) {
         let mut core = self.core.borrow_mut();
-        core.logger = logger;
+        core.init(logger, config);
     }
 
     fn make_progress(
@@ -178,25 +165,31 @@ struct SimpleKeyValueStoreCore {
     tablet_trackers: HashMap<u32, TabletTracker>,
     transaction_trackers: HashMap<u64, TransactionTracker>,
     responses: Vec<KeyValueResponse>,
-    min_pending_before_process: usize,
+    config: StoreConfig,
 }
 
 impl SimpleKeyValueStoreCore {
-    fn new(
-        logger: Logger,
-        table_name: String,
-        min_pending_before_resolve: usize,
-        min_pending_before_process: usize,
-    ) -> SimpleKeyValueStoreCore {
+    fn new() -> SimpleKeyValueStoreCore {
         SimpleKeyValueStoreCore {
-            logger,
-            table_accessor: TableAccessor::create(table_name),
-            request_tracker: RequestTracker::create(min_pending_before_resolve),
+            logger: create_logger(),
+            table_accessor: TableAccessor::default(),
+            request_tracker: RequestTracker::default(),
             tablet_trackers: HashMap::new(),
             transaction_trackers: HashMap::new(),
             responses: Vec::new(),
-            min_pending_before_process,
+            config: StoreConfig::default(),
         }
+    }
+
+    // Initializes key value store with configured single table, minimum
+    // number of requests to wait before trying to resolve which tablets
+    // they touch, minimum number of requests to wait on a single tablet
+    // before processing them.
+    fn init(&mut self, logger: Logger, config: StoreConfig) {
+        self.logger = logger;
+        self.table_accessor = TableAccessor::create(config.table_name.clone());
+        self.request_tracker =
+            RequestTracker::create(config.min_pending_before_resolve.try_into().unwrap());
     }
 
     fn handle_query_resolve(
@@ -209,7 +202,9 @@ impl SimpleKeyValueStoreCore {
             let tablet_tracker = self
                 .tablet_trackers
                 .entry(tablet_descriptor.get_id())
-                .or_insert(TabletTracker::create(self.min_pending_before_process));
+                .or_insert(TabletTracker::create(
+                    self.config.min_pending_before_process.try_into().unwrap(),
+                ));
             // Move resolved requests as pending to the tablet they affect.
             tablet_tracker.append_pending_requests(
                 self.request_tracker
@@ -333,6 +328,7 @@ impl SimpleKeyValueStoreCore {
 
 // Encapsulates logic of how keys are hashed into consistent hashing
 // ring and how table query ids are generated.
+#[derive(Default)]
 struct TableAccessor {
     table_name: String,
     query_counter: u64,
@@ -363,6 +359,7 @@ impl TableAccessor {
 }
 
 // Tracks requests that are not associated with any tablet yet.
+#[derive(Default)]
 struct RequestTracker {
     min_pending: usize,
     pending_requests: Vec<KeyValueRequest>,
@@ -671,7 +668,7 @@ mod tests {
     use tcp_tablet_store_service::apps::tablet_store::service::TabletMetadata;
 
     use super::*;
-    use crate::mock::*;
+    use crate::{apps::tablet_cache::service::TabletCacheConfig, mock::*};
     use mockall::predicate::*;
 
     const TABLE_NAME: &'static str = "map";
@@ -690,14 +687,21 @@ mod tests {
     const VALUE_2: &'static str = "value 2";
 
     fn create_store(
-        min_pending_before_resolve: usize,
-        min_pending_before_process: usize,
+        min_pending_before_resolve: u32,
+        min_pending_before_process: u32,
     ) -> SimpleKeyValueStore {
-        SimpleKeyValueStore::create(
-            TABLE_NAME.to_string(),
-            min_pending_before_resolve,
-            min_pending_before_process,
-        )
+        let mut store = SimpleKeyValueStore::create();
+
+        store.init(
+            create_logger(),
+            StoreConfig {
+                table_name: TABLE_NAME.to_string(),
+                min_pending_before_resolve,
+                min_pending_before_process,
+            },
+        );
+
+        store
     }
 
     fn create_table_accessor() -> TableAccessor {

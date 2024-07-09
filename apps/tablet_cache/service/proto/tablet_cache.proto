@@ -161,13 +161,40 @@ message TabletDataCacheConfig {
   uint64 tablet_cache_capacity = 1;
 }
 
-// Configuration for the Tablet Cache.
-message TabletCacheConfig {
+// Configuration for the key value store implemented
+// on top of tablet store and tablet cache.
+message StoreConfig {
+  // The name of the table where keys and values are stored.
+  string table_name = 1;
+
+  // Minimum pending key value store requests before resolving
+  // which tablets are affected by pending requests.``
+  uint32 min_pending_before_resolve = 2;
+
+  // Minimum pending key value store requests before starting
+  // a new transaction.
+  uint32 min_pending_before_process = 3;
+}
+
+// Configuration for the Transaction Manager backing the Key Value Store.
+message TransactionManagerConfig {
   // Configuration for the Tablet Data Cache.
   TabletDataCacheConfig data_cache_config = 1;
 
   // Configuration for the Tablet Metadata Cache.
   TabletMetadataCacheConfig metadata_cache_config = 2;
+}
+
+// Joint configuration of the Key Value Store and underlying Transaction
+// Manager.
+message TabletCacheConfig {
+  // Configuration for Transaction Manager that is responsible for
+  // executing batches of key value requests as a single transaction.
+  TransactionManagerConfig transaction_manager_config = 1;
+
+  // Configuration for Key Value Store batching multiple independent
+  // key value requests into a single transaction to ammortize costs.
+  StoreConfig store_config = 2;
 }
 
 // Content of a single tablet.

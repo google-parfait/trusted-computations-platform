@@ -15,7 +15,7 @@
 use crate::{
     apps::tablet_cache::service::{
         tablet_cache_in_message::*, tablet_cache_out_message::OutMsg, TabletCacheConfig,
-        TabletCacheInMessage, TabletCacheOutMessage,
+        TabletCacheInMessage, TabletCacheOutMessage, TransactionManagerConfig,
     },
     store, transaction,
 };
@@ -92,11 +92,14 @@ impl<T: transaction::TabletTransactionManager<Bytes>, S: store::KeyValueStore> A
             .map_err(|_| ActorError::ConfigLoading)?;
 
         let key_value_store_logger = self.get_context().logger().new(o!("type" => "store"));
-        self.key_value_store.init(key_value_store_logger);
+        self.key_value_store
+            .init(key_value_store_logger, config.store_config.unwrap());
 
         let transaction_manager_logger = self.get_context().logger().new(o!("type" => "manager"));
-        self.transaction_manager
-            .init(transaction_manager_logger, config);
+        self.transaction_manager.init(
+            transaction_manager_logger,
+            config.transaction_manager_config.unwrap(),
+        );
 
         debug!(self.get_context().logger(), "Initialized");
 
