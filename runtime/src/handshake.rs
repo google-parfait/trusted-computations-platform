@@ -16,7 +16,6 @@ use crate::{
     attestation::{AttestationProvider, ClientAttestation, ServerAttestation},
     encryptor::DefaultEncryptor,
     encryptor::Encryptor,
-    logger::log::create_logger,
     oak_handshaker::{OakClientHandshaker, OakHandshakerFactory, OakServerHandshaker},
 };
 use alloc::{boxed::Box, format};
@@ -56,6 +55,7 @@ pub trait HandshakeSessionProvider {
         self_replica_id: u64,
         peer_replica_id: u64,
         role: Role,
+        logger: Logger,
     ) -> Box<dyn HandshakeSession>;
 }
 
@@ -104,17 +104,18 @@ impl HandshakeSessionProvider for DefaultHandshakeSessionProvider {
         self_replica_id: u64,
         peer_replica_id: u64,
         role: Role,
+        logger: Logger,
     ) -> Box<dyn HandshakeSession> {
         match role {
             Role::Initiator => Box::new(ClientHandshakeSession::new(
-                create_logger(),
+                logger,
                 self_replica_id,
                 peer_replica_id,
                 self.attestation_provider.get_client_attestation(),
                 self.oak_handshaker_factory.get_client_oak_handshaker(),
             )),
             Role::Recipient => Box::new(ServerHandshakeSession::new(
-                create_logger(),
+                logger,
                 self_replica_id,
                 peer_replica_id,
                 self.attestation_provider.get_server_attestation(),
@@ -273,6 +274,12 @@ impl HandshakeSession for ClientHandshakeSession {
                     && let Some(RecipientResponse(ref recipient_response)) = noise_protocol.message
                     && let Some(AttestResponse(ref attest_response)) = recipient_response.message
                 {
+                    debug!(
+                        self.logger,
+                        "ClientHandshakeSession: Replica {} received AttestResponse from replica {}",
+                        self.self_replica_id,
+                        self.peer_replica_id
+                    );
                     self.handle_attest_response(attest_response)
                         .inspect_err(|err| self.transition_to_failed(err))?;
                     self.state = State::KeyExchange;
@@ -292,6 +299,12 @@ impl HandshakeSession for ClientHandshakeSession {
                     && let Some(HandshakeResponse(ref handshake_response)) =
                         recipient_response.message
                 {
+                    debug!(
+                        self.logger,
+                        "ClientHandshakeSession: Replica {} received KeyExchange response from replica {}",
+                        self.self_replica_id,
+                        self.peer_replica_id
+                    );
                     self.handle_handshake_response(handshake_response)
                         .inspect_err(|err| self.transition_to_failed(err))?;
                     self.state = State::Completed;
@@ -322,6 +335,12 @@ impl HandshakeSession for ClientHandshakeSession {
     fn take_out_message(&mut self) -> Result<Option<SecureChannelHandshake>> {
         return match self.state {
             State::Unknown => {
+                debug!(
+                    self.logger,
+                    "ClientHandshakeSession: Replica {} initiating AttestRequest with peer {}",
+                    self.self_replica_id,
+                    self.peer_replica_id
+                );
                 let attest_request = self
                     .get_attest_request()
                     .inspect_err(|err| self.transition_to_failed(err))?;
@@ -336,6 +355,12 @@ impl HandshakeSession for ClientHandshakeSession {
                 Ok(None)
             }
             State::KeyExchange => {
+                debug!(
+                    self.logger,
+                    "ClientHandshakeSession: Replica {} initiating KeyExchange with peer {}",
+                    self.self_replica_id,
+                    self.peer_replica_id
+                );
                 let handshake_request = self
                     .get_handshake_request()
                     .inspect_err(|err| self.transition_to_failed(err))?;
@@ -499,6 +524,12 @@ impl HandshakeSession for ServerHandshakeSession {
                     && let Some(InitiatorRequest(ref initiator_request)) = noise_protocol.message
                     && let Some(AttestRequest(ref attest_request)) = initiator_request.message
                 {
+                    debug!(
+                        self.logger,
+                        "ServerHandshakeSession: Replica {} received AttestRequest from peer {}",
+                        self.self_replica_id,
+                        self.peer_replica_id
+                    );
                     self.handle_attest_request(attest_request)
                         .inspect_err(|err| self.transition_to_failed(err))?;
                     self.state = State::Attesting;
@@ -525,6 +556,12 @@ impl HandshakeSession for ServerHandshakeSession {
                     && let Some(InitiatorRequest(ref initiator_request)) = noise_protocol.message
                     && let Some(HandshakeRequest(ref handshake_request)) = initiator_request.message
                 {
+                    debug!(
+                        self.logger,
+                        "ServerHandshakeSession: Replica {} received KeyExchange request from peer {}",
+                        self.self_replica_id,
+                        self.peer_replica_id
+                    );
                     self.handle_handshake_request(handshake_request)
                         .inspect_err(|err| self.transition_to_failed(err))
                 } else {
@@ -557,6 +594,12 @@ impl HandshakeSession for ServerHandshakeSession {
                 Ok(None)
             }
             State::Attesting => {
+                debug!(
+                    self.logger,
+                    "ServerHandshakeSession: Replica {} responding with AttestResponse to peer {}",
+                    self.self_replica_id,
+                    self.peer_replica_id
+                );
                 let attest_response = self
                     .get_attest_response()
                     .inspect_err(|err| self.transition_to_failed(err))?;
@@ -566,6 +609,12 @@ impl HandshakeSession for ServerHandshakeSession {
                 Ok(Some(attest_response))
             }
             State::KeyExchange => {
+                debug!(
+                    self.logger,
+                    "ServerHandshakeSession: Replica {} responding with KeyExchange response to peer {}",
+                    self.self_replica_id,
+                    self.peer_replica_id
+                );
                 let handshake_response = self
                     .get_handshake_response()
                     .inspect_err(|err| self.transition_to_failed(err))?;
@@ -1031,8 +1080,12 @@ mod test {
             Box::new(mock_attestation_provider),
             Box::new(mock_oak_handshaker_factory),
         );
-        let mut client_handshake_session =
-            handshake_session_provider.get(self_replica_id, peer_replica_id, Role::Initiator);
+        let mut client_handshake_session = handshake_session_provider.get(
+            self_replica_id,
+            peer_replica_id,
+            Role::Initiator,
+            create_logger(),
+        );
 
         assert_eq!(
             Some(attest_request),
@@ -1330,8 +1383,12 @@ mod test {
             Box::new(mock_attestation_provider),
             Box::new(mock_oak_handshaker_factory),
         );
-        let mut server_handshake_session =
-            handshake_session_provider.get(self_replica_id, peer_replica_id, Role::Recipient);
+        let mut server_handshake_session = handshake_session_provider.get(
+            self_replica_id,
+            peer_replica_id,
+            Role::Recipient,
+            create_logger(),
+        );
 
         assert_eq!(None, server_handshake_session.take_out_message().unwrap());
         assert_eq!(

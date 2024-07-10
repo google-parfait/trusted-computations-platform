@@ -723,7 +723,8 @@ impl<
             )?;
         }
 
-        self.communication.init(self.id);
+        self.communication
+            .init(self.id, self.logger.new(o!("type" => "communication")));
 
         self.driver_state = DriverState::Started;
 
@@ -1946,7 +1947,7 @@ mod test {
         fn expect_init(mut self, replica_id: u64) -> CommunicationBuilder {
             self.mock_communication_module
                 .expect_init()
-                .with(eq(replica_id))
+                .with(eq(replica_id), always())
                 .once()
                 .return_const(());
 

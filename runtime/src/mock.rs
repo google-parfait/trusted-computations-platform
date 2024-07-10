@@ -255,7 +255,7 @@ mock! {
     }
 
     impl CommunicationModule for CommunicationModule {
-        fn init(&mut self, replica_id: u64);
+        fn init(&mut self, replica_id: u64, logger: Logger);
 
         fn process_out_message(&mut self, message: out_message::Msg) -> Result<(), PalError>;
 
@@ -280,6 +280,7 @@ mock! {
             self_replica_id: u64,
             peer_replica_id: u64,
             role: Role,
+            logger: Logger,
         ) -> Box<dyn HandshakeSession>;
     }
 }

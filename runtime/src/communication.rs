@@ -25,7 +25,7 @@ use alloc::vec::Vec;
 use alloc::{boxed::Box, vec};
 use anyhow::anyhow;
 use hashbrown::HashMap;
-use slog::{warn, Logger};
+use slog::{o, warn, Logger};
 use tcp_proto::runtime::endpoint::*;
 
 /// Responsible for managing communication between raft replicas such as
@@ -36,7 +36,7 @@ pub trait CommunicationModule {
     /// Initializes the ReplicaCommunicationManager for the given replica id.
     ///
     /// The ReplicaCommunicationManager must be initialized before first use.
-    fn init(&mut self, replica_id: u64);
+    fn init(&mut self, replica_id: u64, logger: Logger);
 
     /// Process an outgoing message to a replica.
     ///
@@ -112,8 +112,9 @@ impl DefaultCommunicationModule {
 }
 
 impl CommunicationModule for DefaultCommunicationModule {
-    fn init(&mut self, id: u64) {
-        self.replica_id = id
+    fn init(&mut self, id: u64, logger: Logger) {
+        self.replica_id = id;
+        self.logger = logger;
     }
 
     fn process_out_message(&mut self, message: out_message::Msg) -> Result<(), PalError> {
@@ -144,7 +145,12 @@ impl CommunicationModule for DefaultCommunicationModule {
         let replica_state = self.replicas.entry(peer_replica_id).or_insert_with(|| {
             CommunicationState::new(
                 logger.clone(),
-                handshake_provider.get(replica_id, peer_replica_id, Role::Initiator),
+                handshake_provider.get(
+                    replica_id,
+                    peer_replica_id,
+                    Role::Initiator,
+                    logger.new(o!("type" => "handshake")),
+                ),
             )
         });
 
@@ -195,7 +201,12 @@ impl CommunicationModule for DefaultCommunicationModule {
         let replica_state = self.replicas.entry(peer_replica_id).or_insert_with(|| {
             CommunicationState::new(
                 logger.clone(),
-                handshake_provider.get(replica_id, peer_replica_id, Role::Recipient),
+                handshake_provider.get(
+                    replica_id,
+                    peer_replica_id,
+                    Role::Recipient,
+                    logger.new(o!("type" => "handshake")),
+                ),
             )
         });
 
@@ -465,7 +476,8 @@ impl CommunicationState {
 mod test {
     extern crate mockall;
 
-    use self::mockall::predicate::eq;
+    use self::mockall::predicate::{always, eq};
+    use crate::logger::log::create_logger;
     use crate::{
         communication::{CommunicationModule, DefaultCommunicationModule},
         platform::PalError,
@@ -597,9 +609,9 @@ mod test {
         ) -> HandshakeSessionProviderBuilder {
             self.mock_handshake_session_provider
                 .expect_get()
-                .with(eq(self_replica_id), eq(peer_replica_id), eq(role))
+                .with(eq(self_replica_id), eq(peer_replica_id), eq(role), always())
                 .once()
-                .return_once(move |_, _, _| Box::new(mock_handshake_session));
+                .return_once(move |_, _, _, _| Box::new(mock_handshake_session));
             self
         }
 
@@ -750,7 +762,7 @@ mod test {
             ))
         );
 
-        communication_module.init(self_replica_id);
+        communication_module.init(self_replica_id, create_logger());
 
         assert_eq!(
             Ok(()),
@@ -887,7 +899,7 @@ mod test {
             ))
         );
 
-        communication_module.init(self_replica_id);
+        communication_module.init(self_replica_id, create_logger());
 
         assert_eq!(
             Ok(None),
@@ -1024,8 +1036,8 @@ mod test {
         let mut communication_module_b =
             DefaultCommunicationModule::new(Box::new(mock_handshake_session_provider_b));
 
-        communication_module_a.init(peer_replica_id_a);
-        communication_module_b.init(peer_replica_id_b);
+        communication_module_a.init(peer_replica_id_a, create_logger());
+        communication_module_b.init(peer_replica_id_b, create_logger());
 
         // Handshake initiated from a to b.
         assert_eq!(
@@ -1188,8 +1200,8 @@ mod test {
         let mut communication_module_b =
             DefaultCommunicationModule::new(Box::new(mock_handshake_session_provider_b));
 
-        communication_module_a.init(peer_replica_id_a);
-        communication_module_b.init(peer_replica_id_b);
+        communication_module_a.init(peer_replica_id_a, create_logger());
+        communication_module_b.init(peer_replica_id_b, create_logger());
 
         // First round trip of handshake messages.
         assert_eq!(
@@ -1327,8 +1339,8 @@ mod test {
         let deliver_system_message_b_to_a =
             create_deliver_system_message(peer_replica_id_b, peer_replica_id_a);
 
-        communication_module_a.init(peer_replica_id_a);
-        communication_module_b.init(peer_replica_id_b);
+        communication_module_a.init(peer_replica_id_a, create_logger());
+        communication_module_b.init(peer_replica_id_b, create_logger());
 
         assert_eq!(
             Ok(()),
@@ -1422,7 +1434,7 @@ mod test {
         let mut communication_module_a =
             DefaultCommunicationModule::new(Box::new(mock_handshake_session_provider_a));
 
-        communication_module_a.init(peer_replica_id_a);
+        communication_module_a.init(peer_replica_id_a, create_logger());
 
         // Handshake initiated from a to b.
         assert_eq!(
