@@ -25,7 +25,7 @@ use crate::util::raft::{
 };
 use alloc::boxed::Box;
 use alloc::rc::Rc;
-use alloc::vec::Vec;
+use alloc::{vec, vec::Vec};
 use core::convert::TryFrom;
 use core::{
     cell::{RefCell, RefMut},
@@ -270,15 +270,37 @@ impl<
                 PalError::Raft
             })?;
 
+        // Initialize raft progress to match the current state of raft.
+        // Note that we have non zero applied index only if the node has
+        // been initialized as leader.
+        if leader {
+            self.raft_progress = RaftProgress {
+                applied_index: 1,
+                config_state: RaftConfigState {
+                    voters: vec![self.id],
+                    ..Default::default()
+                },
+            };
+        }
+
         self.tick_instant = self.instant;
         // No need to initially report the state of the cluster, only after the changes.
-        self.prev_raft_state = self.raft.state();
+        self.prev_raft_state = self.get_raft_state();
 
         Ok(())
     }
 
     fn check_raft_leadership(&self) -> bool {
         self.raft.leader()
+    }
+
+    fn get_raft_state(&self) -> RaftState {
+        let mut raft_state = self.raft.state();
+        // Report committed cluster config only if current replica is the leader.
+        if raft_state.leader_replica_id == self.id {
+            raft_state.committed_cluster_config = self.raft_progress.config_state.voters.clone();
+        }
+        raft_state
     }
 
     fn make_raft_step(
@@ -614,7 +636,7 @@ impl<
     }
 
     fn stash_leader_state(&mut self) {
-        self.raft_state = self.raft.state();
+        self.raft_state = self.get_raft_state();
 
         if self.prev_raft_state == self.raft_state {
             return;
@@ -2663,7 +2685,7 @@ mod test {
         let init_snapshot = Bytes::from(vec![2, 3, 4]);
         let peer_id = 2;
 
-        let raft_state = create_default_raft_state(node_id);
+        let raft_state = RaftState::default();
 
         let message_a = create_raft_message(node_id, peer_id, RaftMessageType::MsgBeat);
         let messages = vec![message_a.clone()];
@@ -2784,7 +2806,7 @@ mod test {
                 instant,
                 Some(create_start_replica_request(
                     raft_config.clone(),
-                    true,
+                    false,
                     node_id,
                     Bytes::new()
                 )),
