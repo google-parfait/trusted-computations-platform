@@ -21,7 +21,7 @@ use self::mockall::mock;
 use alloc::boxed::Box;
 use alloc::vec::Vec;
 use attestation::{Attestation, AttestationProvider, ClientAttestation, ServerAttestation};
-use communication::CommunicationModule;
+use communication::{CommunicationConfig, CommunicationModule};
 use consensus;
 use consensus::{Raft, RaftLightReady, RaftReady, Store};
 use encryptor::Encryptor;
@@ -255,7 +255,7 @@ mock! {
     }
 
     impl CommunicationModule for CommunicationModule {
-        fn init(&mut self, replica_id: u64, logger: Logger);
+        fn init(&mut self, replica_id: u64, logger: Logger, config: Option<CommunicationConfig>);
 
         fn process_out_message(&mut self, message: out_message::Msg) -> Result<(), PalError>;
 
@@ -267,6 +267,8 @@ mock! {
         fn take_out_messages(&mut self) -> Vec<OutMessage>;
 
         fn process_cluster_change(&mut self, new_replica_ids: &[u64]);
+
+        fn make_tick(&mut self);
     }
 }
 

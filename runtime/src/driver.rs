@@ -13,7 +13,7 @@
 // limitations under the License.
 
 #![allow(clippy::useless_conversion)]
-use crate::communication::CommunicationModule;
+use crate::communication::{CommunicationConfig, CommunicationModule};
 use crate::consensus::{Raft, RaftState, Store};
 use crate::logger::log::create_remote_logger;
 use crate::logger::DrainOutput;
@@ -745,8 +745,18 @@ impl<
             )?;
         }
 
-        self.communication
-            .init(self.id, self.logger.new(o!("type" => "communication")));
+        let communication_config = match &start_replica_request.raft_config {
+            Some(raft_config) => Some(CommunicationConfig {
+                handshake_retry_tick: raft_config.handshake_retry_tick,
+            }),
+            None => None,
+        };
+
+        self.communication.init(
+            self.id,
+            self.logger.new(o!("type" => "communication")),
+            communication_config,
+        );
 
         self.driver_state = DriverState::Started;
 
@@ -1260,6 +1270,7 @@ impl<
         }
         if self.driver_state == DriverState::Started {
             self.process_deliver_app_message(deliver_app_message_opt)?;
+            self.communication.make_tick();
         }
 
         if !self.is_ephemeral {
@@ -1330,6 +1341,7 @@ mod test {
                 chunk_size: 20,
                 max_pending_chunks: 2,
             }),
+            handshake_retry_tick: 1,
         };
 
         (node_id, instant, raft_config)
@@ -1969,10 +1981,18 @@ mod test {
         fn expect_init(mut self, replica_id: u64) -> CommunicationBuilder {
             self.mock_communication_module
                 .expect_init()
-                .with(eq(replica_id), always())
+                .with(eq(replica_id), always(), always())
                 .once()
                 .return_const(());
 
+            self
+        }
+
+        fn expect_make_tick(mut self) -> CommunicationBuilder {
+            self.mock_communication_module
+                .expect_make_tick()
+                .once()
+                .return_const(());
             self
         }
 
@@ -2172,6 +2192,7 @@ mod test {
 
         let communication_builder = CommunicationBuilder::new()
             .expect_init(node_id)
+            .expect_make_tick()
             .expect_take_out_messages(Vec::new());
 
         let mut driver = DriverBuilder::new()
@@ -2221,6 +2242,7 @@ mod test {
 
         let communication_builder = CommunicationBuilder::new()
             .expect_init(node_id)
+            .expect_make_tick()
             .expect_take_out_messages(Vec::new())
             .expect_take_out_messages(Vec::new());
 
@@ -2300,6 +2322,9 @@ mod test {
 
         let communication_builder = CommunicationBuilder::new()
             .expect_init(node_id)
+            .expect_make_tick()
+            .expect_make_tick()
+            .expect_make_tick()
             .expect_take_out_messages(Vec::new())
             .expect_take_out_messages(Vec::new())
             .expect_take_out_messages(Vec::new());
@@ -2399,6 +2424,7 @@ mod test {
 
         let communication_builder = CommunicationBuilder::new()
             .expect_init(node_id)
+            .expect_make_tick()
             .expect_take_out_messages(Vec::new());
 
         let mut driver = DriverBuilder::new()
@@ -2465,6 +2491,8 @@ mod test {
         let snapshot_builder = SnapshotBuilder::new();
         let communication_builder = CommunicationBuilder::new()
             .expect_init(node_id)
+            .expect_make_tick()
+            .expect_make_tick()
             .expect_take_out_messages(Vec::new())
             .expect_take_out_messages(Vec::new())
             .expect_take_out_messages(Vec::new());
@@ -2573,6 +2601,8 @@ mod test {
 
         let communication_builder = CommunicationBuilder::new()
             .expect_init(node_id)
+            .expect_make_tick()
+            .expect_make_tick()
             .expect_take_out_messages(Vec::new())
             .expect_take_out_messages(Vec::new());
 
@@ -2646,8 +2676,10 @@ mod test {
 
         let communication_builder = CommunicationBuilder::new()
             .expect_init(node_id)
+            .expect_make_tick()
             .expect_take_out_messages(Vec::new())
             .expect_process_cluster_change(vec![node_id])
+            .expect_make_tick()
             .expect_take_out_messages(Vec::new());
 
         let mut driver = DriverBuilder::new()
@@ -2769,9 +2801,11 @@ mod test {
 
         let communication_builder = CommunicationBuilder::new()
             .expect_init(node_id)
+            .expect_make_tick()
             .expect_take_out_messages(Vec::new())
             .expect_process_out_message(create_deliver_system_message_response(&message_a), Ok(()))
             .expect_process_out_message(create_deliver_system_message_response(&message_b), Ok(()))
+            .expect_make_tick()
             .expect_take_out_messages(vec![OutMessage {
                 msg: Some(out_message::Msg::SecureChannelHandshake(
                     create_secure_channel_handshake(node_id, peer_id),
@@ -2850,6 +2884,8 @@ mod test {
 
         let communication_builder = CommunicationBuilder::new()
             .expect_init(node_id)
+            .expect_make_tick()
+            .expect_make_tick()
             .expect_take_out_messages(Vec::new())
             .expect_take_out_messages(Vec::new());
 
@@ -2917,11 +2953,13 @@ mod test {
 
         let communication_builder = CommunicationBuilder::new()
             .expect_init(node_id)
+            .expect_make_tick()
             .expect_take_out_messages(Vec::new())
             .expect_process_in_message(
                 in_message::Msg::SecureChannelHandshake(handshake_message.clone()),
                 Ok(None),
             )
+            .expect_make_tick()
             .expect_take_out_messages(Vec::new())
             .expect_process_in_message(
                 create_deliver_system_message_request(&message_a)
@@ -2933,6 +2971,7 @@ mod test {
                         .unwrap(),
                 )),
             )
+            .expect_make_tick()
             .expect_take_out_messages(Vec::new());
 
         let mut driver = DriverBuilder::new()
@@ -3053,6 +3092,9 @@ mod test {
 
         let communication_builder = CommunicationBuilder::new()
             .expect_init(node_id)
+            .expect_make_tick()
+            .expect_make_tick()
+            .expect_make_tick()
             .expect_take_out_messages(Vec::new())
             .expect_take_out_messages(Vec::new())
             .expect_take_out_messages(Vec::new());
@@ -3165,11 +3207,13 @@ mod test {
 
         let communication_builder = CommunicationBuilder::new()
             .expect_init(node_id)
+            .expect_make_tick()
             .expect_take_out_messages(Vec::new())
             .expect_process_in_message(
                 in_message::Msg::SecureChannelHandshake(handshake_message_from_peer.clone()),
                 Ok(None),
             )
+            .expect_make_tick()
             .expect_take_out_messages(vec![OutMessage {
                 msg: Some(out_message::Msg::SecureChannelHandshake(
                     handshake_message_to_peer.clone(),
@@ -3185,6 +3229,7 @@ mod test {
                 wrap_deliver_snapshot_response_out(deliver_snapshot_response.clone()),
                 Ok(()),
             )
+            .expect_make_tick()
             .expect_take_out_messages(vec![OutMessage {
                 msg: Some(wrap_deliver_snapshot_response_out(
                     deliver_snapshot_response.clone(),
@@ -3332,6 +3377,7 @@ mod test {
                 wrap_deliver_snapshot_request_out(deliver_snapshot_request.clone()),
                 Ok(()),
             )
+            .expect_make_tick()
             .expect_take_out_messages(vec![OutMessage {
                 msg: Some(wrap_deliver_snapshot_request_out(
                     deliver_snapshot_request.clone(),
@@ -3343,7 +3389,9 @@ mod test {
                     deliver_snapshot_response.clone(),
                 ))),
             )
+            .expect_make_tick()
             .expect_take_out_messages(Vec::new())
+            .expect_make_tick()
             .expect_take_out_messages(Vec::new());
 
         let mut driver = DriverBuilder::new()

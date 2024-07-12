@@ -302,6 +302,7 @@ impl<A: Actor> FakePlatform<A> {
                         chunk_size: 20,
                         max_pending_chunks: 2,
                     }),
+                    handshake_retry_tick: 1,
                 }),
                 app_config: app_config,
                 attestation_config: None,

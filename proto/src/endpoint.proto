@@ -169,6 +169,10 @@ message RaftConfig {
     // control the number of in flight snapshot chunks.
     uint32 max_pending_chunks = 3;
   }
+
+  // The number of tick events that must pass before retrying handshake with a
+  // previously failed replica.
+  uint64 handshake_retry_tick = 6;
 }
 
 message AttestationConfig {
