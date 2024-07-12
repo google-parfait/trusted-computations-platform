@@ -70,7 +70,7 @@ pub trait Store {
     fn latest_snapshot_size(&self) -> u64;
 }
 
-#[derive(PartialEq, Eq, Clone, Default)]
+#[derive(PartialEq, Eq, Clone, Default, Debug)]
 pub struct RaftState {
     pub leader_replica_id: u64,
     pub leader_term: u64,
@@ -222,7 +222,6 @@ pub trait Raft {
 pub struct RaftSimple<S: Store + RaftStorage> {
     raft_node: Option<Box<RaftNode<S>>>,
     raft_ready: HashMap<u64, Ready>,
-    committed_voters: Vec<u64>,
 }
 
 impl<S: Store + RaftStorage> RaftSimple<S> {
@@ -230,7 +229,6 @@ impl<S: Store + RaftStorage> RaftSimple<S> {
         RaftSimple {
             raft_node: None,
             raft_ready: HashMap::new(),
-            committed_voters: Vec::new(),
         }
     }
 
@@ -274,7 +272,6 @@ impl<S: Store + RaftStorage> Raft for RaftSimple<S> {
             state.leader_replica_id = raft_soft_state.leader_id;
             state.leader_term = raft_hard_state.term;
             state.has_pending_change = self.raft_node().raft.has_pending_conf();
-            state.committed_cluster_config = self.committed_voters.clone();
         }
 
         state
@@ -300,7 +297,6 @@ impl<S: Store + RaftStorage> Raft for RaftSimple<S> {
             );
 
             store.apply_snapshot(snapshot)?;
-            self.committed_voters = vec![replica_id];
         }
 
         self.raft_node = Some(Box::new(RawNode::new(&config, store, logger)?));
@@ -333,9 +329,6 @@ impl<S: Store + RaftStorage> Raft for RaftSimple<S> {
         config_change: &RaftConfigChange,
     ) -> Result<RaftConfigState, RaftError> {
         let config_state = self.mut_raft_node().apply_conf_change(config_change);
-        if let Ok(config_state) = &config_state {
-            self.committed_voters = config_state.voters.clone();
-        }
         config_state
     }
 
