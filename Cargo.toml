@@ -21,8 +21,8 @@ oak_proto_rust = { git = "https://github.com/project-oak/oak", rev = "d43dc4d6f0
 oak_restricted_kernel_sdk = { git = "https://github.com/project-oak/oak", rev = "d43dc4d6f0cc4b153e9d9bf9f93e33d202e5189c" }
 oak_restricted_kernel_interface = { git = "https://github.com/project-oak/oak", rev = "d43dc4d6f0cc4b153e9d9bf9f93e33d202e5189c" }
 oak_session = { git = "https://github.com/project-oak/oak", rev = "d43dc4d6f0cc4b153e9d9bf9f93e33d202e5189c" }
-raft = { git = "https://github.com/google/raft-rs", rev = "10968a112dcc4143ad19a1b35b6dca6e30d2e439", package = "raft", default-features = false, features = ["prost-codec"] }
-raft-proto = { git = "https://github.com/google/raft-rs", rev = "10968a112dcc4143ad19a1b35b6dca6e30d2e439", package = "raft-proto", default-features = false, features = ["prost-codec"] }
+raft = { git = "https://github.com/google-parfait/raft-rs", rev = "10968a112dcc4143ad19a1b35b6dca6e30d2e439", package = "raft", default-features = false, features = ["prost-codec"] }
+raft-proto = { git = "https://github.com/google-parfait/raft-rs", rev = "10968a112dcc4143ad19a1b35b6dca6e30d2e439", package = "raft-proto", default-features = false, features = ["prost-codec"] }
 prost = { version = "0.12.4", default-features = false, features = ["prost-derive"] }
 prost-types = { version = "0.12.4", default-features = false }
 prost-build = { version = "0.12.4" }

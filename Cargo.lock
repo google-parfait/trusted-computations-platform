@@ -1501,7 +1501,7 @@ dependencies = [
 [[package]]
 name = "raft"
 version = "0.7.0"
-source = "git+https://github.com/google/raft-rs?rev=10968a112dcc4143ad19a1b35b6dca6e30d2e439#10968a112dcc4143ad19a1b35b6dca6e30d2e439"
+source = "git+https://github.com/google-parfait/raft-rs?rev=10968a112dcc4143ad19a1b35b6dca6e30d2e439#10968a112dcc4143ad19a1b35b6dca6e30d2e439"
 dependencies = [
  "ahash",
  "getrandom",
@@ -1517,7 +1517,7 @@ dependencies = [
 [[package]]
 name = "raft-proto"
 version = "0.7.0"
-source = "git+https://github.com/google/raft-rs?rev=10968a112dcc4143ad19a1b35b6dca6e30d2e439#10968a112dcc4143ad19a1b35b6dca6e30d2e439"
+source = "git+https://github.com/google-parfait/raft-rs?rev=10968a112dcc4143ad19a1b35b6dca6e30d2e439#10968a112dcc4143ad19a1b35b6dca6e30d2e439"
 dependencies = [
  "lazy_static",
  "prost 0.12.4",
