@@ -84,8 +84,8 @@ impl<T: 'static> TabletTransactionManager<T> for DefaultTabletTransactionManager
 }
 
 impl<T: 'static> TabletTransactionContext<T> for DefaultTabletTransactionManager<T> {
-    fn resolve(&mut self, _queries: Vec<TableQuery>, _handler: Box<ResolveHandler>) {
-        todo!()
+    fn resolve(&mut self, queries: Vec<TableQuery>, handler: Box<ResolveHandler>) {
+        self.core.borrow_mut().resolve(queries, handler);
     }
 
     fn start_transaction(&mut self) -> Box<dyn TabletTransaction<T>> {
@@ -210,6 +210,11 @@ impl<T> TabletTransactionManagerCore<T> {
             &mut *self.metadata_cache,
             &mut *self.data_cache,
         );
+    }
+
+    fn resolve(&mut self, queries: Vec<TableQuery>, handler: Box<ResolveHandler>) {
+        self.metadata_cache
+            .resolve_tablets_with_handler(&queries, handler);
     }
 
     fn process_transaction(

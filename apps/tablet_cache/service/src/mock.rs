@@ -107,6 +107,12 @@ mock! {
             queries: &Vec<TableQuery>,
         ) -> ResultHandle<Vec<(TableQuery, TabletMetadata)>, TabletsRequestStatus>;
 
+        fn resolve_tablets_with_handler(
+            &mut self,
+            queries: &Vec<TableQuery>,
+            handler: Box<ResolveHandler>,
+        );
+
         fn update_tablet(&mut self, table_name: String, tablet_metadata: TabletMetadata, conflict: bool);
 
         fn process_in_message(&mut self, in_message: TabletMetadataCacheInMessage);

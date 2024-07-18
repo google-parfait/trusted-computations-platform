@@ -16,6 +16,7 @@ use core::mem;
 
 use crate::apps::tablet_cache::service::{TableMetadataCacheConfig, TabletMetadataCacheConfig};
 use alloc::{
+    boxed::Box,
     collections::BTreeSet,
     fmt::format,
     string::{String, ToString},
@@ -32,7 +33,7 @@ use tcp_tablet_store_service::apps::tablet_store::service::{
 
 use super::{
     result::{create_eventual_result, ResultHandle, ResultSource},
-    TableQuery,
+    ResolveHandler, TableQuery, TabletDescriptor,
 };
 
 #[cfg(feature = "std")]
@@ -69,6 +70,15 @@ pub trait TabletMetadataCache {
         &mut self,
         queries: &Vec<TableQuery>,
     ) -> ResultHandle<Vec<(TableQuery, TabletMetadata)>, TabletsRequestStatus>;
+
+    // Requests to resolve tablets that given set of the table queries affect. Provided
+    // handler is called when the operation is completed. The operation is
+    // completed only when all affected tablets are resolved.
+    fn resolve_tablets_with_handler(
+        &mut self,
+        queries: &Vec<TableQuery>,
+        handler: Box<ResolveHandler>,
+    );
 
     // Instructs cache to update tablet metadata. Metadata maybe updated after
     // transaction execution.
@@ -108,6 +118,22 @@ impl DefaultTabletMetadataCache {
             out_messages: Vec::new(),
         }
     }
+
+    fn resolve_tablets_with_notification(
+        &mut self,
+        queries: &Vec<TableQuery>,
+        notification: TableResolveNotification,
+    ) {
+        self.resolve_request_counter += 1;
+        let resolve_request = TabletResolve::create(
+            self.resolve_request_counter,
+            queries,
+            notification,
+            &mut self.tables,
+        );
+        self.resolve_requests
+            .insert(self.resolve_request_counter, resolve_request);
+    }
 }
 
 impl TabletMetadataCache for DefaultTabletMetadataCache {
@@ -146,13 +172,23 @@ impl TabletMetadataCache for DefaultTabletMetadataCache {
         &mut self,
         queries: &Vec<TableQuery>,
     ) -> ResultHandle<Vec<(TableQuery, TabletMetadata)>, TabletsRequestStatus> {
-        self.resolve_request_counter += 1;
-        let (resolve_request, resolve_handle) =
-            TabletResolve::create(self.resolve_request_counter, queries, &mut self.tables);
-        self.resolve_requests
-            .insert(self.resolve_request_counter, resolve_request);
+        let (result_handle, result_source) =
+            create_eventual_result::<Vec<(TableQuery, TabletMetadata)>, TabletsRequestStatus>();
 
-        resolve_handle
+        self.resolve_tablets_with_notification(
+            queries,
+            TableResolveNotification::ResultSource(result_source),
+        );
+
+        result_handle
+    }
+
+    fn resolve_tablets_with_handler(
+        &mut self,
+        queries: &Vec<TableQuery>,
+        handler: Box<ResolveHandler>,
+    ) {
+        self.resolve_tablets_with_notification(queries, TableResolveNotification::Handler(handler));
     }
 
     fn update_tablet(
@@ -506,9 +542,14 @@ impl TableMetadata {
     }
 }
 
+enum TableResolveNotification {
+    ResultSource(ResultSource<Vec<(TableQuery, TabletMetadata)>, TabletsRequestStatus>),
+    Handler(Box<ResolveHandler>),
+}
+
 // Tracks pending request to resolve tablets.
 struct TabletResolve {
-    result_source: ResultSource<Vec<(TableQuery, TabletMetadata)>, TabletsRequestStatus>,
+    notification: TableResolveNotification,
     // Maps table name and region index to a pending table query.
     pending_table_queries: HashMap<(String, u32), TableQuery>,
     // Maps table name and tablet id to resolve result builder.
@@ -520,16 +561,11 @@ impl TabletResolve {
     fn create(
         resolve_request_id: u64,
         queries: &Vec<TableQuery>,
+        notification: TableResolveNotification,
         tables: &mut HashMap<String, TableMetadata>,
-    ) -> (
-        Self,
-        ResultHandle<Vec<(TableQuery, TabletMetadata)>, TabletsRequestStatus>,
-    ) {
-        let (result_handle, result_source) =
-            create_eventual_result::<Vec<(TableQuery, TabletMetadata)>, TabletsRequestStatus>();
-
+    ) -> Self {
         let mut tablet_resolve = Self {
-            result_source,
+            notification,
             pending_table_queries: HashMap::new(),
             results: HashMap::new(),
         };
@@ -565,7 +601,7 @@ impl TabletResolve {
         // Try to produce results if there are no more pending queries.
         tablet_resolve.maybe_resolve_results();
 
-        (tablet_resolve, result_handle)
+        tablet_resolve
     }
 
     fn append_results(&mut self, table_query_result: Vec<(TableQuery, TabletMetadata)>) {
@@ -591,7 +627,22 @@ impl TabletResolve {
             for (_, tablet_resolve_result) in mem::take(&mut self.results) {
                 results.push(tablet_resolve_result.take_result());
             }
-            self.result_source.set_result(results);
+            match &mut self.notification {
+                TableResolveNotification::ResultSource(result_source) => {
+                    result_source.set_result(results)
+                }
+                TableResolveNotification::Handler(handler) => handler(
+                    results
+                        .iter()
+                        .map(|(table_query, tablet_metadata)| {
+                            (
+                                table_query.clone(),
+                                TabletDescriptor::create(tablet_metadata.tablet_id, true),
+                            )
+                        })
+                        .collect(),
+                ),
+            }
         }
     }
 
