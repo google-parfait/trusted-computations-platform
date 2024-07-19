@@ -75,19 +75,20 @@ impl<'a> OakHandshaker<HandshakeResponse, HandshakeRequest> for DefaultOakClient
     // TODO: Delegate to `inner` once the implementation is complete on Oak side.
     fn init(&mut self, peer_static_public_key: Vec<u8>) {
         let config = HandshakerConfig {
-            // TODO: Switch to using NoiseNN when implemented in oak. Use `session_binding_key` for
-            // NoiseNN as `peer_session_binding_key`.
-            handshake_type: HandshakeType::NoiseKK,
+            // TODO: review the parameters below.
+            handshake_type: HandshakeType::NoiseNN,
             self_static_private_key: None,
             peer_static_public_key: Some(peer_static_public_key),
+            peer_attestation_binding_public_key: None,
         };
-        self.inner = Some(ClientHandshaker::new(config));
+        // TODO: handle error to create ClientHandshaker instead of unwrap().
+        self.inner = Some(ClientHandshaker::create(config).unwrap());
     }
 
     fn get_outgoing_message(&mut self) -> anyhow::Result<Option<HandshakeRequest>> {
         Ok(Some(HandshakeRequest {
-            ephemeral_public_key: vec![],
-            ciphertext: vec![],
+            attestation_binding: None,
+            handshake_type: None,
         }))
     }
 
@@ -121,17 +122,18 @@ impl<'a> OakHandshaker<HandshakeRequest, HandshakeResponse> for DefaultOakServer
     // TODO: Delegate to `inner` once the implementation is complete on Oak side.
     fn init(&mut self, peer_static_public_key: Vec<u8>) {
         let config = HandshakerConfig {
-            handshake_type: HandshakeType::NoiseKK,
+            handshake_type: HandshakeType::NoiseNN,
             self_static_private_key: None,
             peer_static_public_key: Some(peer_static_public_key),
+            peer_attestation_binding_public_key: None,
         };
         self.inner = Some(ServerHandshaker::new(config));
     }
 
     fn get_outgoing_message(&mut self) -> anyhow::Result<Option<HandshakeResponse>> {
         Ok(Some(HandshakeResponse {
-            ephemeral_public_key: vec![],
-            ciphertext: vec![],
+            attestation_binding: None,
+            handshake_type: None,
         }))
     }
 
