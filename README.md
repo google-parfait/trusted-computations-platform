@@ -1,8 +1,10 @@
 # Trusted Computations Platform
 
-The Trusted Computations Platform project enables stateful rollback protected 
+The Trusted Computations Platform project enables stateful rollback protected
 replicated computations using secure enclaves. This repository holds publicly
 verifiable components that run within enclaves and interact with user data.
+
+See [`presentation`](confidential_replicated_state_machines.pdf) for details.
 
 ## Contributing
 
