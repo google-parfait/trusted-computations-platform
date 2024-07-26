@@ -23,5 +23,4 @@ extern crate slog;
 extern crate tcp_proto;
 extern crate tcp_runtime;
 
-#[cfg(feature = "std")]
 pub mod harness;

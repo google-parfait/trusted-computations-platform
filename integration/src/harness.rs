@@ -14,6 +14,7 @@
 
 #![allow(dead_code)]
 
+use alloc::{boxed::Box, vec::Vec};
 use core::cell::RefCell;
 use core::mem;
 use hashbrown::HashMap;

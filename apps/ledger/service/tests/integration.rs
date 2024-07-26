@@ -12,7 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-#[cfg(all(test, feature = "std"))]
+#[cfg(test)]
 
 mod test {
     use prost::bytes::Bytes;

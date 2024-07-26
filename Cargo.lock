@@ -1986,6 +1986,7 @@ dependencies = [
  "sha2",
  "slog",
  "tcp_integration",
+ "tcp_ledger_service",
  "tcp_proto",
  "tcp_runtime",
 ]

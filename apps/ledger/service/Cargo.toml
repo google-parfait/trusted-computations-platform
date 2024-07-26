@@ -7,6 +7,7 @@ license = "Apache-2.0"
 [features]
 default = []
 std = ["tcp_runtime/std"]
+testing = []
 
 [dependencies]
 anyhow = { version = "*", default-features = false }
@@ -34,7 +35,8 @@ googletest = "*"
 mockall = { version = "0.11.4" }
 oak_attestation = { workspace = true }
 oak_restricted_kernel_sdk = { workspace = true, features = ["testing"] }
-tcp_integration = { path = "../../../integration", features = ["std"] }
+tcp_integration = { path = "../../../integration" }
+tcp_ledger_service = { path = ".", features = ["testing"] }
 
 [build-dependencies]
 micro_rpc_build = { workspace = true }
