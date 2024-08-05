@@ -36,8 +36,7 @@ message CreateKeyEvent {
   google.protobuf.Timestamp expiration = 4;
 }
 
-// This message containst enough data to commit the access autorization
-// and perform key rewrapping.
+// This message contains enough data to commit the access autorization.
 message AuthorizeAccessEvent {
   // The time when the event was issued.
   google.protobuf.Timestamp event_time = 1;
@@ -52,18 +51,12 @@ message AuthorizeAccessEvent {
   // The serialized fcp.confidentialcompute.BlobHeader of the blob being
   // accessed.
   bytes blob_header = 4;
+}
 
-  // Encapsulated HPKE secret key used (along with one of the Ledger's private
-  // keys) to decrypt `encrypted_symmetric_key`. The encapsulated key will have
-  // been produced as part of encrypting the blob's symmetric key using HPKE.
-  bytes encapsulated_key = 5;
-
-  // The blob's encrypted symmetric key, used to encrypt the blob data using
-  // AEAD. This symmetric key should have been encrypted using the Ledger-owned
-  // public key indicated in the blob header. The plaintext should be a COSE_Key
-  // structure (RFC 9052), but this is not enforced by this method.
-  bytes encrypted_symmetric_key = 6;
-
+// This message contains enough data from AuthorizeAccessRequest to perform
+// key rewrapping on the Ledger replica that has originally received the
+// request. This message isn't replicated.
+message KeyRewrappingContext {
   // The public key to use to encrypt the response.
   //
   // This field holds a CBOR Web Token (CWT) signed by the application key in
@@ -80,7 +73,18 @@ message AuthorizeAccessEvent {
   //
   // Supported COSE Algorithms:
   //   -65537: HPKE-Base-X25519-SHA256-AES128GCM
-  bytes recipient_public_key = 7;
+  bytes recipient_public_key = 1;
+
+  // Encapsulated HPKE secret key used (along with one of the Ledger's private
+  // keys) to decrypt `encrypted_symmetric_key`. The encapsulated key will have
+  // been produced as part of encrypting the blob's symmetric key using HPKE.
+  bytes encapsulated_key = 2;
+
+  // The blob's encrypted symmetric key, used to encrypt the blob data using
+  // AEAD. This symmetric key should have been encrypted using the Ledger-owned
+  // public key indicated in the blob header. The plaintext should be a COSE_Key
+  // structure (RFC 9052), but this is not enforced by this method.
+  bytes encrypted_symmetric_key = 3;
 
   // Nonce used by the recipient to ensure the same AuthorizeAccessResponse
   // cannot be replayed multiple times by an unsealed portion of the stack to
@@ -88,7 +92,7 @@ message AuthorizeAccessEvent {
   // discard it after using it once as part of the associated data to decrypt
   // the symmetric key. This nonce must be appended to the associated data for
   // the symmetric key.
-  bytes recipient_nonce = 8;
+  bytes recipient_nonce = 4;
 }
 
 // Request to the Trusted Ledger to propose an operation.
@@ -208,3 +212,4 @@ message LedgerSnapshot {
   // snapshot.
   repeated PerKeySnapshot per_key_snapshots = 2;
 }
+

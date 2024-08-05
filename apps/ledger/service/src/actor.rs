@@ -16,7 +16,7 @@ use crate::ledger::service::*;
 use crate::ledger::service::{ledger_event::*, ledger_request::*, ledger_response::*};
 use crate::ledger::{Ledger, LedgerService};
 
-use alloc::boxed::Box;
+use alloc::{boxed::Box, collections::LinkedList};
 use oak_restricted_kernel_sdk::{attestation::EvidenceProvider, crypto::Signer};
 use prost::{bytes::Bytes, Message};
 use slog::{debug, error, warn};
@@ -25,9 +25,19 @@ use tcp_runtime::model::{
     EventOutcome,
 };
 
+// Local context for key rewrapping operations. This is the context which is
+// stashed locally when handling a command and retrieved when applying an event,
+// which is applicable only when applying owned events, i.e. events that are
+// produced locally on the same actor.
+struct KeyRewrappingEntry {
+    key_rewrapping_context: KeyRewrappingContext,
+    correlation_id: u64,
+}
+
 pub struct LedgerActor {
     context: Option<Box<dyn ActorContext>>,
     ledger: LedgerService,
+    key_rewrapping_entries: LinkedList<KeyRewrappingEntry>,
 }
 
 impl LedgerActor {
@@ -38,6 +48,7 @@ impl LedgerActor {
         Ok(LedgerActor {
             context: None,
             ledger: LedgerService::create(evidence_provider, signer)?,
+            key_rewrapping_entries: LinkedList::new(),
         })
     }
 
@@ -90,11 +101,32 @@ impl LedgerActor {
 
         let event = match ledger_request.request {
             Some(Request::AuthorizeAccess(authorize_access_request)) => {
+                // Verify that correlation_id is greater than any pending one. Since
+                // correlation_id is used to stash key rewrapping contexts, the assumption is that
+                // it monotonically increases so there is never a conflict.
+                if !self.key_rewrapping_entries.is_empty()
+                    && command.correlation_id
+                        <= self.key_rewrapping_entries.back().unwrap().correlation_id
+                {
+                    panic!("Unexpected out of order correlation_id when handling a command");
+                }
+
                 // Attest and produce the event that contains all the data necessary to
                 // update the budget and rewrap the symmetric key when the event is later applied.
-                let authorize_access_event = self
+                let (authorize_access_event, key_rewrapping_context) = self
                     .mut_ledger()
                     .attest_and_produce_authorize_access_event(authorize_access_request)?;
+
+                // Stash key_rewrapping_context.
+                debug!(
+                    self.get_context().logger(),
+                    "LedgerActor: Storing KeyRewrappingEntry at {}", command.correlation_id
+                );
+                self.key_rewrapping_entries.push_back(KeyRewrappingEntry {
+                    key_rewrapping_context,
+                    correlation_id: command.correlation_id,
+                });
+
                 Event::AuthorizeAccess(authorize_access_event)
             }
             Some(Request::CreateKey(create_key_request)) => {
@@ -155,9 +187,44 @@ impl LedgerActor {
 
         let response = match ledger_event.event {
             Some(Event::AuthorizeAccess(authorize_access_event)) => {
+                let mut key_rewrapping_context: Option<KeyRewrappingContext> = None;
+                if context.owned {
+                    // The event is owned (has been produced on this actor), which means there has
+                    // to be KeyRewrappingContext stashed locally.
+                    // Under certain circumstances (e.g. change of leadership) it is possible for
+                    // some of locally produced events to not end up being replicated, which means
+                    // that some of the stashed key rewrapping contexts may need to be discarded
+                    // too. That is achieved by skipping stashed key rewrapping context with
+                    // correlation_id that are smaller than the event's correlation_id.
+                    while let Some(entry) = self.key_rewrapping_entries.pop_front() {
+                        debug!(
+                            self.get_context().logger(),
+                            "LedgerActor: Retrieving KeyRewrappingEntry at {}, current event correlation_id = {}",
+                            entry.correlation_id, event.correlation_id
+                        );
+
+                        if entry.correlation_id > event.correlation_id {
+                            panic!("Unexpected out of order correlation_id when handling an event");
+                        }
+
+                        if entry.correlation_id == entry.correlation_id {
+                            key_rewrapping_context = Some(entry.key_rewrapping_context);
+                            break;
+                        }
+                    }
+                } else {
+                    // The event isn't owned (has been replicated from another actor).
+                    if !self.get_context().leader() && !self.key_rewrapping_entries.is_empty() {
+                        // If the current actor is no longer the leader and receives an un-owned
+                        // event, that means that all previously stashed key rewrapping entries
+                        // are not going to be processed and should be cleared.
+                        self.key_rewrapping_entries.clear();
+                    }
+                }
+
                 let authorize_access_response = self
                     .mut_ledger()
-                    .apply_authorize_access_event(authorize_access_event)?;
+                    .apply_authorize_access_event(authorize_access_event, key_rewrapping_context)?;
                 if !context.owned {
                     return Ok(EventOutcome::with_none());
                 }

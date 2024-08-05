@@ -17,7 +17,7 @@
 mod test {
     use prost::bytes::Bytes;
     use prost::Message;
-    use std::format;
+    use std::{collections::LinkedList, format};
 
     use cfc_crypto::{extract_key_from_cwt, PUBLIC_KEY_CLAIM};
     use coset::{
@@ -55,6 +55,8 @@ mod test {
     struct LedgerService {
         cluster: FakeCluster<LedgerActor>,
         create_actor_fn: fn() -> LedgerActor,
+        correlation_id: u64,
+        responses: LinkedList<LedgerResponse>,
     }
 
     impl LedgerService {
@@ -63,6 +65,8 @@ mod test {
             let mut service = LedgerService {
                 cluster: FakeCluster::new(config.encode_to_vec().into()),
                 create_actor_fn,
+                correlation_id: 0,
+                responses: LinkedList::new(),
             };
             service.start(3u64);
             service
@@ -93,30 +97,33 @@ mod test {
         }
 
         fn send_request(&mut self, ledger_request: LedgerRequest) {
+            self.correlation_id += 1;
             self.cluster.send_app_message(
                 self.leader_id(),
-                1,
+                self.correlation_id,
                 ledger_request.encode_to_vec().into(),
                 Bytes::new(),
             );
         }
 
         fn advance_until_response(&mut self) -> LedgerResponse {
-            let mut ledger_response: Option<LedgerResponse> = None;
-            let response_messages =
-                self.cluster
-                    .advance_until(&mut |envelope_out| match &envelope_out.msg {
-                        Some(out_message::Msg::DeliverAppMessage(message)) => {
-                            let response =
-                                LedgerResponse::decode(message.message_header.as_ref()).unwrap();
-                            ledger_response = Some(response);
-                            return true;
-                        }
-                        _ => false,
-                    });
+            if self.responses.is_empty() {
+                let response_messages =
+                    self.cluster
+                        .advance_until(&mut |envelope_out| match &envelope_out.msg {
+                            Some(out_message::Msg::DeliverAppMessage(message)) => {
+                                let response =
+                                    LedgerResponse::decode(message.message_header.as_ref())
+                                        .unwrap();
+                                self.responses.push_back(response);
+                                return true;
+                            }
+                            _ => false,
+                        });
 
-            assert!(!response_messages.is_empty());
-            ledger_response.unwrap()
+                assert!(!response_messages.is_empty());
+            }
+            self.responses.pop_front().unwrap()
         }
 
         fn parse_error(ledger_response: LedgerResponse) -> micro_rpc::Status {
@@ -132,6 +139,70 @@ mod test {
                 )
             }
         }
+
+        fn wrap_create_key_request(request: CreateKeyRequest) -> LedgerRequest {
+            LedgerRequest {
+                request: Some(ledger_request::Request::CreateKey(request)),
+            }
+        }
+
+        fn unwrap_create_key_response(
+            response: LedgerResponse,
+        ) -> Result<CreateKeyResponse, micro_rpc::Status> {
+            if let Some(ledger_response::Response::CreateKey(response)) = response.response {
+                Ok(response)
+            } else {
+                Err(Self::parse_error(response))
+            }
+        }
+
+        fn wrap_delete_key_request(request: DeleteKeyRequest) -> LedgerRequest {
+            LedgerRequest {
+                request: Some(ledger_request::Request::DeleteKey(request)),
+            }
+        }
+
+        fn unwrap_delete_key_response(
+            response: LedgerResponse,
+        ) -> Result<DeleteKeyResponse, micro_rpc::Status> {
+            if let Some(ledger_response::Response::DeleteKey(response)) = response.response {
+                Ok(response)
+            } else {
+                Err(Self::parse_error(response))
+            }
+        }
+
+        fn wrap_authorize_access_request(request: AuthorizeAccessRequest) -> LedgerRequest {
+            LedgerRequest {
+                request: Some(ledger_request::Request::AuthorizeAccess(request)),
+            }
+        }
+
+        fn unwrap_authorize_access_response(
+            response: LedgerResponse,
+        ) -> Result<AuthorizeAccessResponse, micro_rpc::Status> {
+            if let Some(ledger_response::Response::AuthorizeAccess(response)) = response.response {
+                Ok(response)
+            } else {
+                Err(Self::parse_error(response))
+            }
+        }
+
+        fn wrap_revoke_access_request(request: RevokeAccessRequest) -> LedgerRequest {
+            LedgerRequest {
+                request: Some(ledger_request::Request::RevokeAccess(request)),
+            }
+        }
+
+        fn unwrap_revoke_access_response(
+            response: LedgerResponse,
+        ) -> Result<RevokeAccessResponse, micro_rpc::Status> {
+            if let Some(ledger_response::Response::RevokeAccess(response)) = response.response {
+                Ok(response)
+            } else {
+                Err(Self::parse_error(response))
+            }
+        }
     }
 
     impl Ledger for LedgerService {
@@ -139,68 +210,36 @@ mod test {
             &mut self,
             request: CreateKeyRequest,
         ) -> Result<CreateKeyResponse, micro_rpc::Status> {
-            let ledger_request = LedgerRequest {
-                request: Some(ledger_request::Request::CreateKey(request)),
-            };
-            self.send_request(ledger_request);
+            self.send_request(Self::wrap_create_key_request(request));
             let ledger_response = self.advance_until_response();
-            if let Some(ledger_response::Response::CreateKey(response)) = ledger_response.response {
-                Ok(response)
-            } else {
-                Err(LedgerService::parse_error(ledger_response))
-            }
+            Self::unwrap_create_key_response(ledger_response)
         }
 
         fn delete_key(
             &mut self,
             request: DeleteKeyRequest,
         ) -> Result<DeleteKeyResponse, micro_rpc::Status> {
-            let ledger_request = LedgerRequest {
-                request: Some(ledger_request::Request::DeleteKey(request)),
-            };
-            self.send_request(ledger_request);
+            self.send_request(Self::wrap_delete_key_request(request));
             let ledger_response = self.advance_until_response();
-            if let Some(ledger_response::Response::DeleteKey(response)) = ledger_response.response {
-                Ok(response)
-            } else {
-                Err(LedgerService::parse_error(ledger_response))
-            }
+            Self::unwrap_delete_key_response(ledger_response)
         }
 
         fn authorize_access(
             &mut self,
             request: AuthorizeAccessRequest,
         ) -> Result<AuthorizeAccessResponse, micro_rpc::Status> {
-            let ledger_request = LedgerRequest {
-                request: Some(ledger_request::Request::AuthorizeAccess(request)),
-            };
-            self.send_request(ledger_request);
+            self.send_request(Self::wrap_authorize_access_request(request));
             let ledger_response = self.advance_until_response();
-            if let Some(ledger_response::Response::AuthorizeAccess(response)) =
-                ledger_response.response
-            {
-                Ok(response)
-            } else {
-                Err(LedgerService::parse_error(ledger_response))
-            }
+            Self::unwrap_authorize_access_response(ledger_response)
         }
 
         fn revoke_access(
             &mut self,
             request: RevokeAccessRequest,
         ) -> Result<RevokeAccessResponse, micro_rpc::Status> {
-            let ledger_request = LedgerRequest {
-                request: Some(ledger_request::Request::RevokeAccess(request)),
-            };
-            self.send_request(ledger_request);
+            self.send_request(Self::wrap_revoke_access_request(request));
             let ledger_response = self.advance_until_response();
-            if let Some(ledger_response::Response::RevokeAccess(response)) =
-                ledger_response.response
-            {
-                Ok(response)
-            } else {
-                Err(LedgerService::parse_error(ledger_response))
-            }
+            Self::unwrap_revoke_access_response(ledger_response)
         }
     }
 
@@ -404,6 +443,114 @@ mod test {
             )
             .unwrap(),
             plaintext
+        );
+    }
+
+    #[test]
+    fn test_concurrent_authorize_access() {
+        let (mut ledger, public_key) = create_ledger_service();
+        let cose_key = extract_key_from_cwt(&public_key).unwrap();
+
+        // Define an access policy that grants access.
+        let recipient_tag = "tag";
+        let access_policy = DataAccessPolicy {
+            transforms: vec![Transform {
+                application: Some(ApplicationMatcher {
+                    tag: Some(recipient_tag.to_owned()),
+                    ..Default::default()
+                }),
+                ..Default::default()
+            }],
+            ..Default::default()
+        }
+        .encode_to_vec();
+
+        let (recipient_private_key, recipient_public_key) = cfc_crypto::gen_keypair(b"key-id");
+        let recipient_public_key = create_recipient_cwt(recipient_public_key);
+        let recipient_nonce: &[u8] = b"nonce";
+
+        // Construct client two ledger requests.
+        let plaintext1 = b"plaintext1";
+        let blob_header1 = BlobHeader {
+            blob_id: "blob1".into(),
+            key_id: cose_key.key_id.clone(),
+            access_policy_sha256: Sha256::digest(&access_policy).to_vec(),
+            ..Default::default()
+        }
+        .encode_to_vec();
+        let (ciphertext1, encapsulated_key1, encrypted_symmetric_key1) =
+            cfc_crypto::encrypt_message(plaintext1, &cose_key, &blob_header1).unwrap();
+        let ledger_request1 =
+            LedgerService::wrap_authorize_access_request(AuthorizeAccessRequest {
+                access_policy: access_policy.clone(),
+                blob_header: blob_header1.clone(),
+                encapsulated_key: encapsulated_key1,
+                encrypted_symmetric_key: encrypted_symmetric_key1,
+                recipient_public_key: recipient_public_key.clone(),
+                recipient_tag: recipient_tag.to_owned(),
+                recipient_nonce: recipient_nonce.to_owned(),
+                ..Default::default()
+            });
+
+        let plaintext2 = b"plaintext2";
+        let blob_header2 = BlobHeader {
+            blob_id: "blob2".into(),
+            key_id: cose_key.key_id.clone(),
+            access_policy_sha256: Sha256::digest(&access_policy).to_vec(),
+            ..Default::default()
+        }
+        .encode_to_vec();
+        let (ciphertext2, encapsulated_key2, encrypted_symmetric_key2) =
+            cfc_crypto::encrypt_message(plaintext2, &cose_key, &blob_header2).unwrap();
+        let ledger_request2 =
+            LedgerService::wrap_authorize_access_request(AuthorizeAccessRequest {
+                access_policy: access_policy.clone(),
+                blob_header: blob_header2.clone(),
+                encapsulated_key: encapsulated_key2,
+                encrypted_symmetric_key: encrypted_symmetric_key2,
+                recipient_public_key: recipient_public_key.clone(),
+                recipient_tag: recipient_tag.to_owned(),
+                recipient_nonce: recipient_nonce.to_owned(),
+                ..Default::default()
+            });
+
+        // Send both requests simultaneously
+        ledger.send_request(ledger_request1);
+        ledger.send_request(ledger_request2);
+
+        // Retrieve both responses
+        let response1 =
+            LedgerService::unwrap_authorize_access_response(ledger.advance_until_response())
+                .unwrap();
+
+        let response2 =
+            LedgerService::unwrap_authorize_access_response(ledger.advance_until_response())
+                .unwrap();
+
+        // Verify both responses
+        assert_eq!(
+            cfc_crypto::decrypt_message(
+                &ciphertext1,
+                &blob_header1,
+                &response1.encrypted_symmetric_key,
+                &[&response1.reencryption_public_key, recipient_nonce].concat(),
+                &response1.encapsulated_key,
+                &recipient_private_key
+            )
+            .unwrap(),
+            plaintext1
+        );
+        assert_eq!(
+            cfc_crypto::decrypt_message(
+                &ciphertext2,
+                &blob_header2,
+                &response2.encrypted_symmetric_key,
+                &[&response2.reencryption_public_key, recipient_nonce].concat(),
+                &response2.encapsulated_key,
+                &recipient_private_key
+            )
+            .unwrap(),
+            plaintext2
         );
     }
 

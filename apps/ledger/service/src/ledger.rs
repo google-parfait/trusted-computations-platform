@@ -278,7 +278,7 @@ impl LedgerService {
     pub fn attest_and_produce_authorize_access_event(
         &mut self,
         request: AuthorizeAccessRequest,
-    ) -> Result<AuthorizeAccessEvent, micro_rpc::Status> {
+    ) -> Result<(AuthorizeAccessEvent, KeyRewrappingContext), micro_rpc::Status> {
         self.update_current_time(&request.now).map_err(|err| {
             micro_rpc::Status::new_with_message(
                 micro_rpc::StatusCode::InvalidArgument,
@@ -348,21 +348,26 @@ impl LedgerService {
             self.current_time,
         )?;
 
-        Ok(AuthorizeAccessEvent {
-            event_time: Some(Self::format_timestamp(&self.current_time)?),
-            access_policy: request.access_policy,
-            transform_index: transform_index.try_into().unwrap(),
-            blob_header: request.blob_header,
-            encapsulated_key: request.encapsulated_key,
-            encrypted_symmetric_key: request.encrypted_symmetric_key,
-            recipient_public_key: request.recipient_public_key,
-            recipient_nonce: request.recipient_nonce,
-        })
+        Ok((
+            AuthorizeAccessEvent {
+                event_time: Some(Self::format_timestamp(&self.current_time)?),
+                access_policy: request.access_policy,
+                transform_index: transform_index.try_into().unwrap(),
+                blob_header: request.blob_header,
+            },
+            KeyRewrappingContext {
+                recipient_public_key: request.recipient_public_key,
+                encapsulated_key: request.encapsulated_key,
+                encrypted_symmetric_key: request.encrypted_symmetric_key,
+                recipient_nonce: request.recipient_nonce,
+            },
+        ))
     }
 
     pub fn apply_authorize_access_event(
         &mut self,
         event: AuthorizeAccessEvent,
+        context: Option<KeyRewrappingContext>,
     ) -> Result<AuthorizeAccessResponse, micro_rpc::Status> {
         // Update the current time.
         self.update_current_time(&event.event_time).map_err(|err| {
@@ -371,14 +376,6 @@ impl LedgerService {
                 format!("event_time is invalid: {:?}", err),
             )
         })?;
-
-        let recipient_public_key =
-            extract_key_from_cwt(&event.recipient_public_key).map_err(|err| {
-                micro_rpc::Status::new_with_message(
-                    micro_rpc::StatusCode::InvalidArgument,
-                    format!("public_key is invalid: {:?}", err),
-                )
-            })?;
 
         // Decode the blob header and the access policy.
         let header = BlobHeader::decode(event.blob_header.as_ref()).map_err(|err| {
@@ -407,24 +404,16 @@ impl LedgerService {
                 )
             })?;
 
-        // Re-wrap the blob's symmetric key. This should be done before budgets are updated in case
+        // If there is key rewrapping context, re-wrap the blob's symmetric key.
+        // This is done only on the replica of the Ledger that owns the event (has originally
+        // processed the request) as opposed to replicas where the event has been replicated.
+        // This should be done before budgets are updated in case
         // there are decryption errors (e.g., due to invalid associated data).
-        let wrap_associated_data =
-            [&per_key_ledger.public_key[..], &event.recipient_nonce[..]].concat();
-        let (encapsulated_key, encrypted_symmetric_key) = cfc_crypto::rewrap_symmetric_key(
-            &event.encrypted_symmetric_key,
-            &event.encapsulated_key,
-            &per_key_ledger.private_key,
-            /* unwrap_associated_data= */ &event.blob_header,
-            &recipient_public_key,
-            &wrap_associated_data,
-        )
-        .map_err(|err| {
-            micro_rpc::Status::new_with_message(
-                micro_rpc::StatusCode::InvalidArgument,
-                format!("failed to re-wrap symmetric key: {:?}", err),
-            )
-        })?;
+        let response = if let Some(context) = context {
+            Self::rewrap_symmetric_key(per_key_ledger, context, &event.blob_header)?
+        } else {
+            AuthorizeAccessResponse::default()
+        };
 
         // Update the budget. This can potentially fail if the budget is insufficient at
         // the time when the event is applied, which can be a short delay from from the
@@ -436,6 +425,41 @@ impl LedgerService {
             &header.access_policy_sha256,
         )?;
 
+        Ok(response)
+    }
+
+    // Implements the part of the "AuthorizeAccess" event handling that needs to be done
+    // only on the replica that originally handled the command as opposed to other replicas where
+    // the event was replicated.
+    fn rewrap_symmetric_key(
+        per_key_ledger: &PerKeyLedger,
+        context: KeyRewrappingContext,
+        unwrap_associated_data: &[u8],
+    ) -> Result<AuthorizeAccessResponse, micro_rpc::Status> {
+        let recipient_public_key =
+            extract_key_from_cwt(&context.recipient_public_key).map_err(|err| {
+                micro_rpc::Status::new_with_message(
+                    micro_rpc::StatusCode::InvalidArgument,
+                    format!("public_key is invalid: {:?}", err),
+                )
+            })?;
+
+        let wrap_associated_data =
+            [&per_key_ledger.public_key[..], &context.recipient_nonce[..]].concat();
+        let (encapsulated_key, encrypted_symmetric_key) = cfc_crypto::rewrap_symmetric_key(
+            &context.encrypted_symmetric_key,
+            &context.encapsulated_key,
+            &per_key_ledger.private_key,
+            unwrap_associated_data,
+            &recipient_public_key,
+            &wrap_associated_data,
+        )
+        .map_err(|err| {
+            micro_rpc::Status::new_with_message(
+                micro_rpc::StatusCode::InvalidArgument,
+                format!("failed to re-wrap symmetric key: {:?}", err),
+            )
+        })?;
         Ok(AuthorizeAccessResponse {
             encapsulated_key,
             encrypted_symmetric_key,
@@ -544,8 +568,9 @@ impl Ledger for LedgerService {
         &mut self,
         request: AuthorizeAccessRequest,
     ) -> Result<AuthorizeAccessResponse, micro_rpc::Status> {
-        let authorize_access_event = self.attest_and_produce_authorize_access_event(request)?;
-        self.apply_authorize_access_event(authorize_access_event)
+        let (authorize_access_event, key_rewrapping_context) =
+            self.attest_and_produce_authorize_access_event(request)?;
+        self.apply_authorize_access_event(authorize_access_event, Some(key_rewrapping_context))
     }
 
     fn revoke_access(

@@ -4,3 +4,4 @@
 /.direnv/
 /bazel-*
 rust-project.json
+/.vscode/settings.json
