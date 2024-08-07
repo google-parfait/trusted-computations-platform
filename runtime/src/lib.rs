@@ -46,6 +46,7 @@ pub mod model;
 pub mod oak_handshaker;
 pub mod platform;
 pub mod service;
+pub mod session;
 pub mod snapshot;
 pub mod storage;
 pub mod util;

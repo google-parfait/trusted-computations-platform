@@ -36,8 +36,10 @@ use oak_handshaker::{
 use oak_proto_rust::oak::{
     attestation::v1::AttestationResults,
     crypto::v1::SessionKeys,
-    session::v1::{AttestRequest, AttestResponse},
-    session::v1::{HandshakeRequest, HandshakeResponse},
+    session::v1::{
+        AttestRequest, AttestResponse, HandshakeRequest, HandshakeResponse, SessionRequest,
+        SessionResponse,
+    },
 };
 use platform::{Host, PalError};
 use prost::bytes::Bytes;
@@ -48,6 +50,7 @@ use raft::{
     Error as RaftError, GetEntriesContext as RaftGetEntriesContext,
     SnapshotStatus as RaftSnapshotStatus, Storage as RaftStorage,
 };
+use session::{OakClientSession, OakServerSession, OakSession};
 use slog::Logger;
 use snapshot::{
     SnapshotError, SnapshotReceiver, SnapshotReceiverImpl, SnapshotSender, SnapshotSenderImpl,
@@ -396,5 +399,39 @@ mock! {
         fn encrypt(&self, plaintext: &[u8]) -> anyhow::Result<Vec<u8>>;
 
         fn decrypt(&self, ciphertext: &[u8]) -> anyhow::Result<Vec<u8>>;
+    }
+}
+
+mock! {
+    pub OakClientSession {
+    }
+
+    impl OakSession<SessionResponse, SessionRequest> for OakClientSession {
+    fn put_incoming_message(&mut self, incoming_message: &SessionResponse) -> anyhow::Result<Option<()>>;
+
+    fn get_outgoing_message(&mut self) -> anyhow::Result<Option<SessionRequest>>;
+
+    fn is_open(&self) -> bool;
+
+    fn write(&mut self, plaintext: &[u8]) -> anyhow::Result<()>;
+
+    fn read(&mut self) -> anyhow::Result<Option<Vec<u8>>>;
+    }
+}
+
+mock! {
+    pub OakServerSession {
+    }
+
+    impl OakSession<SessionRequest, SessionResponse> for OakServerSession {
+    fn put_incoming_message(&mut self, incoming_message: &SessionRequest) -> anyhow::Result<Option<()>>;
+
+    fn get_outgoing_message(&mut self) -> anyhow::Result<Option<SessionResponse>>;
+
+    fn is_open(&self) -> bool;
+
+    fn write(&mut self, plaintext: &[u8]) -> anyhow::Result<()>;
+
+    fn read(&mut self) -> anyhow::Result<Option<Vec<u8>>>;
     }
 }
