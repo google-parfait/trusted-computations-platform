@@ -580,7 +580,7 @@ mod tests {
         ApplicationMatcher,
     };
     use googletest::prelude::*;
-    use oak_attestation::proto::oak::crypto::v1::Signature;
+    use oak_proto_rust::oak::crypto::v1::Signature;
     use oak_restricted_kernel_sdk::testing::{MockEvidenceProvider, MockSigner};
 
     /// Helper function to create a LedgerService with one key.

@@ -33,8 +33,8 @@ mod test {
         assert_that,
         prelude::{contains_substring, displays_as, err},
     };
-    use oak_attestation::proto::oak::crypto::v1::Signature;
     use oak_proto_rust::oak::attestation::v1::Evidence;
+    use oak_proto_rust::oak::crypto::v1::Signature;
     use oak_restricted_kernel_sdk::crypto::Signer;
     use oak_restricted_kernel_sdk::testing::{MockEvidenceProvider, MockSigner};
     use sha2::{Digest, Sha256};
