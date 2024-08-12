@@ -63,11 +63,11 @@ impl AttestationProvider for DefaultAttestationProvider {
 }
 
 // Default implementation of `ClientAttestation`.
-pub struct DefaultClientAttestation<'a> {
-    _inner: ClientAttestationProvider<'a>,
+pub struct DefaultClientAttestation {
+    _inner: ClientAttestationProvider,
 }
 
-impl<'a> DefaultClientAttestation<'a> {
+impl DefaultClientAttestation {
     pub fn new() -> Self {
         let config = AttestationProviderConfig {
             attestation_type: AttestationType::Bidirectional,
@@ -80,7 +80,7 @@ impl<'a> DefaultClientAttestation<'a> {
     }
 }
 
-impl<'a> Attestation<AttestResponse, AttestRequest> for DefaultClientAttestation<'a> {
+impl Attestation<AttestResponse, AttestRequest> for DefaultClientAttestation {
     // TODO: Delegate to `inner` once the implementation is complete on Oak side.
     fn get_attestation_results(self: Box<Self>) -> Option<AttestationResults> {
         Some(AttestationResults {
@@ -111,11 +111,11 @@ impl<'a> Attestation<AttestResponse, AttestRequest> for DefaultClientAttestation
 }
 
 // Default implementation of `ServerAttestation`.
-pub struct DefaultServerAttestation<'a> {
-    _inner: ServerAttestationProvider<'a>,
+pub struct DefaultServerAttestation {
+    _inner: ServerAttestationProvider,
 }
 
-impl<'a> DefaultServerAttestation<'a> {
+impl DefaultServerAttestation {
     pub fn new() -> Self {
         let config = AttestationProviderConfig {
             attestation_type: AttestationType::Bidirectional,
@@ -128,7 +128,7 @@ impl<'a> DefaultServerAttestation<'a> {
     }
 }
 
-impl<'a> Attestation<AttestRequest, AttestResponse> for DefaultServerAttestation<'a> {
+impl Attestation<AttestRequest, AttestResponse> for DefaultServerAttestation {
     // TODO: Delegate to `inner` once the implementation is complete on Oak side.
     fn get_attestation_results(self: Box<Self>) -> Option<AttestationResults> {
         Some(AttestationResults {

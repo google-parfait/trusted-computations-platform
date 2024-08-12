@@ -18,7 +18,9 @@ use anyhow::Result;
 use oak_proto_rust::oak::session::v1::{
     session_request::Request, session_response::Response, SessionRequest, SessionResponse,
 };
-use oak_session::config::SessionConfig;
+use oak_session::attestation::AttestationType;
+use oak_session::config::{SessionConfig, SessionConfigBuilder};
+use oak_session::handshake::HandshakeType;
 use oak_session::session::{ClientSession, ServerSession};
 
 // Factory class for creating instances of `OakClientSession` and `OakServerSession`
@@ -26,15 +28,9 @@ use oak_session::session::{ClientSession, ServerSession};
 pub trait OakSessionFactory {
     // Returns OakClientSession, responsible for initiating handshake between 2 raft
     // replicas using Noise protocol.
-    fn get_oak_client_session<'a>(
-        &self,
-        config: &'a SessionConfig<'a>,
-    ) -> Result<Box<dyn OakClientSession + 'a>>;
+    fn get_oak_client_session(&self) -> Result<Box<dyn OakClientSession>>;
     // Returns OakServerSession, recipient of the handshake message from the client.
-    fn get_oak_server_session<'a>(
-        &self,
-        config: &'a SessionConfig<'a>,
-    ) -> Result<Box<dyn OakServerSession + 'a>>;
+    fn get_oak_server_session(&self) -> Result<Box<dyn OakServerSession>>;
 }
 
 /// Session representing an end-to-end encrypted bidirectional streaming session
@@ -64,41 +60,39 @@ pub trait OakServerSession = OakSession<SessionRequest, SessionResponse>;
 pub struct DefaultOakSessionFactory {}
 
 impl OakSessionFactory for DefaultOakSessionFactory {
-    fn get_oak_client_session<'a>(
-        &self,
-        config: &'a SessionConfig<'a>,
-    ) -> Result<Box<dyn OakClientSession + 'a>> {
-        let client_session = DefaultOakClientSession::create(&config)?;
+    fn get_oak_client_session(&self) -> Result<Box<dyn OakClientSession>> {
+        let client_session = DefaultOakClientSession::create()?;
         Ok(Box::new(client_session))
     }
 
-    fn get_oak_server_session<'a>(
-        &self,
-        config: &'a SessionConfig<'a>,
-    ) -> Result<Box<dyn OakServerSession + 'a>> {
-        let server_session = DefaultOakServerSession::create(&config)?;
+    fn get_oak_server_session(&self) -> Result<Box<dyn OakServerSession>> {
+        let server_session = DefaultOakServerSession::create()?;
         Ok(Box::new(server_session))
     }
 }
 
 // Default implementation of `OakClientSession`.
-pub struct DefaultOakClientSession<'a> {
-    _inner: ClientSession<'a>,
+pub struct DefaultOakClientSession {
+    _inner: ClientSession,
     incoming_ciphertext: Option<Vec<u8>>,
     outgoing_ciphertext: Option<Vec<u8>>,
 }
 
-impl<'a> DefaultOakClientSession<'a> {
-    pub fn create(config: &'a SessionConfig<'a>) -> Result<Self> {
+impl DefaultOakClientSession {
+    pub fn create() -> Result<Self> {
+        // TODO: Revisit config parameters.
         Ok(Self {
-            _inner: ClientSession::create(&config)?,
+            _inner: ClientSession::create(
+                SessionConfig::builder(AttestationType::Bidirectional, HandshakeType::NoiseNN)
+                    .build(),
+            )?,
             incoming_ciphertext: None,
             outgoing_ciphertext: None,
         })
     }
 }
 
-impl<'a> OakSession<SessionResponse, SessionRequest> for DefaultOakClientSession<'a> {
+impl OakSession<SessionResponse, SessionRequest> for DefaultOakClientSession {
     // TODO: Delegate to `inner` once the implementation is complete on Oak side.
     fn get_outgoing_message(&mut self) -> Result<Option<SessionRequest>> {
         if self.outgoing_ciphertext.is_some() {
@@ -136,23 +130,26 @@ impl<'a> OakSession<SessionResponse, SessionRequest> for DefaultOakClientSession
 }
 
 // Default implementation of `OakServerSession`.
-pub struct DefaultOakServerSession<'a> {
-    _inner: ServerSession<'a>,
+pub struct DefaultOakServerSession {
+    _inner: ServerSession,
     incoming_ciphertext: Option<Vec<u8>>,
     outgoing_ciphertext: Option<Vec<u8>>,
 }
 
-impl<'a> DefaultOakServerSession<'a> {
-    pub fn create(config: &'a SessionConfig<'a>) -> Result<Self> {
+impl DefaultOakServerSession {
+    pub fn create() -> Result<Self> {
         Ok(Self {
-            _inner: ServerSession::new(&config),
+            _inner: ServerSession::new(
+                SessionConfig::builder(AttestationType::Bidirectional, HandshakeType::NoiseNN)
+                    .build(),
+            ),
             incoming_ciphertext: None,
             outgoing_ciphertext: None,
         })
     }
 }
 
-impl<'a> OakSession<SessionRequest, SessionResponse> for DefaultOakServerSession<'a> {
+impl OakSession<SessionRequest, SessionResponse> for DefaultOakServerSession {
     // TODO: Delegate to `inner` once the implementation is complete on Oak side.
     fn get_outgoing_message(&mut self) -> Result<Option<SessionResponse>> {
         if self.outgoing_ciphertext.is_some() {
