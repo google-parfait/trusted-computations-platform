@@ -165,12 +165,19 @@ impl CommunicationModule for DefaultCommunicationModule {
             .or_insert_with(|| CommunicationState::new(logger.clone()));
 
         if !replica_state.is_initialized() {
-            replica_state.init(self.handshake_session_provider.get(
-                self.replica_id,
-                peer_replica_id,
-                Role::Initiator,
-                logger.new(o!("type" => "handshake")),
-            ))?;
+            let handshake_session = self
+                .handshake_session_provider
+                .get(
+                    self.replica_id,
+                    peer_replica_id,
+                    Role::Initiator,
+                    logger.new(o!("type" => "handshake")),
+                )
+                .map_err(|err| {
+                    warn!(logger, "Failed to get handshake_session {:?}", err);
+                    PalError::Internal
+                })?;
+            replica_state.init(handshake_session)?;
         }
 
         // Failure to process message should not lead to program termination, so simply log and
@@ -221,12 +228,19 @@ impl CommunicationModule for DefaultCommunicationModule {
             .or_insert_with(|| CommunicationState::new(logger.clone()));
 
         if !replica_state.is_initialized() {
-            replica_state.init(self.handshake_session_provider.get(
-                self.replica_id,
-                peer_replica_id,
-                Role::Recipient,
-                logger.new(o!("type" => "handshake")),
-            ))?;
+            let handshake_session = self
+                .handshake_session_provider
+                .get(
+                    self.replica_id,
+                    peer_replica_id,
+                    Role::Recipient,
+                    logger.new(o!("type" => "handshake")),
+                )
+                .map_err(|err| {
+                    warn!(logger, "Failed to get handshake_session {:?}", err);
+                    PalError::Internal
+                })?;
+            replica_state.init(handshake_session)?;
         }
 
         // Failure to process message should not lead to program termination, so simply log and
@@ -455,8 +469,8 @@ impl CommunicationState {
         }
     }
 
-    fn decrypt_message(&self, message: in_message::Msg) -> Option<in_message::Msg> {
-        let encryptor = self.encryptor.as_ref().unwrap();
+    fn decrypt_message(&mut self, message: in_message::Msg) -> Option<in_message::Msg> {
+        let encryptor = self.encryptor.as_mut().unwrap();
         let result = match message {
             in_message::Msg::DeliverSystemMessage(mut msg) => encryptor
                 .decrypt(&msg.message_contents)
@@ -492,7 +506,7 @@ impl CommunicationState {
     fn take_encrypted_messages(&mut self) -> Vec<OutMessage> {
         let mut messages = Vec::new();
         let unencrypted_msgs = mem::take(&mut self.unencrypted_messages);
-        let encryptor = self.encryptor.as_ref().unwrap();
+        let encryptor = self.encryptor.as_mut().unwrap();
 
         for unencrypted_message in unencrypted_msgs {
             let result = match unencrypted_message {
@@ -692,7 +706,7 @@ mod test {
                 .expect_get()
                 .with(eq(self_replica_id), eq(peer_replica_id), eq(role), always())
                 .once()
-                .return_once(move |_, _, _, _| Box::new(mock_handshake_session));
+                .return_once(move |_, _, _, _| Ok(Box::new(mock_handshake_session)));
             self
         }
 

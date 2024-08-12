@@ -12,26 +12,15 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-use crate::{
-    attestation::{AttestationProvider, ClientAttestation, ServerAttestation},
-    encryptor::DefaultEncryptor,
-    encryptor::Encryptor,
-    oak_handshaker::{OakClientHandshaker, OakHandshakerFactory, OakServerHandshaker},
-};
 use alloc::{boxed::Box, format};
 use anyhow::{anyhow, Error, Result};
-use oak_proto_rust::oak::crypto::v1::SessionKeys;
-use oak_proto_rust::oak::session::v1::{
-    AttestRequest as OakAttestRequest, AttestResponse as OakAttestResponse,
-    HandshakeRequest as OakHandshakeRequest, HandshakeResponse as OakHandshakeResponse,
-};
+use encryptor::{DefaultClientEncryptor, DefaultServerEncryptor, Encryptor};
+use session::{OakClientSession, OakServerSession, OakSessionFactory};
 use slog::{debug, warn, Logger};
 use tcp_proto::runtime::endpoint::{
     secure_channel_handshake::{
-        noise_protocol, noise_protocol::initiator_request::Message::AttestRequest,
-        noise_protocol::initiator_request::Message::HandshakeRequest,
-        noise_protocol::recipient_response::Message::AttestResponse,
-        noise_protocol::recipient_response::Message::HandshakeResponse,
+        noise_protocol, noise_protocol::initiator_request::Message::SessionRequest,
+        noise_protocol::recipient_response::Message::SessionResponse,
         noise_protocol::Message::InitiatorRequest, noise_protocol::Message::RecipientResponse,
         Encryption, NoiseProtocol,
     },
@@ -56,7 +45,7 @@ pub trait HandshakeSessionProvider {
         peer_replica_id: u64,
         role: Role,
         logger: Logger,
-    ) -> Box<dyn HandshakeSession>;
+    ) -> Result<Box<dyn HandshakeSession>>;
 }
 
 /// Responsible for establishing a handshake between two raft replicas.
@@ -83,19 +72,12 @@ pub trait HandshakeSession {
 }
 
 pub struct DefaultHandshakeSessionProvider {
-    attestation_provider: Box<dyn AttestationProvider>,
-    oak_handshaker_factory: Box<dyn OakHandshakerFactory>,
+    session_factory: Box<dyn OakSessionFactory>,
 }
 
 impl DefaultHandshakeSessionProvider {
-    pub fn new(
-        attestation_provider: Box<dyn AttestationProvider>,
-        oak_handshaker_factory: Box<dyn OakHandshakerFactory>,
-    ) -> Self {
-        Self {
-            attestation_provider,
-            oak_handshaker_factory,
-        }
+    pub fn new(session_factory: Box<dyn OakSessionFactory>) -> Self {
+        Self { session_factory }
     }
 }
 impl HandshakeSessionProvider for DefaultHandshakeSessionProvider {
@@ -105,22 +87,20 @@ impl HandshakeSessionProvider for DefaultHandshakeSessionProvider {
         peer_replica_id: u64,
         role: Role,
         logger: Logger,
-    ) -> Box<dyn HandshakeSession> {
+    ) -> Result<Box<dyn HandshakeSession>> {
         match role {
-            Role::Initiator => Box::new(ClientHandshakeSession::new(
+            Role::Initiator => Ok(Box::new(ClientHandshakeSession::new(
                 logger,
                 self_replica_id,
                 peer_replica_id,
-                self.attestation_provider.get_client_attestation(),
-                self.oak_handshaker_factory.get_client_oak_handshaker(),
-            )),
-            Role::Recipient => Box::new(ServerHandshakeSession::new(
+                self.session_factory.get_oak_client_session()?,
+            ))),
+            Role::Recipient => Ok(Box::new(ServerHandshakeSession::new(
                 logger,
                 self_replica_id,
                 peer_replica_id,
-                self.attestation_provider.get_server_attestation(),
-                self.oak_handshaker_factory.get_server_oak_handshaker(),
-            )),
+                self.session_factory.get_oak_server_session()?,
+            ))),
         }
     }
 }
@@ -129,11 +109,10 @@ impl HandshakeSessionProvider for DefaultHandshakeSessionProvider {
 enum State {
     // State is unknown.
     Unknown,
-    // Bidirectional remote attestation initiated. Waiting for completion.
-    Attesting,
-    // Crypto key exchange based on Noise Protocol initiated. This occurs after
-    // attestation has been verified.
-    KeyExchange,
+    // Handshake has been initiated. This stage may include multiple steps such as
+    // verifying remote attestation and performing crypto key exchange using Noise
+    // protocol.
+    Initiated,
     // Handshake completed successfully.
     Completed,
     // Handshake failed due to internal errors or failed attestation.
@@ -144,10 +123,8 @@ pub struct ClientHandshakeSession {
     logger: Logger,
     self_replica_id: u64,
     peer_replica_id: u64,
-    attestation: Option<Box<dyn ClientAttestation>>,
-    oak_handshaker: Option<Box<dyn OakClientHandshaker>>,
+    session: Box<dyn OakClientSession>,
     state: State,
-    session_keys: SessionKeys,
 }
 
 impl ClientHandshakeSession {
@@ -155,17 +132,14 @@ impl ClientHandshakeSession {
         logger: Logger,
         self_replica_id: u64,
         peer_replica_id: u64,
-        attestation: Box<dyn ClientAttestation>,
-        oak_handshaker: Box<dyn OakClientHandshaker>,
+        session: Box<dyn OakClientSession>,
     ) -> Self {
         Self {
             logger,
             self_replica_id,
             peer_replica_id,
-            attestation: Some(attestation),
-            oak_handshaker: Some(oak_handshaker),
+            session,
             state: State::Unknown,
-            session_keys: SessionKeys::default(),
         }
     }
 
@@ -187,74 +161,20 @@ impl ClientHandshakeSession {
         self.state = State::Failed;
     }
 
-    fn get_attest_request(&mut self) -> Result<SecureChannelHandshake> {
-        match self.attestation.as_mut().unwrap().get_outgoing_message()? {
-            Some(attest_request) => Ok(self.create_secure_channel_handshake(
+    fn get_session_request(&mut self) -> Result<Option<SecureChannelHandshake>> {
+        if let Some(session_request) = self.session.get_outgoing_message()? {
+            Ok(Some(self.create_secure_channel_handshake(
                 noise_protocol::InitiatorRequest {
-                    message: Some(AttestRequest(attest_request)),
+                    message: Some(SessionRequest(session_request)),
                 },
-            )),
-            _ => Err(anyhow!("No outgoing `AttestRequest` message retrieved.")),
+            )))
+        } else {
+            debug!(
+                self.logger,
+                "No outgoing `SessionRequest` message retrieved.",
+            );
+            Ok(None)
         }
-    }
-
-    fn handle_attest_response(&mut self, attest_response: &OakAttestResponse) -> Result<()> {
-        self.attestation
-            .as_mut()
-            .unwrap()
-            .put_incoming_message(attest_response)?;
-
-        // Take out `self.attestation` out of `self` so that it can be consumed.
-        let attestation = self.attestation.take();
-        let attestation_results = attestation
-            .unwrap()
-            .get_attestation_results()
-            .ok_or_else(|| anyhow!("Failed to get AttestationResults."))?;
-
-        // Initialize `self.oak_handshaker` with the peer's public key.
-        self.oak_handshaker.as_mut().unwrap().init(
-            attestation_results
-                .extracted_evidence
-                .unwrap()
-                .encryption_public_key,
-        );
-
-        Ok(())
-    }
-
-    fn get_handshake_request(&mut self) -> Result<SecureChannelHandshake> {
-        match self
-            .oak_handshaker
-            .as_mut()
-            .unwrap()
-            .get_outgoing_message()?
-        {
-            Some(handshake_request) => Ok(self.create_secure_channel_handshake(
-                noise_protocol::InitiatorRequest {
-                    message: Some(HandshakeRequest(handshake_request)),
-                },
-            )),
-            _ => Err(anyhow!("No outgoing `HandshakeRequest` message retrieved.")),
-        }
-    }
-
-    fn handle_handshake_response(
-        &mut self,
-        handshake_response: &OakHandshakeResponse,
-    ) -> Result<()> {
-        self.oak_handshaker
-            .as_mut()
-            .unwrap()
-            .put_incoming_message(handshake_response)?;
-
-        // Take out `self.oak_handshaker` out of `self` so that it can be consumed.
-        let oak_handshaker = self.oak_handshaker.take();
-        self.session_keys = oak_handshaker
-            .unwrap()
-            .derive_session_keys()
-            .ok_or_else(|| anyhow!("Failed to derive SessionKeys."))?;
-
-        Ok(())
     }
 }
 
@@ -269,49 +189,24 @@ impl HandshakeSession for ClientHandshakeSession {
                 self.transition_to_failed(&err);
                 Err(err)
             }
-            State::Attesting => {
-                if let Some(Encryption::NoiseProtocol(ref noise_protocol)) = message.encryption
+            State::Initiated => {
+                if let Some(Encryption::NoiseProtocol(ref noise_protocol)) = &message.encryption
                     && let Some(RecipientResponse(ref recipient_response)) = noise_protocol.message
-                    && let Some(AttestResponse(ref attest_response)) = recipient_response.message
+                    && let Some(SessionResponse(ref session_response)) = recipient_response.message
                 {
                     debug!(
                         self.logger,
-                        "ClientHandshakeSession: Replica {} received AttestResponse from replica {}",
+                        "ClientHandshakeSession: Replica {} received SessionResponse from replica {}",
                         self.self_replica_id,
                         self.peer_replica_id
                     );
-                    self.handle_attest_response(attest_response)
+                    self.session
+                        .put_incoming_message(session_response)
                         .inspect_err(|err| self.transition_to_failed(err))?;
-                    self.state = State::KeyExchange;
                     Ok(())
                 } else {
                     let err = anyhow!(format!(
-                        "Unexpected handshake message {:?} received in state Attesting.",
-                        message
-                    ));
-                    self.transition_to_failed(&err);
-                    Err(err)
-                }
-            }
-            State::KeyExchange => {
-                if let Some(Encryption::NoiseProtocol(ref noise_protocol)) = message.encryption
-                    && let Some(RecipientResponse(ref recipient_response)) = noise_protocol.message
-                    && let Some(HandshakeResponse(ref handshake_response)) =
-                        recipient_response.message
-                {
-                    debug!(
-                        self.logger,
-                        "ClientHandshakeSession: Replica {} received KeyExchange response from replica {}",
-                        self.self_replica_id,
-                        self.peer_replica_id
-                    );
-                    self.handle_handshake_response(handshake_response)
-                        .inspect_err(|err| self.transition_to_failed(err))?;
-                    self.state = State::Completed;
-                    Ok(())
-                } else {
-                    let err = anyhow!(format!(
-                        "Unexpected handshake message {:?} received in state KeyExchange.",
+                        "Unexpected handshake message {:?} received in state Initiated.",
                         message
                     ));
                     self.transition_to_failed(&err);
@@ -337,34 +232,38 @@ impl HandshakeSession for ClientHandshakeSession {
             State::Unknown => {
                 debug!(
                     self.logger,
-                    "ClientHandshakeSession: Replica {} initiating AttestRequest with peer {}",
+                    "ClientHandshakeSession: Replica {} initiating SessionRequest with peer {}",
                     self.self_replica_id,
                     self.peer_replica_id
                 );
-                let attest_request = self
-                    .get_attest_request()
+                let session_request = self
+                    .get_session_request()
                     .inspect_err(|err| self.transition_to_failed(err))?;
-                self.state = State::Attesting;
-                Ok(Some(attest_request))
+                self.state = State::Initiated;
+                Ok(session_request)
             }
-            State::Attesting => {
-                debug!(
-                    self.logger,
-                    "No messages to take out while state is still Attesting."
-                );
-                Ok(None)
-            }
-            State::KeyExchange => {
-                debug!(
-                    self.logger,
-                    "ClientHandshakeSession: Replica {} initiating KeyExchange with peer {}",
-                    self.self_replica_id,
-                    self.peer_replica_id
-                );
-                let handshake_request = self
-                    .get_handshake_request()
-                    .inspect_err(|err| self.transition_to_failed(err))?;
-                Ok(Some(handshake_request))
+            State::Initiated => {
+                if self.session.is_open() {
+                    debug!(
+                        self.logger,
+                        "ClientHandshakeSession: Replica {} completed handshake with peer {}",
+                        self.self_replica_id,
+                        self.peer_replica_id
+                    );
+                    self.state = State::Completed;
+                    Ok(None)
+                } else {
+                    debug!(
+                        self.logger,
+                        "ClientHandshakeSession: Replica {} retrieving next SessionRequest for peer {}",
+                        self.self_replica_id,
+                        self.peer_replica_id
+                    );
+                    let session_request = self
+                        .get_session_request()
+                        .inspect_err(|err| self.transition_to_failed(err))?;
+                    Ok(session_request)
+                }
             }
             State::Completed => {
                 debug!(
@@ -389,7 +288,7 @@ impl HandshakeSession for ClientHandshakeSession {
             return None;
         }
 
-        Some(Box::new(DefaultEncryptor::new(self.session_keys)))
+        Some(Box::new(DefaultClientEncryptor::new(self.session)))
     }
 }
 
@@ -397,10 +296,8 @@ pub struct ServerHandshakeSession {
     logger: Logger,
     self_replica_id: u64,
     peer_replica_id: u64,
-    attestation: Option<Box<dyn ServerAttestation>>,
-    oak_handshaker: Option<Box<dyn OakServerHandshaker>>,
+    session: Box<dyn OakServerSession>,
     state: State,
-    session_keys: SessionKeys,
 }
 
 impl ServerHandshakeSession {
@@ -408,17 +305,14 @@ impl ServerHandshakeSession {
         logger: Logger,
         self_replica_id: u64,
         peer_replica_id: u64,
-        attestation: Box<dyn ServerAttestation>,
-        oak_handshaker: Box<dyn OakServerHandshaker>,
+        session: Box<dyn OakServerSession>,
     ) -> Self {
         Self {
             logger,
             self_replica_id,
             peer_replica_id,
-            attestation: Some(attestation),
-            oak_handshaker: Some(oak_handshaker),
+            session,
             state: State::Unknown,
-            session_keys: SessionKeys::default(),
         }
     }
 
@@ -440,133 +334,47 @@ impl ServerHandshakeSession {
         self.state = State::Failed;
     }
 
-    fn handle_attest_request(&mut self, attest_request: &OakAttestRequest) -> Result<()> {
-        self.attestation
-            .as_mut()
-            .unwrap()
-            .put_incoming_message(attest_request)?;
-        Ok(())
-    }
-
-    fn get_attest_response(&mut self) -> Result<SecureChannelHandshake> {
-        match self.attestation.as_mut().unwrap().get_outgoing_message()? {
-            Some(attest_response) => Ok(self.create_secure_channel_handshake(
+    fn get_session_response(&mut self) -> Result<Option<SecureChannelHandshake>> {
+        if let Some(session_response) = self.session.get_outgoing_message()? {
+            Ok(Some(self.create_secure_channel_handshake(
                 noise_protocol::RecipientResponse {
-                    message: Some(AttestResponse(attest_response)),
+                    message: Some(SessionResponse(session_response)),
                 },
-            )),
-            _ => Err(anyhow!("No outgoing `AttestResponse` message retrieved.")),
+            )))
+        } else {
+            debug!(
+                self.logger,
+                "No outgoing `SessionResponse` message retrieved.",
+            );
+            Ok(None)
         }
-    }
-
-    fn init_oak_handshaker(&mut self) -> Result<()> {
-        // Take out `self.attestation` out of `self` so that it can be consumed.
-        let attestation = self.attestation.take();
-        let attestation_results = attestation
-            .unwrap()
-            .get_attestation_results()
-            .ok_or_else(|| anyhow!("Failed to get AttestationResults."))?;
-
-        // Initialize `self.oak_handshaker` with the peer's public key.
-        self.oak_handshaker.as_mut().unwrap().init(
-            attestation_results
-                .extracted_evidence
-                .unwrap()
-                .encryption_public_key,
-        );
-
-        Ok(())
-    }
-
-    fn handle_handshake_request(&mut self, handshake_request: &OakHandshakeRequest) -> Result<()> {
-        self.oak_handshaker
-            .as_mut()
-            .unwrap()
-            .put_incoming_message(handshake_request)?;
-        Ok(())
-    }
-
-    fn get_handshake_response(&mut self) -> Result<SecureChannelHandshake> {
-        match self
-            .oak_handshaker
-            .as_mut()
-            .unwrap()
-            .get_outgoing_message()?
-        {
-            Some(handshake_response) => Ok(self.create_secure_channel_handshake(
-                noise_protocol::RecipientResponse {
-                    message: Some(HandshakeResponse(handshake_response)),
-                },
-            )),
-            _ => Err(anyhow!(
-                "No outgoing `HandshakeResponse` message retrieved."
-            )),
-        }
-    }
-
-    fn init_session_keys(&mut self) -> Result<()> {
-        // Take out `self.oak_handshaker` out of `self` so that it can be consumed.
-        let oak_handshaker = self.oak_handshaker.take();
-        self.session_keys = oak_handshaker
-            .unwrap()
-            .derive_session_keys()
-            .ok_or_else(|| anyhow!("Failed to derive SessionKeys."))?;
-
-        Ok(())
     }
 }
 
 impl HandshakeSession for ServerHandshakeSession {
     fn process_message(&mut self, message: &SecureChannelHandshake) -> Result<()> {
         return match self.state {
-            State::Unknown => {
-                if let Some(Encryption::NoiseProtocol(ref noise_protocol)) = message.encryption
+            State::Unknown | State::Initiated => {
+                if let Some(Encryption::NoiseProtocol(ref noise_protocol)) = &message.encryption
                     && let Some(InitiatorRequest(ref initiator_request)) = noise_protocol.message
-                    && let Some(AttestRequest(ref attest_request)) = initiator_request.message
+                    && let Some(SessionRequest(ref session_request)) = initiator_request.message
                 {
                     debug!(
                         self.logger,
-                        "ServerHandshakeSession: Replica {} received AttestRequest from peer {}",
+                        "ServerHandshakeSession: Replica {} received SessionRequest from peer {}",
                         self.self_replica_id,
                         self.peer_replica_id
                     );
-                    self.handle_attest_request(attest_request)
+                    self.session
+                        .put_incoming_message(session_request)
                         .inspect_err(|err| self.transition_to_failed(err))?;
-                    self.state = State::Attesting;
+                    if self.state != State::Initiated {
+                        self.state = State::Initiated;
+                    }
                     Ok(())
                 } else {
                     let err = anyhow!(format!(
                         "Unexpected handshake message {:?} received in state Unknown.",
-                        message
-                    ));
-                    self.transition_to_failed(&err);
-                    Err(err)
-                }
-            }
-            State::Attesting => {
-                let err = anyhow!(format!(
-                    "Unexpected handshake message {:?} received in state Attesting.",
-                    message
-                ));
-                self.transition_to_failed(&err);
-                Err(err)
-            }
-            State::KeyExchange => {
-                if let Some(Encryption::NoiseProtocol(ref noise_protocol)) = message.encryption
-                    && let Some(InitiatorRequest(ref initiator_request)) = noise_protocol.message
-                    && let Some(HandshakeRequest(ref handshake_request)) = initiator_request.message
-                {
-                    debug!(
-                        self.logger,
-                        "ServerHandshakeSession: Replica {} received KeyExchange request from peer {}",
-                        self.self_replica_id,
-                        self.peer_replica_id
-                    );
-                    self.handle_handshake_request(handshake_request)
-                        .inspect_err(|err| self.transition_to_failed(err))
-                } else {
-                    let err = anyhow!(format!(
-                        "Unexpected handshake message {:?} received in state KeyExchange.",
                         message
                     ));
                     self.transition_to_failed(&err);
@@ -593,35 +401,20 @@ impl HandshakeSession for ServerHandshakeSession {
                 debug!(self.logger, "No messages to take out in state Unknown");
                 Ok(None)
             }
-            State::Attesting => {
+            State::Initiated => {
                 debug!(
                     self.logger,
-                    "ServerHandshakeSession: Replica {} responding with AttestResponse to peer {}",
+                    "ServerHandshakeSession: Replica {} responding with SessionResponse to peer {}",
                     self.self_replica_id,
                     self.peer_replica_id
                 );
-                let attest_response = self
-                    .get_attest_response()
+                let session_response = self
+                    .get_session_response()
                     .inspect_err(|err| self.transition_to_failed(err))?;
-                self.init_oak_handshaker()
-                    .inspect_err(|err| self.transition_to_failed(err))?;
-                self.state = State::KeyExchange;
-                Ok(Some(attest_response))
-            }
-            State::KeyExchange => {
-                debug!(
-                    self.logger,
-                    "ServerHandshakeSession: Replica {} responding with KeyExchange response to peer {}",
-                    self.self_replica_id,
-                    self.peer_replica_id
-                );
-                let handshake_response = self
-                    .get_handshake_response()
-                    .inspect_err(|err| self.transition_to_failed(err))?;
-                self.init_session_keys()
-                    .inspect_err(|err| self.transition_to_failed(err))?;
-                self.state = State::Completed;
-                Ok(Some(handshake_response))
+                if self.session.is_open() {
+                    self.state = State::Completed;
+                }
+                Ok(session_response)
             }
             State::Completed => {
                 debug!(
@@ -646,7 +439,7 @@ impl HandshakeSession for ServerHandshakeSession {
             return None;
         }
 
-        Some(Box::new(DefaultEncryptor::new(self.session_keys)))
+        Some(Box::new(DefaultServerEncryptor::new(self.session)))
     }
 }
 
@@ -660,32 +453,23 @@ mod test {
         HandshakeSessionProvider, Role, ServerHandshakeSession,
     };
     use crate::logger::log::create_logger;
-    use alloc::vec;
     use anyhow::{anyhow, Result};
     use core::mem;
-    use mock::{
-        MockAttestationProvider, MockClientAttestation, MockOakClientHandshaker,
-        MockOakHandshakerFactory, MockOakServerHandshaker, MockServerAttestation,
-    };
-    use oak_proto_rust::oak::attestation::v1::{AttestationResults, ExtractedEvidence};
-    use oak_proto_rust::oak::crypto::v1::SessionKeys;
+    use mock::{MockOakClientSession, MockOakServerSession, MockOakSessionFactory};
     use oak_proto_rust::oak::session::v1::{
-        AttestRequest as OakAttestRequest, AttestResponse as OakAttestResponse,
-        HandshakeRequest as OakHandshakeRequest, HandshakeResponse as OakHandshakeResponse,
+        SessionRequest as OakSessionRequest, SessionResponse as OakSessionResponse,
     };
     use tcp_proto::runtime::endpoint::{
         secure_channel_handshake::{
-            noise_protocol, noise_protocol::initiator_request::Message::AttestRequest,
-            noise_protocol::initiator_request::Message::HandshakeRequest,
-            noise_protocol::recipient_response::Message::AttestResponse,
-            noise_protocol::recipient_response::Message::HandshakeResponse,
+            noise_protocol, noise_protocol::initiator_request::Message::SessionRequest,
+            noise_protocol::recipient_response::Message::SessionResponse,
             noise_protocol::Message::InitiatorRequest, noise_protocol::Message::RecipientResponse,
             Encryption, NoiseProtocol,
         },
         *,
     };
 
-    fn create_attest_request(
+    fn create_session_request(
         sender_replica_id: u64,
         recipient_replica_id: u64,
     ) -> SecureChannelHandshake {
@@ -694,13 +478,13 @@ mod test {
             sender_replica_id,
             encryption: Some(Encryption::NoiseProtocol(NoiseProtocol {
                 message: Some(InitiatorRequest(noise_protocol::InitiatorRequest {
-                    message: Some(AttestRequest(OakAttestRequest::default())),
+                    message: Some(SessionRequest(OakSessionRequest::default())),
                 })),
             })),
         }
     }
 
-    fn create_attest_response(
+    fn create_session_response(
         sender_replica_id: u64,
         recipient_replica_id: u64,
     ) -> SecureChannelHandshake {
@@ -709,94 +493,64 @@ mod test {
             sender_replica_id,
             encryption: Some(Encryption::NoiseProtocol(NoiseProtocol {
                 message: Some(RecipientResponse(noise_protocol::RecipientResponse {
-                    message: Some(AttestResponse(OakAttestResponse::default())),
+                    message: Some(SessionResponse(OakSessionResponse::default())),
                 })),
             })),
         }
     }
 
-    fn create_handshake_request(
-        sender_replica_id: u64,
-        recipient_replica_id: u64,
-    ) -> SecureChannelHandshake {
-        SecureChannelHandshake {
-            recipient_replica_id,
-            sender_replica_id,
-            encryption: Some(Encryption::NoiseProtocol(NoiseProtocol {
-                message: Some(InitiatorRequest(noise_protocol::InitiatorRequest {
-                    message: Some(HandshakeRequest(OakHandshakeRequest::default())),
-                })),
-            })),
-        }
+    struct OakSessionFactoryBuilder {
+        mock_oak_session_factory: MockOakSessionFactory,
     }
 
-    fn create_handshake_response(
-        sender_replica_id: u64,
-        recipient_replica_id: u64,
-    ) -> SecureChannelHandshake {
-        SecureChannelHandshake {
-            recipient_replica_id,
-            sender_replica_id,
-            encryption: Some(Encryption::NoiseProtocol(NoiseProtocol {
-                message: Some(RecipientResponse(noise_protocol::RecipientResponse {
-                    message: Some(HandshakeResponse(OakHandshakeResponse::default())),
-                })),
-            })),
-        }
-    }
-
-    struct AttestationProviderBuilder {
-        mock_attestation_provider: MockAttestationProvider,
-    }
-
-    impl AttestationProviderBuilder {
-        fn new() -> AttestationProviderBuilder {
-            AttestationProviderBuilder {
-                mock_attestation_provider: MockAttestationProvider::new(),
+    impl OakSessionFactoryBuilder {
+        fn new() -> OakSessionFactoryBuilder {
+            OakSessionFactoryBuilder {
+                mock_oak_session_factory: MockOakSessionFactory::new(),
             }
         }
 
-        fn expect_get_client_attestation(
+        fn expect_get_oak_client_session(
             mut self,
-            mock_attestation: MockClientAttestation,
-        ) -> AttestationProviderBuilder {
-            self.mock_attestation_provider
-                .expect_get_client_attestation()
-                .return_once(move || Box::new(mock_attestation));
+            mock_oak_session: MockOakClientSession,
+        ) -> OakSessionFactoryBuilder {
+            self.mock_oak_session_factory
+                .expect_get_oak_client_session()
+                .return_once(move || Ok(Box::new(mock_oak_session)));
             self
         }
 
-        fn expect_get_server_attestation(
+        fn expect_get_oak_server_session(
             mut self,
-            mock_attestation: MockServerAttestation,
-        ) -> AttestationProviderBuilder {
-            self.mock_attestation_provider
-                .expect_get_server_attestation()
-                .return_once(move || Box::new(mock_attestation));
+            mock_oak_session: MockOakServerSession,
+        ) -> OakSessionFactoryBuilder {
+            self.mock_oak_session_factory
+                .expect_get_oak_server_session()
+                .return_once(move || Ok(Box::new(mock_oak_session)));
             self
         }
 
-        fn take(mut self) -> MockAttestationProvider {
-            mem::take(&mut self.mock_attestation_provider)
+        fn take(mut self) -> MockOakSessionFactory {
+            mem::take(&mut self.mock_oak_session_factory)
         }
     }
 
-    struct ClientAttestationBuilder {
-        mock_client_attestation: MockClientAttestation,
+    struct OakClientSessionBuilder {
+        mock_oak_client_session: MockOakClientSession,
     }
 
-    impl ClientAttestationBuilder {
-        fn new() -> ClientAttestationBuilder {
-            ClientAttestationBuilder {
-                mock_client_attestation: MockClientAttestation::new(),
+    impl OakClientSessionBuilder {
+        fn new() -> OakClientSessionBuilder {
+            OakClientSessionBuilder {
+                mock_oak_client_session: MockOakClientSession::new(),
             }
         }
 
         fn expect_get_outgoing_message(
             mut self,
-            message: Result<Option<OakAttestRequest>>,
-        ) -> ClientAttestationBuilder {
-            self.mock_client_attestation
+            message: Result<Option<OakSessionRequest>>,
+        ) -> OakClientSessionBuilder {
+            self.mock_oak_client_session
                 .expect_get_outgoing_message()
                 .once()
                 .return_once(move || message);
@@ -805,10 +559,10 @@ mod test {
 
         fn expect_put_incoming_message(
             mut self,
-            message: OakAttestResponse,
+            message: OakSessionResponse,
             result: Result<Option<()>>,
-        ) -> ClientAttestationBuilder {
-            self.mock_client_attestation
+        ) -> OakClientSessionBuilder {
+            self.mock_oak_client_session
                 .expect_put_incoming_message()
                 .with(eq(message))
                 .once()
@@ -816,45 +570,35 @@ mod test {
             self
         }
 
-        fn expect_get_attestation_results(mut self) -> ClientAttestationBuilder {
-            self.mock_client_attestation
-                .expect_get_attestation_results()
+        fn expect_is_open(mut self, is_open: bool) -> OakClientSessionBuilder {
+            self.mock_oak_client_session
+                .expect_is_open()
                 .once()
-                .return_const(Some(AttestationResults {
-                    status: 0,
-                    reason: String::new(),
-                    encryption_public_key: vec![],
-                    signing_public_key: vec![],
-                    extracted_evidence: Some(ExtractedEvidence {
-                        encryption_public_key: vec![],
-                        signing_public_key: vec![],
-                        evidence_values: None,
-                    }),
-                }));
+                .return_const(is_open);
             self
         }
 
-        fn take(mut self) -> MockClientAttestation {
-            mem::take(&mut self.mock_client_attestation)
+        fn take(mut self) -> MockOakClientSession {
+            mem::take(&mut self.mock_oak_client_session)
         }
     }
 
-    struct ServerAttestationBuilder {
-        mock_server_attestation: MockServerAttestation,
+    struct OakServerSessionBuilder {
+        mock_oak_server_session: MockOakServerSession,
     }
 
-    impl ServerAttestationBuilder {
-        fn new() -> ServerAttestationBuilder {
-            ServerAttestationBuilder {
-                mock_server_attestation: MockServerAttestation::new(),
+    impl OakServerSessionBuilder {
+        fn new() -> OakServerSessionBuilder {
+            OakServerSessionBuilder {
+                mock_oak_server_session: MockOakServerSession::new(),
             }
         }
 
         fn expect_get_outgoing_message(
             mut self,
-            message: Result<Option<OakAttestResponse>>,
-        ) -> ServerAttestationBuilder {
-            self.mock_server_attestation
+            message: Result<Option<OakSessionResponse>>,
+        ) -> OakServerSessionBuilder {
+            self.mock_oak_server_session
                 .expect_get_outgoing_message()
                 .once()
                 .return_once(move || message);
@@ -863,10 +607,10 @@ mod test {
 
         fn expect_put_incoming_message(
             mut self,
-            message: OakAttestRequest,
+            message: OakSessionRequest,
             result: Result<Option<()>>,
-        ) -> ServerAttestationBuilder {
-            self.mock_server_attestation
+        ) -> OakServerSessionBuilder {
+            self.mock_oak_server_session
                 .expect_put_incoming_message()
                 .with(eq(message))
                 .once()
@@ -874,180 +618,16 @@ mod test {
             self
         }
 
-        fn expect_get_attestation_results(mut self) -> ServerAttestationBuilder {
-            self.mock_server_attestation
-                .expect_get_attestation_results()
+        fn expect_is_open(mut self, is_open: bool) -> OakServerSessionBuilder {
+            self.mock_oak_server_session
+                .expect_is_open()
                 .once()
-                .return_const(Some(AttestationResults {
-                    status: 0,
-                    reason: String::new(),
-                    encryption_public_key: vec![],
-                    signing_public_key: vec![],
-                    extracted_evidence: Some(ExtractedEvidence {
-                        encryption_public_key: vec![],
-                        signing_public_key: vec![],
-                        evidence_values: None,
-                    }),
-                }));
+                .return_const(is_open);
             self
         }
 
-        fn take(mut self) -> MockServerAttestation {
-            mem::take(&mut self.mock_server_attestation)
-        }
-    }
-
-    struct OakHandshakerFactoryBuilder {
-        mock_oak_handshaker_factory: MockOakHandshakerFactory,
-    }
-
-    impl OakHandshakerFactoryBuilder {
-        fn new() -> OakHandshakerFactoryBuilder {
-            OakHandshakerFactoryBuilder {
-                mock_oak_handshaker_factory: MockOakHandshakerFactory::new(),
-            }
-        }
-
-        fn expect_get_client_oak_handshaker(
-            mut self,
-            mock_oak_handshaker: MockOakClientHandshaker,
-        ) -> OakHandshakerFactoryBuilder {
-            self.mock_oak_handshaker_factory
-                .expect_get_client_oak_handshaker()
-                .return_once(move || Box::new(mock_oak_handshaker));
-            self
-        }
-
-        fn expect_get_server_oak_handshaker(
-            mut self,
-            mock_oak_handshaker: MockOakServerHandshaker,
-        ) -> OakHandshakerFactoryBuilder {
-            self.mock_oak_handshaker_factory
-                .expect_get_server_oak_handshaker()
-                .return_once(move || Box::new(mock_oak_handshaker));
-            self
-        }
-
-        fn take(mut self) -> MockOakHandshakerFactory {
-            mem::take(&mut self.mock_oak_handshaker_factory)
-        }
-    }
-
-    struct OakClientHandshakerBuilder {
-        mock_oak_client_handshaker: MockOakClientHandshaker,
-    }
-
-    impl OakClientHandshakerBuilder {
-        fn new() -> OakClientHandshakerBuilder {
-            OakClientHandshakerBuilder {
-                mock_oak_client_handshaker: MockOakClientHandshaker::new(),
-            }
-        }
-
-        fn expect_init(mut self) -> OakClientHandshakerBuilder {
-            self.mock_oak_client_handshaker
-                .expect_init()
-                .once()
-                .return_const(());
-            self
-        }
-
-        fn expect_get_outgoing_message(
-            mut self,
-            message: Result<Option<OakHandshakeRequest>>,
-        ) -> OakClientHandshakerBuilder {
-            self.mock_oak_client_handshaker
-                .expect_get_outgoing_message()
-                .once()
-                .return_once(move || message);
-            self
-        }
-
-        fn expect_put_incoming_message(
-            mut self,
-            message: OakHandshakeResponse,
-            result: Result<Option<()>>,
-        ) -> OakClientHandshakerBuilder {
-            self.mock_oak_client_handshaker
-                .expect_put_incoming_message()
-                .with(eq(message))
-                .once()
-                .return_once(move |_| result);
-            self
-        }
-
-        fn expect_derive_session_keys(mut self) -> OakClientHandshakerBuilder {
-            self.mock_oak_client_handshaker
-                .expect_derive_session_keys()
-                .once()
-                .return_const(Some(SessionKeys {
-                    request_key: vec![],
-                    response_key: vec![],
-                }));
-            self
-        }
-
-        fn take(mut self) -> MockOakClientHandshaker {
-            mem::take(&mut self.mock_oak_client_handshaker)
-        }
-    }
-
-    struct OakServerHandshakerBuilder {
-        mock_oak_server_handshaker: MockOakServerHandshaker,
-    }
-
-    impl OakServerHandshakerBuilder {
-        fn new() -> OakServerHandshakerBuilder {
-            OakServerHandshakerBuilder {
-                mock_oak_server_handshaker: MockOakServerHandshaker::new(),
-            }
-        }
-
-        fn expect_init(mut self) -> OakServerHandshakerBuilder {
-            self.mock_oak_server_handshaker
-                .expect_init()
-                .once()
-                .return_const(());
-            self
-        }
-
-        fn expect_get_outgoing_message(
-            mut self,
-            message: Result<Option<OakHandshakeResponse>>,
-        ) -> OakServerHandshakerBuilder {
-            self.mock_oak_server_handshaker
-                .expect_get_outgoing_message()
-                .once()
-                .return_once(move || message);
-            self
-        }
-
-        fn expect_put_incoming_message(
-            mut self,
-            message: OakHandshakeRequest,
-            result: Result<Option<()>>,
-        ) -> OakServerHandshakerBuilder {
-            self.mock_oak_server_handshaker
-                .expect_put_incoming_message()
-                .with(eq(message))
-                .once()
-                .return_once(move |_| result);
-            self
-        }
-
-        fn expect_derive_session_keys(mut self) -> OakServerHandshakerBuilder {
-            self.mock_oak_server_handshaker
-                .expect_derive_session_keys()
-                .once()
-                .return_const(Some(SessionKeys {
-                    request_key: vec![],
-                    response_key: vec![],
-                }));
-            self
-        }
-
-        fn take(mut self) -> MockOakServerHandshaker {
-            mem::take(&mut self.mock_oak_server_handshaker)
+        fn take(mut self) -> MockOakServerSession {
+            mem::take(&mut self.mock_oak_server_session)
         }
     }
 
@@ -1055,67 +635,48 @@ mod test {
     fn test_client_session_success() {
         let self_replica_id = 11111;
         let peer_replica_id = 22222;
-        let attest_request = create_attest_request(self_replica_id, peer_replica_id);
-        let attest_response = create_attest_response(self_replica_id, peer_replica_id);
-        let handshake_request = create_handshake_request(self_replica_id, peer_replica_id);
-        let handshake_response = create_handshake_response(self_replica_id, peer_replica_id);
-        let mock_client_attestation = ClientAttestationBuilder::new()
-            .expect_get_outgoing_message(Ok(Some(OakAttestRequest::default())))
-            .expect_put_incoming_message(OakAttestResponse::default(), Ok(Some(())))
-            .expect_get_attestation_results()
+        let session_request = create_session_request(self_replica_id, peer_replica_id);
+        let session_response = create_session_response(self_replica_id, peer_replica_id);
+        let mock_oak_client_session = OakClientSessionBuilder::new()
+            .expect_get_outgoing_message(Ok(Some(OakSessionRequest::default())))
+            .expect_is_open(false)
+            .expect_get_outgoing_message(Ok(None))
+            .expect_put_incoming_message(OakSessionResponse::default(), Ok(Some(())))
+            .expect_is_open(true)
             .take();
-        let mock_attestation_provider = AttestationProviderBuilder::new()
-            .expect_get_client_attestation(mock_client_attestation)
+        let mock_oak_session_factory = OakSessionFactoryBuilder::new()
+            .expect_get_oak_client_session(mock_oak_client_session)
             .take();
-        let mock_oak_client_handshaker = OakClientHandshakerBuilder::new()
-            .expect_init()
-            .expect_get_outgoing_message(Ok(Some(OakHandshakeRequest::default())))
-            .expect_put_incoming_message(OakHandshakeResponse::default(), Ok(Some(())))
-            .expect_derive_session_keys()
-            .take();
-        let mock_oak_handshaker_factory = OakHandshakerFactoryBuilder::new()
-            .expect_get_client_oak_handshaker(mock_oak_client_handshaker)
-            .take();
-        let handshake_session_provider = DefaultHandshakeSessionProvider::new(
-            Box::new(mock_attestation_provider),
-            Box::new(mock_oak_handshaker_factory),
-        );
-        let mut client_handshake_session = handshake_session_provider.get(
-            self_replica_id,
-            peer_replica_id,
-            Role::Initiator,
-            create_logger(),
-        );
+        let handshake_session_provider =
+            DefaultHandshakeSessionProvider::new(Box::new(mock_oak_session_factory));
+        let mut client_handshake_session = handshake_session_provider
+            .get(
+                self_replica_id,
+                peer_replica_id,
+                Role::Initiator,
+                create_logger(),
+            )
+            .unwrap();
 
         assert_eq!(
-            Some(attest_request),
+            Some(session_request),
             client_handshake_session.take_out_message().unwrap()
         );
         assert_eq!(None, client_handshake_session.take_out_message().unwrap());
         assert_eq!(
             true,
             client_handshake_session
-                .process_message(&attest_response)
+                .process_message(&session_response)
                 .is_ok()
         );
-        assert_eq!(false, client_handshake_session.is_completed());
-        assert_eq!(
-            Some(handshake_request),
-            client_handshake_session.take_out_message().unwrap()
-        );
-        assert_eq!(
-            true,
-            client_handshake_session
-                .process_message(&handshake_response)
-                .is_ok()
-        );
+        assert_eq!(None, client_handshake_session.take_out_message().unwrap());
         assert_eq!(true, client_handshake_session.is_completed());
 
         // Processing messages in COMPLETED state is ignored.
         assert_eq!(
             true,
             client_handshake_session
-                .process_message(&attest_response)
+                .process_message(&session_response)
                 .is_ok()
         );
         assert_eq!(None, client_handshake_session.take_out_message().unwrap());
@@ -1124,145 +685,47 @@ mod test {
     }
 
     #[test]
-    fn test_client_session_get_attest_request_error() {
+    fn test_client_session_get_session_request_error() {
         let self_replica_id = 11111;
         let peer_replica_id = 22222;
-        let attest_response = create_attest_response(self_replica_id, peer_replica_id);
-        let mock_client_attestation = ClientAttestationBuilder::new()
+        let mock_oak_client_session = OakClientSessionBuilder::new()
             .expect_get_outgoing_message(Err(anyhow!("Error")))
             .take();
         let mut client_handshake_session = ClientHandshakeSession::new(
             create_logger(),
             self_replica_id,
             peer_replica_id,
-            Box::new(mock_client_attestation),
-            Box::new(MockOakClientHandshaker::new()),
+            Box::new(mock_oak_client_session),
         );
 
         assert_eq!(true, client_handshake_session.take_out_message().is_err());
-
-        // Verify processing messages in FAILED.
-        assert_eq!(
-            true,
-            client_handshake_session
-                .process_message(&attest_response)
-                .is_ok()
-        );
-        assert_eq!(None, client_handshake_session.take_out_message().unwrap());
-        assert_eq!(false, client_handshake_session.is_completed());
-        assert!(Box::new(client_handshake_session).get_encryptor().is_none());
     }
 
     #[test]
-    fn test_client_session_put_attest_response_error() {
+    fn test_client_session_put_session_response_error() {
         let self_replica_id = 11111;
         let peer_replica_id = 22222;
-        let attest_request = create_attest_request(self_replica_id, peer_replica_id);
-        let attest_response = create_attest_response(self_replica_id, peer_replica_id);
-        let mock_client_attestation = ClientAttestationBuilder::new()
-            .expect_get_outgoing_message(Ok(Some(OakAttestRequest::default())))
-            .expect_put_incoming_message(OakAttestResponse::default(), Err(anyhow!("Error")))
+        let session_request = create_session_request(self_replica_id, peer_replica_id);
+        let session_response = create_session_response(self_replica_id, peer_replica_id);
+        let mock_oak_client_session = OakClientSessionBuilder::new()
+            .expect_get_outgoing_message(Ok(Some(OakSessionRequest::default())))
+            .expect_put_incoming_message(OakSessionResponse::default(), Err(anyhow!("Error")))
             .take();
         let mut client_handshake_session = ClientHandshakeSession::new(
             create_logger(),
             self_replica_id,
             peer_replica_id,
-            Box::new(mock_client_attestation),
-            Box::new(MockOakClientHandshaker::new()),
+            Box::new(mock_oak_client_session),
         );
 
         assert_eq!(
-            Some(attest_request),
+            Some(session_request),
             client_handshake_session.take_out_message().unwrap()
         );
         assert_eq!(
             true,
             client_handshake_session
-                .process_message(&attest_response)
-                .is_err()
-        );
-    }
-
-    #[test]
-    fn test_client_session_get_handshake_request_error() {
-        let self_replica_id = 11111;
-        let peer_replica_id = 22222;
-        let attest_request = create_attest_request(self_replica_id, peer_replica_id);
-        let attest_response = create_attest_response(self_replica_id, peer_replica_id);
-        let mock_client_attestation = ClientAttestationBuilder::new()
-            .expect_get_outgoing_message(Ok(Some(OakAttestRequest::default())))
-            .expect_put_incoming_message(OakAttestResponse::default(), Ok(Some(())))
-            .expect_get_attestation_results()
-            .take();
-        let mock_oak_client_handshaker = OakClientHandshakerBuilder::new()
-            .expect_init()
-            .expect_get_outgoing_message(Err(anyhow!("Error")))
-            .take();
-        let mut client_handshake_session = ClientHandshakeSession::new(
-            create_logger(),
-            self_replica_id,
-            peer_replica_id,
-            Box::new(mock_client_attestation),
-            Box::new(mock_oak_client_handshaker),
-        );
-
-        assert_eq!(
-            Some(attest_request),
-            client_handshake_session.take_out_message().unwrap()
-        );
-        assert_eq!(
-            true,
-            client_handshake_session
-                .process_message(&attest_response)
-                .is_ok()
-        );
-        assert_eq!(true, client_handshake_session.take_out_message().is_err());
-    }
-
-    #[test]
-    fn test_client_session_put_handshake_response_error() {
-        let self_replica_id = 11111;
-        let peer_replica_id = 22222;
-        let attest_request = create_attest_request(self_replica_id, peer_replica_id);
-        let attest_response = create_attest_response(self_replica_id, peer_replica_id);
-        let handshake_request = create_handshake_request(self_replica_id, peer_replica_id);
-        let handshake_response = create_handshake_response(self_replica_id, peer_replica_id);
-        let mock_client_attestation = ClientAttestationBuilder::new()
-            .expect_get_outgoing_message(Ok(Some(OakAttestRequest::default())))
-            .expect_put_incoming_message(OakAttestResponse::default(), Ok(Some(())))
-            .expect_get_attestation_results()
-            .take();
-        let mock_oak_client_handshaker = OakClientHandshakerBuilder::new()
-            .expect_init()
-            .expect_get_outgoing_message(Ok(Some(OakHandshakeRequest::default())))
-            .expect_put_incoming_message(OakHandshakeResponse::default(), Err(anyhow!("Error")))
-            .take();
-        let mut client_handshake_session = ClientHandshakeSession::new(
-            create_logger(),
-            self_replica_id,
-            peer_replica_id,
-            Box::new(mock_client_attestation),
-            Box::new(mock_oak_client_handshaker),
-        );
-
-        assert_eq!(
-            Some(attest_request),
-            client_handshake_session.take_out_message().unwrap()
-        );
-        assert_eq!(
-            true,
-            client_handshake_session
-                .process_message(&attest_response)
-                .is_ok()
-        );
-        assert_eq!(
-            Some(handshake_request),
-            client_handshake_session.take_out_message().unwrap()
-        );
-        assert_eq!(
-            true,
-            client_handshake_session
-                .process_message(&handshake_response)
+                .process_message(&session_response)
                 .is_err()
         );
     }
@@ -1271,85 +734,45 @@ mod test {
     fn test_client_session_unknown_state_process_message() {
         let self_replica_id = 11111;
         let peer_replica_id = 22222;
-        let attest_response = create_attest_response(self_replica_id, peer_replica_id);
+        let session_response = create_session_response(self_replica_id, peer_replica_id);
         let mut client_handshake_session = ClientHandshakeSession::new(
             create_logger(),
             self_replica_id,
             peer_replica_id,
-            Box::new(MockClientAttestation::new()),
-            Box::new(MockOakClientHandshaker::new()),
+            Box::new(MockOakClientSession::new()),
         );
 
         assert_eq!(
             true,
             client_handshake_session
-                .process_message(&attest_response)
+                .process_message(&session_response)
                 .is_err()
         );
     }
 
     #[test]
-    fn test_client_session_attesting_state_invalid_message() {
+    fn test_client_session_initiating_state_invalid_message() {
         let self_replica_id = 11111;
         let peer_replica_id = 22222;
-        let attest_request = create_attest_request(self_replica_id, peer_replica_id);
-        let mock_client_attestation = ClientAttestationBuilder::new()
-            .expect_get_outgoing_message(Ok(Some(OakAttestRequest::default())))
+        let session_request = create_session_request(self_replica_id, peer_replica_id);
+        let mock_oak_client_session = OakClientSessionBuilder::new()
+            .expect_get_outgoing_message(Ok(Some(OakSessionRequest::default())))
             .take();
         let mut client_handshake_session = ClientHandshakeSession::new(
             create_logger(),
             self_replica_id,
             peer_replica_id,
-            Box::new(mock_client_attestation),
-            Box::new(MockOakClientHandshaker::new()),
+            Box::new(mock_oak_client_session),
         );
 
         assert_eq!(
-            Some(attest_request.clone()),
+            Some(session_request.clone()),
             client_handshake_session.take_out_message().unwrap()
         );
         assert_eq!(
             true,
             client_handshake_session
-                .process_message(&attest_request)
-                .is_err()
-        );
-    }
-
-    #[test]
-    fn test_client_session_key_exchange_state_invalid_message() {
-        let self_replica_id = 11111;
-        let peer_replica_id = 22222;
-        let attest_request = create_attest_request(self_replica_id, peer_replica_id);
-        let attest_response = create_attest_response(self_replica_id, peer_replica_id);
-        let mock_client_attestation = ClientAttestationBuilder::new()
-            .expect_get_outgoing_message(Ok(Some(OakAttestRequest::default())))
-            .expect_put_incoming_message(OakAttestResponse::default(), Ok(Some(())))
-            .expect_get_attestation_results()
-            .take();
-        let mock_oak_client_handshaker = OakClientHandshakerBuilder::new().expect_init().take();
-        let mut client_handshake_session = ClientHandshakeSession::new(
-            create_logger(),
-            self_replica_id,
-            peer_replica_id,
-            Box::new(mock_client_attestation),
-            Box::new(mock_oak_client_handshaker),
-        );
-
-        assert_eq!(
-            Some(attest_request),
-            client_handshake_session.take_out_message().unwrap()
-        );
-        assert_eq!(
-            true,
-            client_handshake_session
-                .process_message(&attest_response)
-                .is_ok()
-        );
-        assert_eq!(
-            true,
-            client_handshake_session
-                .process_message(&attest_response)
+                .process_message(&session_request)
                 .is_err()
         );
     }
@@ -1358,58 +781,36 @@ mod test {
     fn test_server_session_success() {
         let self_replica_id = 11111;
         let peer_replica_id = 22222;
-        let attest_request = create_attest_request(self_replica_id, peer_replica_id);
-        let attest_response = create_attest_response(self_replica_id, peer_replica_id);
-        let handshake_request = create_handshake_request(self_replica_id, peer_replica_id);
-        let handshake_response = create_handshake_response(self_replica_id, peer_replica_id);
-        let mock_server_attestation = ServerAttestationBuilder::new()
-            .expect_get_outgoing_message(Ok(Some(OakAttestResponse::default())))
-            .expect_put_incoming_message(OakAttestRequest::default(), Ok(Some(())))
-            .expect_get_attestation_results()
+        let session_request = create_session_request(self_replica_id, peer_replica_id);
+        let session_response = create_session_response(self_replica_id, peer_replica_id);
+        let mock_oak_server_session = OakServerSessionBuilder::new()
+            .expect_get_outgoing_message(Ok(Some(OakSessionResponse::default())))
+            .expect_put_incoming_message(OakSessionRequest::default(), Ok(Some(())))
+            .expect_is_open(true)
             .take();
-        let mock_attestation_provider = AttestationProviderBuilder::new()
-            .expect_get_server_attestation(mock_server_attestation)
+        let mock_oak_session_factory = OakSessionFactoryBuilder::new()
+            .expect_get_oak_server_session(mock_oak_server_session)
             .take();
-        let mock_oak_server_handshaker = OakServerHandshakerBuilder::new()
-            .expect_init()
-            .expect_get_outgoing_message(Ok(Some(OakHandshakeResponse::default())))
-            .expect_put_incoming_message(OakHandshakeRequest::default(), Ok(Some(())))
-            .expect_derive_session_keys()
-            .take();
-        let mock_oak_handshaker_factory = OakHandshakerFactoryBuilder::new()
-            .expect_get_server_oak_handshaker(mock_oak_server_handshaker)
-            .take();
-        let handshake_session_provider = DefaultHandshakeSessionProvider::new(
-            Box::new(mock_attestation_provider),
-            Box::new(mock_oak_handshaker_factory),
-        );
-        let mut server_handshake_session = handshake_session_provider.get(
-            self_replica_id,
-            peer_replica_id,
-            Role::Recipient,
-            create_logger(),
-        );
+        let handshake_session_provider =
+            DefaultHandshakeSessionProvider::new(Box::new(mock_oak_session_factory));
+        let mut server_handshake_session = handshake_session_provider
+            .get(
+                self_replica_id,
+                peer_replica_id,
+                Role::Recipient,
+                create_logger(),
+            )
+            .unwrap();
 
         assert_eq!(None, server_handshake_session.take_out_message().unwrap());
         assert_eq!(
             true,
             server_handshake_session
-                .process_message(&attest_request)
+                .process_message(&session_request)
                 .is_ok()
         );
         assert_eq!(
-            Some(attest_response),
-            server_handshake_session.take_out_message().unwrap()
-        );
-        assert_eq!(false, server_handshake_session.is_completed());
-        assert_eq!(
-            true,
-            server_handshake_session
-                .process_message(&handshake_request)
-                .is_ok()
-        );
-        assert_eq!(
-            Some(handshake_response),
+            Some(session_response),
             server_handshake_session.take_out_message().unwrap()
         );
         assert_eq!(true, server_handshake_session.is_completed());
@@ -1418,7 +819,7 @@ mod test {
         assert_eq!(
             true,
             server_handshake_session
-                .process_message(&attest_request)
+                .process_message(&session_request)
                 .is_ok()
         );
         assert_eq!(None, server_handshake_session.take_out_message().unwrap());
@@ -1427,147 +828,48 @@ mod test {
     }
 
     #[test]
-    fn test_server_session_put_attest_request_error() {
+    fn test_server_session_put_session_request_error() {
         let self_replica_id = 11111;
         let peer_replica_id = 22222;
-        let attest_request = create_attest_request(self_replica_id, peer_replica_id);
-        let mock_server_attestation = ServerAttestationBuilder::new()
-            .expect_put_incoming_message(OakAttestRequest::default(), Err(anyhow!("Error")))
+        let session_request = create_session_request(self_replica_id, peer_replica_id);
+        let mock_oak_server_session = OakServerSessionBuilder::new()
+            .expect_put_incoming_message(OakSessionRequest::default(), Err(anyhow!("Error")))
             .take();
         let mut server_handshake_session = ServerHandshakeSession::new(
             create_logger(),
             self_replica_id,
             peer_replica_id,
-            Box::new(mock_server_attestation),
-            Box::new(MockOakServerHandshaker::new()),
+            Box::new(mock_oak_server_session),
         );
 
         assert_eq!(
             true,
             server_handshake_session
-                .process_message(&attest_request)
+                .process_message(&session_request)
                 .is_err()
         );
-
-        // Verify processing messages in FAILED state.
-        assert_eq!(
-            true,
-            server_handshake_session
-                .process_message(&attest_request)
-                .is_ok()
-        );
-        assert_eq!(None, server_handshake_session.take_out_message().unwrap());
-        assert_eq!(false, server_handshake_session.is_completed());
-        assert!(Box::new(server_handshake_session).get_encryptor().is_none());
     }
 
     #[test]
-    fn test_server_session_get_attest_response_error() {
+    fn test_server_session_get_session_response_error() {
         let self_replica_id = 11111;
         let peer_replica_id = 22222;
-        let attest_request = create_attest_request(self_replica_id, peer_replica_id);
-        let mock_server_attestation = ServerAttestationBuilder::new()
-            .expect_put_incoming_message(OakAttestRequest::default(), Ok(Some(())))
+        let session_request = create_session_request(self_replica_id, peer_replica_id);
+        let mock_oak_server_session = OakServerSessionBuilder::new()
+            .expect_put_incoming_message(OakSessionRequest::default(), Ok(Some(())))
             .expect_get_outgoing_message(Err(anyhow!("Error")))
             .take();
         let mut server_handshake_session = ServerHandshakeSession::new(
             create_logger(),
             self_replica_id,
             peer_replica_id,
-            Box::new(mock_server_attestation),
-            Box::new(MockOakServerHandshaker::new()),
+            Box::new(mock_oak_server_session),
         );
 
         assert_eq!(
             true,
             server_handshake_session
-                .process_message(&attest_request)
-                .is_ok()
-        );
-        assert_eq!(true, server_handshake_session.take_out_message().is_err());
-    }
-
-    #[test]
-    fn test_server_session_put_handshake_request_error() {
-        let self_replica_id = 11111;
-        let peer_replica_id = 22222;
-        let attest_request = create_attest_request(self_replica_id, peer_replica_id);
-        let attest_response = create_attest_response(self_replica_id, peer_replica_id);
-        let handshake_request = create_handshake_request(self_replica_id, peer_replica_id);
-        let mock_server_attestation = ServerAttestationBuilder::new()
-            .expect_get_outgoing_message(Ok(Some(OakAttestResponse::default())))
-            .expect_put_incoming_message(OakAttestRequest::default(), Ok(Some(())))
-            .expect_get_attestation_results()
-            .take();
-        let mock_oak_server_handshaker = OakServerHandshakerBuilder::new()
-            .expect_init()
-            .expect_put_incoming_message(OakHandshakeRequest::default(), Err(anyhow!("Error")))
-            .take();
-        let mut server_handshake_session = ServerHandshakeSession::new(
-            create_logger(),
-            self_replica_id,
-            peer_replica_id,
-            Box::new(mock_server_attestation),
-            Box::new(mock_oak_server_handshaker),
-        );
-
-        assert_eq!(
-            true,
-            server_handshake_session
-                .process_message(&attest_request)
-                .is_ok()
-        );
-        assert_eq!(
-            Some(attest_response),
-            server_handshake_session.take_out_message().unwrap()
-        );
-        assert_eq!(
-            true,
-            server_handshake_session
-                .process_message(&handshake_request)
-                .is_err()
-        );
-    }
-
-    #[test]
-    fn test_server_session_get_handshake_response_error() {
-        let self_replica_id = 11111;
-        let peer_replica_id = 22222;
-        let attest_request = create_attest_request(self_replica_id, peer_replica_id);
-        let attest_response = create_attest_response(self_replica_id, peer_replica_id);
-        let handshake_request = create_handshake_request(self_replica_id, peer_replica_id);
-        let mock_server_attestation = ServerAttestationBuilder::new()
-            .expect_get_outgoing_message(Ok(Some(OakAttestResponse::default())))
-            .expect_put_incoming_message(OakAttestRequest::default(), Ok(Some(())))
-            .expect_get_attestation_results()
-            .take();
-        let mock_oak_server_handshaker = OakServerHandshakerBuilder::new()
-            .expect_init()
-            .expect_put_incoming_message(OakHandshakeRequest::default(), Ok(Some(())))
-            .expect_get_outgoing_message(Err(anyhow!("Error")))
-            .take();
-        let mut server_handshake_session = ServerHandshakeSession::new(
-            create_logger(),
-            self_replica_id,
-            peer_replica_id,
-            Box::new(mock_server_attestation),
-            Box::new(mock_oak_server_handshaker),
-        );
-
-        assert_eq!(
-            true,
-            server_handshake_session
-                .process_message(&attest_request)
-                .is_ok()
-        );
-        assert_eq!(
-            Some(attest_response),
-            server_handshake_session.take_out_message().unwrap()
-        );
-        assert_eq!(
-            true,
-            server_handshake_session
-                .process_message(&handshake_request)
+                .process_message(&session_request)
                 .is_ok()
         );
         assert_eq!(true, server_handshake_session.take_out_message().is_err());
@@ -1577,87 +879,54 @@ mod test {
     fn test_server_session_unknown_state_invalid_message() {
         let self_replica_id = 11111;
         let peer_replica_id = 22222;
-        let attest_response = create_attest_response(self_replica_id, peer_replica_id);
+        let session_response = create_session_response(self_replica_id, peer_replica_id);
         let mut server_handshake_session = ServerHandshakeSession::new(
             create_logger(),
             self_replica_id,
             peer_replica_id,
-            Box::new(MockServerAttestation::new()),
-            Box::new(MockOakServerHandshaker::new()),
+            Box::new(MockOakServerSession::new()),
         );
 
         assert_eq!(
             true,
             server_handshake_session
-                .process_message(&attest_response)
+                .process_message(&session_response)
                 .is_err()
         );
     }
 
     #[test]
-    fn test_server_session_attesting_state_process_message() {
+    fn test_server_session_initiating_state_invalid_message() {
         let self_replica_id = 11111;
         let peer_replica_id = 22222;
-        let attest_request = create_attest_request(self_replica_id, peer_replica_id);
-        let mock_server_attestation = ServerAttestationBuilder::new()
-            .expect_put_incoming_message(OakAttestRequest::default(), Ok(Some(())))
+        let session_request = create_session_request(self_replica_id, peer_replica_id);
+        let session_response = create_session_response(self_replica_id, peer_replica_id);
+        let mock_oak_server_session = OakServerSessionBuilder::new()
+            .expect_put_incoming_message(OakSessionRequest::default(), Ok(Some(())))
+            .expect_get_outgoing_message(Ok(Some(OakSessionResponse::default())))
+            .expect_is_open(false)
             .take();
         let mut server_handshake_session = ServerHandshakeSession::new(
             create_logger(),
             self_replica_id,
             peer_replica_id,
-            Box::new(mock_server_attestation),
-            Box::new(MockOakServerHandshaker::new()),
+            Box::new(mock_oak_server_session),
         );
 
         assert_eq!(
             true,
             server_handshake_session
-                .process_message(&attest_request)
+                .process_message(&session_request)
                 .is_ok()
         );
         assert_eq!(
-            true,
-            server_handshake_session
-                .process_message(&attest_request)
-                .is_err()
-        );
-    }
-
-    #[test]
-    fn test_server_session_key_exchange_state_invalid_message() {
-        let self_replica_id = 11111;
-        let peer_replica_id = 22222;
-        let attest_request = create_attest_request(self_replica_id, peer_replica_id);
-        let attest_response = create_attest_response(self_replica_id, peer_replica_id);
-        let mock_server_attestation = ServerAttestationBuilder::new()
-            .expect_get_outgoing_message(Ok(Some(OakAttestResponse::default())))
-            .expect_put_incoming_message(OakAttestRequest::default(), Ok(Some(())))
-            .expect_get_attestation_results()
-            .take();
-        let mock_oak_server_handshaker = OakServerHandshakerBuilder::new().expect_init().take();
-        let mut server_handshake_session = ServerHandshakeSession::new(
-            create_logger(),
-            self_replica_id,
-            peer_replica_id,
-            Box::new(mock_server_attestation),
-            Box::new(mock_oak_server_handshaker),
-        );
-
-        assert_eq!(
-            true,
-            server_handshake_session
-                .process_message(&attest_request)
-                .is_ok()
-        );
-        assert_eq!(
-            Some(attest_response),
+            Some(session_response.clone()),
             server_handshake_session.take_out_message().unwrap()
         );
         assert_eq!(
             true,
             server_handshake_session
-                .process_message(&attest_request)
+                .process_message(&session_response)
                 .is_err()
         );
     }

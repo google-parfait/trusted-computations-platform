@@ -17,12 +17,11 @@ extern crate micro_rpc;
 extern crate prost;
 extern crate tcp_proto;
 
-use crate::attestation::DefaultAttestationProvider;
 use crate::communication::DefaultCommunicationModule;
 use crate::handshake::DefaultHandshakeSessionProvider;
 use crate::model::Actor;
-use crate::oak_handshaker::DefaultOakHandshakerFactory;
 use crate::platform::{Application, Host};
+use crate::session::DefaultOakSessionFactory;
 use crate::snapshot::{DefaultSnapshotReceiver, DefaultSnapshotSender};
 use crate::{
     consensus::RaftSimple, driver::Driver, snapshot::DefaultSnapshotProcessor,
@@ -84,8 +83,7 @@ impl<A: Actor> ApplicationService<A> {
                 ),
                 actor,
                 DefaultCommunicationModule::new(Box::new(DefaultHandshakeSessionProvider::new(
-                    Box::new(DefaultAttestationProvider {}),
-                    Box::new(DefaultOakHandshakerFactory {}),
+                    Box::new(DefaultOakSessionFactory {}),
                 ))),
             ),
         }

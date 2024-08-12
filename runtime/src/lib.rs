@@ -33,7 +33,6 @@ extern crate raft;
 extern crate slog;
 extern crate tcp_proto;
 
-pub mod attestation;
 pub mod communication;
 pub mod consensus;
 pub mod driver;
@@ -43,7 +42,6 @@ pub mod logger;
 #[cfg(feature = "std")]
 pub mod mock;
 pub mod model;
-pub mod oak_handshaker;
 pub mod platform;
 pub mod service;
 pub mod session;

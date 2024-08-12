@@ -19,7 +19,7 @@ use oak_proto_rust::oak::session::v1::{
     session_request::Request, session_response::Response, SessionRequest, SessionResponse,
 };
 use oak_session::attestation::AttestationType;
-use oak_session::config::{SessionConfig, SessionConfigBuilder};
+use oak_session::config::SessionConfig;
 use oak_session::handshake::HandshakeType;
 use oak_session::session::{ClientSession, ServerSession};
 

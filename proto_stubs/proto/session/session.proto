@@ -9,3 +9,8 @@ message AttestResponse {}
 message HandshakeRequest {}
 
 message HandshakeResponse {}
+
+message SessionRequest {}
+
+message SessionResponse {}
+

@@ -20,7 +20,6 @@ extern crate tcp_proto;
 use self::mockall::mock;
 use alloc::boxed::Box;
 use alloc::vec::Vec;
-use attestation::{Attestation, AttestationProvider, ClientAttestation, ServerAttestation};
 use communication::{CommunicationConfig, CommunicationModule};
 use consensus;
 use consensus::{Raft, RaftLightReady, RaftReady, Store};
@@ -30,17 +29,7 @@ use model::{
     Actor, ActorCommand, ActorContext, ActorError, ActorEvent, ActorEventContext, CommandOutcome,
     EventOutcome,
 };
-use oak_handshaker::{
-    OakClientHandshaker, OakHandshaker, OakHandshakerFactory, OakServerHandshaker,
-};
-use oak_proto_rust::oak::{
-    attestation::v1::AttestationResults,
-    crypto::v1::SessionKeys,
-    session::v1::{
-        AttestRequest, AttestResponse, HandshakeRequest, HandshakeResponse, SessionRequest,
-        SessionResponse,
-    },
-};
+use oak_proto_rust::oak::session::v1::{SessionRequest, SessionResponse};
 use platform::{Host, PalError};
 use prost::bytes::Bytes;
 use raft::{
@@ -50,7 +39,7 @@ use raft::{
     Error as RaftError, GetEntriesContext as RaftGetEntriesContext,
     SnapshotStatus as RaftSnapshotStatus, Storage as RaftStorage,
 };
-use session::{OakClientSession, OakServerSession, OakSession};
+use session::{OakClientSession, OakServerSession, OakSession, OakSessionFactory};
 use slog::Logger;
 use snapshot::{
     SnapshotError, SnapshotReceiver, SnapshotReceiverImpl, SnapshotSender, SnapshotSenderImpl,
@@ -286,7 +275,7 @@ mock! {
             peer_replica_id: u64,
             role: Role,
             logger: Logger,
-        ) -> Box<dyn HandshakeSession>;
+        ) -> anyhow::Result<Box<dyn HandshakeSession>>;
     }
 }
 
@@ -306,99 +295,24 @@ mock! {
 }
 
 mock! {
-    pub AttestationProvider {
-    }
-
-    impl AttestationProvider for AttestationProvider {
-        fn get_client_attestation(&self) -> Box<dyn ClientAttestation>;
-
-        fn get_server_attestation(&self) -> Box<dyn ServerAttestation>;
-    }
-}
-
-mock! {
-    pub ClientAttestation {
-    }
-
-    impl Attestation<AttestResponse, AttestRequest> for ClientAttestation {
-        fn get_attestation_results(self: Box<Self>) -> Option<AttestationResults>;
-
-        fn get_outgoing_message(&mut self) -> anyhow::Result<Option<AttestRequest>>;
-
-        fn put_incoming_message(
-            &mut self,
-            incoming_message: &AttestResponse) -> anyhow::Result<Option<()>>;
-    }
-}
-
-mock! {
-    pub ServerAttestation {
-    }
-
-    impl Attestation<AttestRequest, AttestResponse> for ServerAttestation {
-        fn get_attestation_results(self: Box<Self>) -> Option<AttestationResults>;
-
-        fn get_outgoing_message(&mut self) -> anyhow::Result<Option<AttestResponse>>;
-
-        fn put_incoming_message(
-            &mut self,
-            incoming_message: &AttestRequest) -> anyhow::Result<Option<()>>;
-    }
-}
-
-mock! {
-    pub OakHandshakerFactory {
-    }
-
-    impl OakHandshakerFactory for OakHandshakerFactory {
-        fn get_client_oak_handshaker(&self) -> Box<dyn OakClientHandshaker>;
-
-        fn get_server_oak_handshaker(&self) -> Box<dyn OakServerHandshaker>;
-    }
-}
-
-mock! {
-    pub OakClientHandshaker {
-    }
-
-    impl OakHandshaker<HandshakeResponse, HandshakeRequest> for OakClientHandshaker {
-        fn init(&mut self, peer_static_public_key: Vec<u8>);
-
-        fn derive_session_keys(self: Box<Self>) -> Option<SessionKeys>;
-
-        fn get_outgoing_message(&mut self) -> anyhow::Result<Option<HandshakeRequest>>;
-
-        fn put_incoming_message(
-            &mut self,
-            incoming_message: &HandshakeResponse) -> anyhow::Result<Option<()>>;
-    }
-}
-
-mock! {
-    pub OakServerHandshaker {
-    }
-
-    impl OakHandshaker<HandshakeRequest, HandshakeResponse> for OakServerHandshaker {
-        fn init(&mut self, peer_static_public_key: Vec<u8>);
-
-        fn derive_session_keys(self: Box<Self>) -> Option<SessionKeys>;
-
-        fn get_outgoing_message(&mut self) -> anyhow::Result<Option<HandshakeResponse>>;
-
-        fn put_incoming_message(
-            &mut self,
-            incoming_message: &HandshakeRequest) -> anyhow::Result<Option<()>>;
-    }
-}
-
-mock! {
     pub Encryptor {
     }
 
     impl Encryptor for Encryptor {
-        fn encrypt(&self, plaintext: &[u8]) -> anyhow::Result<Vec<u8>>;
+        fn encrypt(&mut self, plaintext: &[u8]) -> anyhow::Result<Vec<u8>>;
 
-        fn decrypt(&self, ciphertext: &[u8]) -> anyhow::Result<Vec<u8>>;
+        fn decrypt(&mut self, ciphertext: &[u8]) -> anyhow::Result<Vec<u8>>;
+    }
+}
+
+mock! {
+    pub OakSessionFactory {
+    }
+
+    impl OakSessionFactory for OakSessionFactory {
+        fn get_oak_client_session(&self) -> anyhow::Result<Box<dyn OakClientSession>>;
+
+        fn get_oak_server_session(&self) -> anyhow::Result<Box<dyn OakServerSession>>;
     }
 }
 

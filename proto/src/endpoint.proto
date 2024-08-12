@@ -421,21 +421,25 @@ message SecureChannelHandshake {
 
     message InitiatorRequest {
       oneof message {
-        // Request message for remote attestation.
-        oak.session.v1.AttestRequest attest_request = 1;
-        // Request message for the crypto handshake needed to establish a set
-        // of session keys.
-        oak.session.v1.HandshakeRequest handshake_request = 2;
+         // Request message for remote attestation.
+         oak.session.v1.AttestRequest attest_request = 1 [deprecated = true];
+         // Request message for the crypto handshake needed to establish a set
+         // of session keys.
+         oak.session.v1.HandshakeRequest handshake_request = 2 [deprecated = true];
+        // Request message for establishing a session with a peer.
+        oak.session.v1.SessionRequest session_request = 3;
       }
     }
 
     message RecipientResponse {
       oneof message {
         // Response message for remote attestation.
-        oak.session.v1.AttestResponse attest_response = 1;
+        oak.session.v1.AttestResponse attest_response = 1 [deprecated = true];
         // Response message for the crypto handshake needed to establish a set
         // of session keys.
-        oak.session.v1.HandshakeResponse handshake_response = 2;
+        oak.session.v1.HandshakeResponse handshake_response = 2 [deprecated = true];
+        // Response to `SessionRequest` message.
+        oak.session.v1.SessionResponse session_response = 3;
       }
     }
   }
