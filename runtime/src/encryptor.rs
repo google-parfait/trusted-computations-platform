@@ -15,11 +15,11 @@
 use alloc::boxed::Box;
 use alloc::vec::Vec;
 
+use crate::session::{OakClientSession, OakServerSession};
 use anyhow::{anyhow, Result};
 use oak_proto_rust::oak::session::v1::{
     session_request::Request, session_response::Response, SessionRequest, SessionResponse,
 };
-use session::{OakClientSession, OakServerSession};
 
 // Encryptor trait responsible for encrypting/decrypting messages between TCP
 // replicas after handshake has successfully completed.

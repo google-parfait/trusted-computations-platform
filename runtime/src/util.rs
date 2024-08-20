@@ -12,16 +12,16 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-use crate::StdError;
-use alloc::vec::Vec;
-use core::fmt;
-use core::result::Result;
-use raft::eraftpb::{
+use crate::raft::eraftpb::{
     ConfChange as RaftConfigChange, ConfChangeType as RaftConfigChangeType,
     ConfState as RaftConfigState, Entry as RaftEntry, EntryType as RaftEntryType,
     Message as RaftMessage, MessageType as RaftMessageType, Snapshot as RaftSnapshot,
     SnapshotMetadata as RaftSnapshotMetadata,
 };
+use crate::StdError;
+use alloc::vec::Vec;
+use core::fmt;
+use core::result::Result;
 use tcp_proto::runtime::endpoint::{Entry, EntryId};
 
 #[derive(Debug)]
