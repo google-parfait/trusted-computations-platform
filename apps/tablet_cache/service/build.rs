@@ -14,6 +14,7 @@
 
 use std::io::Result;
 
+#[cfg(not(feature = "bazel"))]
 fn main() -> Result<()> {
     micro_rpc_build::compile(
         &["proto/tablet_cache.proto"],
@@ -30,5 +31,26 @@ fn main() -> Result<()> {
             ..Default::default()
         },
     );
+    Ok(())
+}
+
+#[cfg(feature = "bazel")]
+fn main() -> Result<()> {
+    micro_rpc_build::compile(
+        &["proto/tablet_cache.proto"],
+        &["proto"],
+        micro_rpc_build::CompileOptions {
+            bytes: vec![
+                ".apps.tablet_cache.service.PutKeyRequest".to_string(),
+                ".apps.tablet_cache.service.PutKeyResponse".to_string(),
+                ".apps.tablet_cache.service.GetKeyRequest".to_string(),
+                ".apps.tablet_cache.service.GetKeyResponse".to_string(),
+                ".apps.tablet_cache.service.TabletContents".to_string(),
+            ],
+            extern_paths: vec![],
+            ..Default::default()
+        },
+    );
+    oak_proto_build_utils::fix_prost_derives().unwrap();
     Ok(())
 }

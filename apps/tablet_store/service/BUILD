@@ -34,8 +34,10 @@ cargo_build_script(
 )
 
 rust_library(
-    name = "tcp_atomic_counter_service",
-    srcs = glob(["src/*.rs"]),
+    name = "tcp_tablet_store_service",
+    srcs = glob([
+        "src/*.rs",
+    ]),
     crate_features = select({
         "@platforms//os:linux": [
             "testing",
@@ -45,7 +47,8 @@ rust_library(
     }),
     proc_macro_deps = ["@oak_crates_index//:prost-derive"],
     visibility = [
-        "//apps/atomic_counter/app:__pkg__",
+        "//apps/tablet_cache/service:__pkg__",
+        "//apps/tablet_store/app:__pkg__",
     ],
     deps = [
         ":build",
@@ -54,6 +57,7 @@ rust_library(
         "@crates_index//:hashbrown",
         "@crates_index//:prost",
         "@crates_index//:prost-types",
+        "@crates_index//:rand",
         "@crates_index//:slog",
         "@oak//micro_rpc",
         "@oak//oak_attestation_verification",
@@ -66,14 +70,27 @@ rust_library(
 )
 
 rust_test(
-    name = "tcp_atomic_counter_service_integration_test",
+    name = "tcp_tablet_store_service_test",
+    crate = ":tcp_tablet_store_service",
+    crate_features = [
+        "testing",
+        "std",
+    ],
+    deps = [
+        "@crates_index//:googletest",
+        "@crates_index//:mockall",
+    ],
+)
+
+rust_test(
+    name = "tcp_tablet_store_service_integration_test",
     srcs = glob(["tests/*.rs"]),
     crate_features = [
         "testing",
         "std",
     ],
     deps = [
-        ":tcp_atomic_counter_service",
+        ":tcp_tablet_store_service",
         "//integration:tcp_integration",
         "//proto:tcp_proto",
         "@crates_index//:googletest",

@@ -34,8 +34,8 @@ cargo_build_script(
 )
 
 rust_library(
-    name = "tcp_atomic_counter_service",
-    srcs = glob(["src/*.rs"]),
+    name = "tcp_tablet_cache_service",
+    srcs = glob(["src/**/*.rs"]),
     crate_features = select({
         "@platforms//os:linux": [
             "testing",
@@ -45,39 +45,43 @@ rust_library(
     }),
     proc_macro_deps = ["@oak_crates_index//:prost-derive"],
     visibility = [
-        "//apps/atomic_counter/app:__pkg__",
+        "//apps/tablet_cache/app:__pkg__",
     ],
     deps = [
         ":build",
+        "//apps/tablet_store/service:tcp_tablet_store_service",
         "//proto:tcp_proto",
         "//runtime:tcp_runtime",
+        "@crates_index//:ahash",
+        "@crates_index//:base64",
         "@crates_index//:hashbrown",
         "@crates_index//:prost",
         "@crates_index//:prost-types",
+        "@crates_index//:rand",
+        "@crates_index//:sha2",
         "@crates_index//:slog",
         "@oak//micro_rpc",
         "@oak//oak_attestation_verification",
         "@oak//oak_proto_rust",
         "@oak//oak_restricted_kernel_sdk",
     ] + select({
-        "@platforms//os:linux": ["@crates_index//:slog-term"],
+        "@platforms//os:linux": [
+            "@crates_index//:mockall",
+            "@crates_index//:slog-term",
+        ],
         "//conditions:default": [],
     }),
 )
 
 rust_test(
-    name = "tcp_atomic_counter_service_integration_test",
-    srcs = glob(["tests/*.rs"]),
+    name = "tcp_tablet_cache_service_test",
+    crate = ":tcp_tablet_cache_service",
     crate_features = [
         "testing",
         "std",
     ],
     deps = [
-        ":tcp_atomic_counter_service",
-        "//integration:tcp_integration",
-        "//proto:tcp_proto",
         "@crates_index//:googletest",
         "@crates_index//:mockall",
-        "@crates_index//:prost",
     ],
 )
