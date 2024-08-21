@@ -495,7 +495,10 @@ impl<
                     DeliverSystemMessage {
                         recipient_replica_id: raft_message.to,
                         sender_replica_id: self.id,
-                        message_contents: serialize_raft_message(&raft_message).unwrap(),
+                        payload: Some(Payload {
+                            contents: serialize_raft_message(&raft_message).unwrap(),
+                            ..Default::default()
+                        }),
                     },
                 ))?;
         }
@@ -850,7 +853,7 @@ impl<
             in_message::Msg::DeliverSystemMessage(m) => self.make_raft_step(
                 m.sender_replica_id,
                 m.recipient_replica_id,
-                m.message_contents,
+                m.payload.unwrap().contents,
             ),
             _ => {
                 warn!(self.logger, "Unexpected message type {:?}", message);
@@ -1489,7 +1492,10 @@ mod test {
                 DeliverSystemMessage {
                     recipient_replica_id: raft_message.to,
                     sender_replica_id: raft_message.from,
-                    message_contents: serialize_raft_message(raft_message).unwrap(),
+                    payload: Some(Payload {
+                        contents: serialize_raft_message(raft_message).unwrap(),
+                        ..Default::default()
+                    }),
                 },
             )),
         };
@@ -1500,7 +1506,10 @@ mod test {
         out_message::Msg::DeliverSystemMessage(DeliverSystemMessage {
             recipient_replica_id: raft_message.to,
             sender_replica_id: raft_message.from,
-            message_contents: serialize_raft_message(raft_message).unwrap(),
+            payload: Some(Payload {
+                contents: serialize_raft_message(raft_message).unwrap(),
+                ..Default::default()
+            }),
         })
     }
 
@@ -1541,7 +1550,10 @@ mod test {
             recipient_replica_id: recipient_id,
             sender_replica_id: sender_id,
             delivery_id,
-            payload_contents: vec![4, 5, 6, 7, 8, 9].into(),
+            payload: Some(Payload {
+                contents: vec![4, 5, 6, 7, 8, 9].into(),
+                ..Default::default()
+            }),
         }
     }
 
@@ -1564,7 +1576,10 @@ mod test {
             recipient_replica_id: recipient_id,
             sender_replica_id: sender_id,
             delivery_id,
-            payload_contents: vec![6, 7, 8, 9].into(),
+            payload: Some(Payload {
+                contents: vec![6, 7, 8, 9].into(),
+                ..Default::default()
+            }),
         }
     }
 

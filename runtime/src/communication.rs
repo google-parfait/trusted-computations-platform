@@ -473,21 +473,30 @@ impl CommunicationState {
         let encryptor = self.encryptor.as_mut().unwrap();
         let result = match message {
             in_message::Msg::DeliverSystemMessage(mut msg) => encryptor
-                .decrypt(&msg.message_contents)
+                .decrypt(msg.payload.as_ref().unwrap())
                 .and_then(|decrypted_msg| {
-                    msg.message_contents = decrypted_msg.into();
+                    msg.payload = Some(Payload {
+                        contents: decrypted_msg.into(),
+                        ..Default::default()
+                    });
                     Ok(in_message::Msg::DeliverSystemMessage(msg))
                 }),
             in_message::Msg::DeliverSnapshotRequest(mut msg) => encryptor
-                .decrypt(&msg.payload_contents)
+                .decrypt(msg.payload.as_ref().unwrap())
                 .and_then(|decrypted_msg| {
-                    msg.payload_contents = decrypted_msg.into();
+                    msg.payload = Some(Payload {
+                        contents: decrypted_msg.into(),
+                        ..Default::default()
+                    });
                     Ok(in_message::Msg::DeliverSnapshotRequest(msg))
                 }),
             in_message::Msg::DeliverSnapshotResponse(mut msg) => encryptor
-                .decrypt(&msg.payload_contents)
+                .decrypt(msg.payload.as_ref().unwrap())
                 .and_then(|decrypted_msg| {
-                    msg.payload_contents = decrypted_msg.into();
+                    msg.payload = Some(Payload {
+                        contents: decrypted_msg.into(),
+                        ..Default::default()
+                    });
                     Ok(in_message::Msg::DeliverSnapshotResponse(msg))
                 }),
             _ => Err(anyhow!(format!(
@@ -511,27 +520,27 @@ impl CommunicationState {
         for unencrypted_message in unencrypted_msgs {
             let result = match unencrypted_message {
                 out_message::Msg::DeliverSystemMessage(mut message) => encryptor
-                    .encrypt(&message.message_contents)
+                    .encrypt(&message.payload.as_ref().unwrap().contents)
                     .and_then(|encrypted_message| {
-                        message.message_contents = encrypted_message.into();
+                        message.payload = Some(encrypted_message);
                         messages.push(OutMessage {
                             msg: Some(out_message::Msg::DeliverSystemMessage(message)),
                         });
                         Ok(())
                     }),
                 out_message::Msg::DeliverSnapshotRequest(mut message) => encryptor
-                    .encrypt(&message.payload_contents)
+                    .encrypt(&message.payload.as_ref().unwrap().contents)
                     .and_then(|encrypted_message| {
-                        message.payload_contents = encrypted_message.into();
+                        message.payload = Some(encrypted_message);
                         messages.push(OutMessage {
                             msg: Some(out_message::Msg::DeliverSnapshotRequest(message)),
                         });
                         Ok(())
                     }),
                 out_message::Msg::DeliverSnapshotResponse(mut message) => encryptor
-                    .encrypt(&message.payload_contents)
+                    .encrypt(&message.payload.as_ref().unwrap().contents)
                     .and_then(|encrypted_message| {
-                        message.payload_contents = encrypted_message.into();
+                        message.payload = Some(encrypted_message.into());
                         messages.push(OutMessage {
                             msg: Some(out_message::Msg::DeliverSnapshotResponse(message)),
                         });
@@ -592,7 +601,7 @@ mod test {
         DeliverSystemMessage {
             recipient_replica_id,
             sender_replica_id,
-            message_contents: Bytes::new(),
+            ..Default::default()
         }
     }
 
@@ -604,7 +613,10 @@ mod test {
         DeliverSystemMessage {
             recipient_replica_id,
             sender_replica_id,
-            message_contents,
+            payload: Some(Payload {
+                contents: message_contents,
+                ..Default::default()
+            }),
         }
     }
 
@@ -616,7 +628,7 @@ mod test {
             recipient_replica_id,
             sender_replica_id,
             delivery_id: 0,
-            payload_contents: Bytes::new(),
+            ..Default::default()
         }
     }
 
@@ -629,7 +641,10 @@ mod test {
             recipient_replica_id,
             sender_replica_id,
             delivery_id: 0,
-            payload_contents,
+            payload: Some(Payload {
+                contents: payload_contents,
+                ..Default::default()
+            }),
         }
     }
 
@@ -641,7 +656,7 @@ mod test {
             recipient_replica_id,
             sender_replica_id,
             delivery_id: 0,
-            payload_contents: Bytes::new(),
+            ..Default::default()
         }
     }
 
@@ -654,7 +669,10 @@ mod test {
             recipient_replica_id,
             sender_replica_id,
             delivery_id: 0,
-            payload_contents,
+            payload: Some(Payload {
+                contents: payload_contents,
+                ..Default::default()
+            }),
         }
     }
 
@@ -789,7 +807,7 @@ mod test {
         fn expect_encrypt(
             mut self,
             plaintext: Bytes,
-            result: anyhow::Result<Vec<u8>>,
+            result: anyhow::Result<Payload>,
         ) -> EncryptorBuilder {
             self.mock_encryptor
                 .expect_encrypt()
@@ -801,12 +819,12 @@ mod test {
 
         fn expect_decrypt(
             mut self,
-            ciphertext: Bytes,
+            payload: Payload,
             result: anyhow::Result<Vec<u8>>,
         ) -> EncryptorBuilder {
             self.mock_encryptor
                 .expect_decrypt()
-                .with(eq(ciphertext))
+                .with(eq(payload))
                 .once()
                 .return_once(move |_| result);
             self
@@ -945,16 +963,55 @@ mod test {
         );
         let mock_encryptor = EncryptorBuilder::new()
             .expect_decrypt(
-                deliver_sys_msg_encrypted.message_contents.clone(),
-                Ok(deliver_sys_msg_unencrypted.message_contents.to_vec()),
+                Payload {
+                    contents: deliver_sys_msg_encrypted
+                        .payload
+                        .as_ref()
+                        .unwrap()
+                        .contents
+                        .clone(),
+                    ..Default::default()
+                },
+                Ok(deliver_sys_msg_unencrypted
+                    .payload
+                    .as_ref()
+                    .unwrap()
+                    .contents
+                    .to_vec()),
             )
             .expect_decrypt(
-                deliver_snapshot_req_encrypted.payload_contents.clone(),
-                Ok(deliver_snapshot_req_unencrypted.payload_contents.to_vec()),
+                Payload {
+                    contents: deliver_snapshot_req_encrypted
+                        .payload
+                        .as_ref()
+                        .unwrap()
+                        .contents
+                        .clone(),
+                    ..Default::default()
+                },
+                Ok(deliver_snapshot_req_unencrypted
+                    .payload
+                    .as_ref()
+                    .unwrap()
+                    .contents
+                    .to_vec()),
             )
             .expect_decrypt(
-                deliver_snapshot_resp_encrypted.payload_contents.clone(),
-                Ok(deliver_snapshot_resp_unencrypted.payload_contents.to_vec()),
+                Payload {
+                    contents: deliver_snapshot_resp_encrypted
+                        .payload
+                        .as_ref()
+                        .unwrap()
+                        .contents
+                        .clone(),
+                    ..Default::default()
+                },
+                Ok(deliver_snapshot_resp_unencrypted
+                    .payload
+                    .as_ref()
+                    .unwrap()
+                    .contents
+                    .to_vec()),
             )
             .take();
         let mock_handshake_session_a = HandshakeSessionBuilder::new()
@@ -1083,18 +1140,57 @@ mod test {
         );
         let mock_encryptor_a = EncryptorBuilder::new()
             .expect_encrypt(
-                deliver_sys_msg_unencrypted.message_contents.clone(),
-                Ok(deliver_sys_msg_encrypted.message_contents.to_vec()),
+                deliver_sys_msg_unencrypted
+                    .payload
+                    .as_ref()
+                    .unwrap()
+                    .contents
+                    .clone(),
+                Ok(Payload {
+                    contents: deliver_sys_msg_encrypted
+                        .payload
+                        .as_ref()
+                        .unwrap()
+                        .contents
+                        .clone(),
+                    ..Default::default()
+                }),
             )
             .expect_encrypt(
-                deliver_snapshot_req_unencrypted.payload_contents.clone(),
-                Ok(deliver_snapshot_req_encrypted.payload_contents.to_vec()),
+                deliver_snapshot_req_unencrypted
+                    .payload
+                    .as_ref()
+                    .unwrap()
+                    .contents
+                    .clone(),
+                Ok(Payload {
+                    contents: deliver_snapshot_req_encrypted
+                        .payload
+                        .as_ref()
+                        .unwrap()
+                        .contents
+                        .clone(),
+                    ..Default::default()
+                }),
             )
             .take();
         let mock_encryptor_b = EncryptorBuilder::new()
             .expect_decrypt(
-                deliver_sys_msg_encrypted.message_contents.clone(),
-                Ok(deliver_sys_msg_unencrypted.message_contents.to_vec()),
+                Payload {
+                    contents: deliver_sys_msg_encrypted
+                        .payload
+                        .as_ref()
+                        .unwrap()
+                        .contents
+                        .clone(),
+                    ..Default::default()
+                },
+                Ok(deliver_sys_msg_unencrypted
+                    .payload
+                    .as_ref()
+                    .unwrap()
+                    .contents
+                    .to_vec()),
             )
             .take();
         let mock_handshake_session_a = HandshakeSessionBuilder::new()
@@ -1241,18 +1337,57 @@ mod test {
         );
         let mock_encryptor_a = EncryptorBuilder::new()
             .expect_encrypt(
-                deliver_sys_msg_unencrypted.message_contents.clone(),
-                Ok(deliver_sys_msg_encrypted.message_contents.to_vec()),
+                deliver_sys_msg_unencrypted
+                    .payload
+                    .as_ref()
+                    .unwrap()
+                    .contents
+                    .clone(),
+                Ok(Payload {
+                    contents: deliver_sys_msg_encrypted
+                        .payload
+                        .as_ref()
+                        .unwrap()
+                        .contents
+                        .clone(),
+                    ..Default::default()
+                }),
             )
             .expect_encrypt(
-                deliver_snapshot_req_unencrypted.payload_contents.clone(),
-                Ok(deliver_snapshot_req_encrypted.payload_contents.to_vec()),
+                deliver_snapshot_req_unencrypted
+                    .payload
+                    .as_ref()
+                    .unwrap()
+                    .contents
+                    .clone(),
+                Ok(Payload {
+                    contents: deliver_snapshot_req_encrypted
+                        .payload
+                        .as_ref()
+                        .unwrap()
+                        .contents
+                        .clone(),
+                    ..Default::default()
+                }),
             )
             .take();
         let mock_encryptor_b = EncryptorBuilder::new()
             .expect_decrypt(
-                deliver_sys_msg_encrypted.message_contents.clone(),
-                Ok(deliver_sys_msg_unencrypted.message_contents.to_vec()),
+                Payload {
+                    contents: deliver_sys_msg_encrypted
+                        .payload
+                        .as_ref()
+                        .unwrap()
+                        .contents
+                        .clone(),
+                    ..Default::default()
+                },
+                Ok(deliver_sys_msg_unencrypted
+                    .payload
+                    .as_ref()
+                    .unwrap()
+                    .contents
+                    .to_vec()),
             )
             .take();
         let mock_handshake_session_a = HandshakeSessionBuilder::new()
@@ -1498,8 +1633,21 @@ mod test {
         );
         let mock_encryptor = EncryptorBuilder::new()
             .expect_encrypt(
-                deliver_system_message.message_contents.clone(),
-                Ok(deliver_system_message.message_contents.to_vec()),
+                deliver_system_message
+                    .payload
+                    .as_ref()
+                    .unwrap()
+                    .contents
+                    .clone(),
+                Ok(Payload {
+                    contents: deliver_system_message
+                        .payload
+                        .as_ref()
+                        .unwrap()
+                        .contents
+                        .clone(),
+                    ..Default::default()
+                }),
             )
             .take();
         let mock_handshake_session_a1 = HandshakeSessionBuilder::new()
@@ -1610,16 +1758,55 @@ mod test {
         );
         let mock_encryptor = EncryptorBuilder::new()
             .expect_encrypt(
-                deliver_system_message_1.message_contents.clone(),
-                Ok(deliver_system_message_1.message_contents.to_vec()),
+                deliver_system_message_1
+                    .payload
+                    .as_ref()
+                    .unwrap()
+                    .contents
+                    .clone(),
+                Ok(Payload {
+                    contents: deliver_system_message_1
+                        .payload
+                        .as_ref()
+                        .unwrap()
+                        .contents
+                        .clone(),
+                    ..Default::default()
+                }),
             )
             .expect_encrypt(
-                deliver_system_message_2.message_contents.clone(),
-                Ok(deliver_system_message_2.message_contents.to_vec()),
+                deliver_system_message_2
+                    .payload
+                    .as_ref()
+                    .unwrap()
+                    .contents
+                    .clone(),
+                Ok(Payload {
+                    contents: deliver_system_message_2
+                        .payload
+                        .as_ref()
+                        .unwrap()
+                        .contents
+                        .clone(),
+                    ..Default::default()
+                }),
             )
             .expect_encrypt(
-                deliver_system_message_3.message_contents.clone(),
-                Ok(deliver_system_message_3.message_contents.to_vec()),
+                deliver_system_message_3
+                    .payload
+                    .as_ref()
+                    .unwrap()
+                    .contents
+                    .clone(),
+                Ok(Payload {
+                    contents: deliver_system_message_3
+                        .payload
+                        .as_ref()
+                        .unwrap()
+                        .contents
+                        .clone(),
+                    ..Default::default()
+                }),
             )
             .take();
         // Pretend that first handshake attempt failed.

@@ -26,7 +26,7 @@ use prost::{
 };
 use tcp_proto::runtime::endpoint::{
     deliver_snapshot_request, deliver_snapshot_response, raft_config::SnapshotConfig,
-    DeliverSnapshotRequest, DeliverSnapshotResponse, DeliverSnapshotStatus,
+    DeliverSnapshotRequest, DeliverSnapshotResponse, DeliverSnapshotStatus, Payload,
 };
 
 use raft::{
@@ -415,15 +415,15 @@ impl SnapshotSenderState {
         let next_chunk = self.snapshot_data.slice(next_chunk_start..next_chunk_end);
 
         // Assemble request payload.
-        let mut payload = deliver_snapshot_request::Payload {
+        let mut payload = deliver_snapshot_request::SnapshotContent {
             snapshot_id: self.snapshot_id,
             ..Default::default()
         };
         let chunk_size = next_chunk.len();
         if self.next_chunk_index == 0 {
             // Send header for the new snapshot transfer.
-            payload.it = Some(deliver_snapshot_request::payload::It::Header(
-                deliver_snapshot_request::payload::Header {
+            payload.it = Some(deliver_snapshot_request::snapshot_content::It::Header(
+                deliver_snapshot_request::snapshot_content::Header {
                     snapshot_size: self.snapshot_data.len() as u64,
                     snapshot_metadata: self.snapshot_metadata.encode_to_vec().into(),
                     chunk_contents: next_chunk,
@@ -431,8 +431,8 @@ impl SnapshotSenderState {
             ))
         } else {
             // Send next chunk of the existing snapshot transfer.
-            payload.it = Some(deliver_snapshot_request::payload::It::Chunk(
-                deliver_snapshot_request::payload::Chunk {
+            payload.it = Some(deliver_snapshot_request::snapshot_content::It::Chunk(
+                deliver_snapshot_request::snapshot_content::Chunk {
                     chunk_index: self.next_chunk_index,
                     chunk_contents: next_chunk,
                 },
@@ -460,8 +460,9 @@ impl SnapshotSenderState {
     ) {
         let success = match response {
             Ok(response) => {
-                let payload_result =
-                    deliver_snapshot_response::Payload::decode(response.payload_contents);
+                let payload_result = deliver_snapshot_response::SnapshotAck::decode(
+                    response.payload.unwrap().contents,
+                );
                 if payload_result.is_err() {
                     warn!(
                         self.logger,
@@ -649,7 +650,10 @@ impl SnapshotSender for DefaultSnapshotSender {
             recipient_replica_id: selected_receiver_id,
             sender_replica_id: self.replica_id,
             delivery_id: next_delivery_id,
-            payload_contents: payload_contents,
+            payload: Some(Payload {
+                contents: payload_contents,
+                ..Default::default()
+            }),
         })
     }
 
@@ -673,19 +677,19 @@ impl SnapshotSender for DefaultSnapshotSender {
         request: DeliverSnapshotRequest,
     ) -> DeliverSnapshotResponse {
         // Unexpected request, simply indicate that it has been rejected.
-        let mut response_payload = deliver_snapshot_response::Payload {
+        let mut response_payload = deliver_snapshot_response::SnapshotAck {
             status: DeliverSnapshotStatus::SnapshotStatusRejected.into(),
             ..Default::default()
         };
 
-        match deliver_snapshot_request::Payload::decode(request.payload_contents) {
+        match deliver_snapshot_request::SnapshotContent::decode(request.payload.unwrap().contents) {
             Ok(payload) => match payload.it {
                 None => {}
-                Some(deliver_snapshot_request::payload::It::Header(_)) => {
+                Some(deliver_snapshot_request::snapshot_content::It::Header(_)) => {
                     response_payload.snapshot_id = payload.snapshot_id;
                     response_payload.chunk_index = 0;
                 }
-                Some(deliver_snapshot_request::payload::It::Chunk(chunk)) => {
+                Some(deliver_snapshot_request::snapshot_content::It::Chunk(chunk)) => {
                     response_payload.snapshot_id = payload.snapshot_id;
                     response_payload.chunk_index = chunk.chunk_index;
                 }
@@ -697,7 +701,10 @@ impl SnapshotSender for DefaultSnapshotSender {
             recipient_replica_id: request.sender_replica_id,
             sender_replica_id: request.recipient_replica_id,
             delivery_id: request.delivery_id,
-            payload_contents: response_payload.encode_to_vec().into(),
+            payload: Some(Payload {
+                contents: response_payload.encode_to_vec().into(),
+                ..Default::default()
+            }),
         }
     }
 
@@ -850,16 +857,16 @@ impl SnapshotReceiver for DefaultSnapshotReceiver {
             ..Default::default()
         };
 
-        let mut response_payload = deliver_snapshot_response::Payload {
+        let mut response_payload = deliver_snapshot_response::SnapshotAck {
             snapshot_id: self.state.as_ref().map_or(0, |s| s.snapshot_id),
             ..Default::default()
         };
 
-        match deliver_snapshot_request::Payload::decode(request.payload_contents) {
+        match deliver_snapshot_request::SnapshotContent::decode(request.payload.unwrap().contents) {
             Ok(payload) => {
                 match payload.it {
                     None => {}
-                    Some(deliver_snapshot_request::payload::It::Header(header)) => {
+                    Some(deliver_snapshot_request::snapshot_content::It::Header(header)) => {
                         info!(self.logger,
                             "Starting snapshot receiving: sender {}, snapshot id {}, snapshot size {}",
                         request.sender_replica_id,
@@ -884,7 +891,7 @@ impl SnapshotReceiver for DefaultSnapshotReceiver {
                         response_payload.status =
                             DeliverSnapshotStatus::SnapshotStatusAccepted.into();
                     }
-                    Some(deliver_snapshot_request::payload::It::Chunk(chunk)) => {
+                    Some(deliver_snapshot_request::snapshot_content::It::Chunk(chunk)) => {
                         response_payload.snapshot_id = payload.snapshot_id;
                         response_payload.chunk_index = chunk.chunk_index;
 
@@ -924,7 +931,10 @@ impl SnapshotReceiver for DefaultSnapshotReceiver {
             }
         }
 
-        response.payload_contents = response_payload.encode_to_vec().into();
+        response.payload = Some(Payload {
+            contents: response_payload.encode_to_vec().into(),
+            ..Default::default()
+        });
         response
     }
 
@@ -1219,22 +1229,27 @@ mod test {
         snapshot_metadata: Bytes,
         chunk_contents: Bytes,
     ) -> DeliverSnapshotRequest {
-        let header = deliver_snapshot_request::payload::Header {
+        let header = deliver_snapshot_request::snapshot_content::Header {
             snapshot_size,
             snapshot_metadata,
             chunk_contents,
         };
 
-        let payload = deliver_snapshot_request::Payload {
+        let payload = deliver_snapshot_request::SnapshotContent {
             snapshot_id,
-            it: Some(deliver_snapshot_request::payload::It::Header(header)),
+            it: Some(deliver_snapshot_request::snapshot_content::It::Header(
+                header,
+            )),
         };
 
         DeliverSnapshotRequest {
             recipient_replica_id: 1,
             sender_replica_id: sender_id,
             delivery_id,
-            payload_contents: payload.encode_to_vec().into(),
+            payload: Some(Payload {
+                contents: payload.encode_to_vec().into(),
+                ..Default::default()
+            }),
         }
     }
 
@@ -1245,21 +1260,24 @@ mod test {
         chunk_index: u32,
         chunk_contents: Bytes,
     ) -> DeliverSnapshotRequest {
-        let chunk = deliver_snapshot_request::payload::Chunk {
+        let chunk = deliver_snapshot_request::snapshot_content::Chunk {
             chunk_index,
             chunk_contents,
         };
 
-        let payload = deliver_snapshot_request::Payload {
+        let payload = deliver_snapshot_request::SnapshotContent {
             snapshot_id,
-            it: Some(deliver_snapshot_request::payload::It::Chunk(chunk)),
+            it: Some(deliver_snapshot_request::snapshot_content::It::Chunk(chunk)),
         };
 
         DeliverSnapshotRequest {
             recipient_replica_id: 1,
             sender_replica_id: sender_id,
             delivery_id,
-            payload_contents: payload.encode_to_vec().into(),
+            payload: Some(Payload {
+                contents: payload.encode_to_vec().into(),
+                ..Default::default()
+            }),
         }
     }
 
@@ -1288,10 +1306,11 @@ mod test {
     ) {
         assert_eq!(delivery_id, response.delivery_id);
         let payload =
-            deliver_snapshot_response::Payload::decode(response.payload_contents).unwrap();
+            deliver_snapshot_response::SnapshotAck::decode(response.payload.unwrap().contents)
+                .unwrap();
         assert_eq!(
             payload,
-            deliver_snapshot_response::Payload {
+            deliver_snapshot_response::SnapshotAck {
                 snapshot_id,
                 chunk_index,
                 status: DeliverSnapshotStatus::SnapshotStatusAccepted.into()
@@ -1307,10 +1326,11 @@ mod test {
     ) {
         assert_eq!(delivery_id, response.delivery_id);
         let payload =
-            deliver_snapshot_response::Payload::decode(response.payload_contents).unwrap();
+            deliver_snapshot_response::SnapshotAck::decode(response.payload.unwrap().contents)
+                .unwrap();
         assert_eq!(
             payload,
-            deliver_snapshot_response::Payload {
+            deliver_snapshot_response::SnapshotAck {
                 snapshot_id,
                 chunk_index,
                 status: DeliverSnapshotStatus::SnapshotStatusRejected.into()
@@ -1617,7 +1637,7 @@ mod test {
         chunk_index: u32,
         status: DeliverSnapshotStatus,
     ) -> DeliverSnapshotResponse {
-        let payload = deliver_snapshot_response::Payload {
+        let payload = deliver_snapshot_response::SnapshotAck {
             snapshot_id,
             chunk_index,
             status: status.into(),
@@ -1627,7 +1647,10 @@ mod test {
             recipient_replica_id,
             sender_replica_id,
             delivery_id: 0,
-            payload_contents: payload.encode_to_vec().into(),
+            payload: Some(Payload {
+                contents: payload.encode_to_vec().into(),
+                ..Default::default()
+            }),
         }
     }
 

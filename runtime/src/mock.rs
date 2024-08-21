@@ -46,7 +46,7 @@ use raft::{
 use slog::Logger;
 use tcp_proto::runtime::endpoint::{
     in_message, out_message, raft_config::SnapshotConfig, DeliverSnapshotRequest,
-    DeliverSnapshotResponse, OutMessage, SecureChannelHandshake,
+    DeliverSnapshotResponse, OutMessage, Payload, SecureChannelHandshake,
 };
 
 mock! {
@@ -299,9 +299,9 @@ mock! {
     }
 
     impl Encryptor for Encryptor {
-        fn encrypt(&mut self, plaintext: &[u8]) -> anyhow::Result<Vec<u8>>;
+        fn encrypt(&mut self, plaintext: &[u8]) -> anyhow::Result<Payload>;
 
-        fn decrypt(&mut self, ciphertext: &[u8]) -> anyhow::Result<Vec<u8>>;
+        fn decrypt(&mut self, payload: &Payload) -> anyhow::Result<Vec<u8>>;
     }
 }
 
