@@ -12,10 +12,10 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
+use crate::encryptor::{DefaultClientEncryptor, DefaultServerEncryptor, Encryptor};
+use crate::session::{OakClientSession, OakServerSession, OakSessionFactory};
 use alloc::{boxed::Box, format};
 use anyhow::{anyhow, Error, Result};
-use encryptor::{DefaultClientEncryptor, DefaultServerEncryptor, Encryptor};
-use session::{OakClientSession, OakServerSession, OakSessionFactory};
 use slog::{debug, warn, Logger};
 use tcp_proto::runtime::endpoint::{
     secure_channel_handshake::{

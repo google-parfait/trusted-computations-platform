@@ -17,6 +17,7 @@ extern crate micro_rpc;
 extern crate prost;
 extern crate tcp_proto;
 
+use self::micro_rpc::Status;
 use crate::communication::DefaultCommunicationModule;
 use crate::handshake::DefaultHandshakeSessionProvider;
 use crate::model::Actor;
@@ -30,7 +31,6 @@ use crate::{
 use alloc::boxed::Box;
 use alloc::vec::Vec;
 use core::mem;
-use service::micro_rpc::Status;
 use tcp_proto::runtime::endpoint::{
     EndpointService, OutMessage, ReceiveMessageRequest, ReceiveMessageResponse,
 };

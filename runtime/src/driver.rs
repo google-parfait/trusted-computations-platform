@@ -18,6 +18,7 @@ use crate::consensus::{Raft, RaftState, Store};
 use crate::logger::log::create_remote_logger;
 use crate::logger::DrainOutput;
 use crate::model::{Actor, ActorCommand, ActorContext, ActorEvent, ActorEventContext};
+use crate::platform::{Application, Host, PalError};
 use crate::snapshot::{SnapshotError, SnapshotProcessor, SnapshotProcessorRole};
 use crate::util::raft::{
     create_entry, create_raft_config_change, create_raft_message, deserialize_config_change,
@@ -31,7 +32,6 @@ use core::{
     cell::{RefCell, RefMut},
     cmp, mem,
 };
-use platform::{Application, Host, PalError};
 use prost::{bytes::Bytes, Message};
 use raft::{
     eraftpb::ConfChangeType as RaftConfigChangeType, eraftpb::ConfState as RaftConfigState,
