@@ -1316,8 +1316,8 @@ mod test {
 
     use self::mockall::predicate::{always, eq};
     use super::*;
-    use mock::{MockActor, MockCommunicationModule, MockHost, MockRaft, MockStore};
-    use model::ActorError;
+    use crate::mock::{MockActor, MockCommunicationModule, MockHost, MockRaft, MockStore};
+    use crate::model::ActorError;
     use raft::eraftpb::{
         ConfChange as RaftConfigChange, EntryType as RaftEntryType, MessageType as RaftMessageType,
     };

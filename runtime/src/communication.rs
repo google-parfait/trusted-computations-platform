@@ -571,7 +571,10 @@ mod test {
     extern crate mockall;
 
     use self::mockall::predicate::{always, eq};
+    use crate::communication::mem;
+    use crate::handshake::Role;
     use crate::logger::log::create_logger;
+    use crate::mock::{MockEncryptor, MockHandshakeSession, MockHandshakeSessionProvider};
     use crate::{
         communication::{CommunicationConfig, CommunicationModule, DefaultCommunicationModule},
         platform::PalError,
@@ -579,9 +582,6 @@ mod test {
     use alloc::vec;
     use alloc::vec::Vec;
     use anyhow::anyhow;
-    use communication::mem;
-    use handshake::Role;
-    use mock::{MockEncryptor, MockHandshakeSession, MockHandshakeSessionProvider};
     use prost::bytes::Bytes;
     use tcp_proto::runtime::endpoint::*;
 

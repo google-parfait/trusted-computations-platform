@@ -105,9 +105,9 @@ mod test {
     extern crate mockall;
     use self::mockall::predicate::eq;
     use crate::encryptor::{DefaultClientEncryptor, DefaultServerEncryptor, Encryptor};
+    use crate::mock::{MockOakClientSession, MockOakServerSession};
     use anyhow::{anyhow, Result};
     use core::mem;
-    use mock::{MockOakClientSession, MockOakServerSession};
     use oak_proto_rust::oak::session::v1::{
         session_request::Request, session_response::Response, AttestRequest, AttestResponse,
         SessionRequest, SessionResponse,

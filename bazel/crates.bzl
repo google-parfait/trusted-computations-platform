@@ -87,6 +87,41 @@ TCP_NO_STD_PACKAGES = _COMMON_PACKAGES | {
     "libm": crate.spec(
         version = "0.2.8",
     ),
+    "p384": crate.spec(
+        version = "0.13.0",
+        default_features = False,
+        features = ["ecdsa", "pem"],
+    ),
+    "rlsf": crate.spec(
+        version = "0.2.1",
+    ),
+    "rsa": crate.spec(
+        version = "0.9.6",
+        default_features = False,
+    ),
+    "serde": crate.spec(
+        version = "1.0.195",
+        default_features = False,
+        features = ["derive"],
+    ),
+    "serde_json": crate.spec(
+        version = "1.0.113",
+        default_features = False,
+        features = ["alloc"],
+    ),
+    "time": crate.spec(
+        version = "0.3.28",
+        default_features = False,
+        features = ["serde", "parsing"],
+    ),
+    "x509-cert": crate.spec(
+        version = "0.2.5",
+        default_features = False,
+        features = ["pem"],
+    ),
+    "zerocopy": crate.spec(
+        version = "0.7.32",
+    ),
 }
 
 def _alias_crates_repository(repository_ctx):

@@ -18,19 +18,23 @@ extern crate mockall;
 extern crate tcp_proto;
 
 use self::mockall::mock;
-use alloc::boxed::Box;
-use alloc::vec::Vec;
-use communication::{CommunicationConfig, CommunicationModule};
-use consensus;
-use consensus::{Raft, RaftLightReady, RaftReady, Store};
-use encryptor::Encryptor;
-use handshake::{HandshakeSession, HandshakeSessionProvider, Role};
-use model::{
+use crate::communication::{CommunicationConfig, CommunicationModule};
+use crate::consensus;
+use crate::consensus::{Raft, RaftLightReady, RaftReady, Store};
+use crate::encryptor::Encryptor;
+use crate::handshake::{HandshakeSession, HandshakeSessionProvider, Role};
+use crate::model::{
     Actor, ActorCommand, ActorContext, ActorError, ActorEvent, ActorEventContext, CommandOutcome,
     EventOutcome,
 };
+use crate::platform::{Host, PalError};
+use crate::session::{OakClientSession, OakServerSession, OakSession, OakSessionFactory};
+use crate::snapshot::{
+    SnapshotError, SnapshotReceiver, SnapshotReceiverImpl, SnapshotSender, SnapshotSenderImpl,
+};
+use alloc::boxed::Box;
+use alloc::vec::Vec;
 use oak_proto_rust::oak::session::v1::{SessionRequest, SessionResponse};
-use platform::{Host, PalError};
 use prost::bytes::Bytes;
 use raft::{
     eraftpb::ConfChange as RaftConfigChange, eraftpb::ConfState as RaftConfigState,
@@ -39,11 +43,7 @@ use raft::{
     Error as RaftError, GetEntriesContext as RaftGetEntriesContext,
     SnapshotStatus as RaftSnapshotStatus, Storage as RaftStorage,
 };
-use session::{OakClientSession, OakServerSession, OakSession, OakSessionFactory};
 use slog::Logger;
-use snapshot::{
-    SnapshotError, SnapshotReceiver, SnapshotReceiverImpl, SnapshotSender, SnapshotSenderImpl,
-};
 use tcp_proto::runtime::endpoint::{
     in_message, out_message, raft_config::SnapshotConfig, DeliverSnapshotRequest,
     DeliverSnapshotResponse, OutMessage, SecureChannelHandshake,

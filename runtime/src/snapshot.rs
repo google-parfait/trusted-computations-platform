@@ -944,9 +944,9 @@ mod test {
 
     use self::mockall::predicate::{always, eq};
     use super::*;
+    use crate::mock::{MockSnapshotReceiver, MockSnapshotSender};
     use alloc::vec;
     use core::matches;
-    use mock::{MockSnapshotReceiver, MockSnapshotSender};
 
     use crate::logger::log::create_logger;
     use crate::util::raft::{create_raft_snapshot, create_raft_snapshot_metadata};

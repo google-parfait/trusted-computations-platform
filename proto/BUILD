@@ -17,11 +17,12 @@ load("@rules_rust//rust:defs.bzl", "rust_library")
 
 cargo_build_script(
     name = "build",
-    srcs = ["build_bazel.rs"],
+    srcs = ["build.rs"],
     build_script_env = {
         "PROTOC": "$(execpath @com_google_protobuf//:protoc)",
         "DIGEST_PROTO": "$(execpath @oak//proto:digest.proto)",
     },
+    crate_features = ["bazel"],
     data = glob(["src/*.proto"]) + [
         "@oak//proto:digest.proto",
         "@oak//proto/attestation:endorsement.proto",

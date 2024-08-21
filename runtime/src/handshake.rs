@@ -453,9 +453,9 @@ mod test {
         HandshakeSessionProvider, Role, ServerHandshakeSession,
     };
     use crate::logger::log::create_logger;
+    use crate::mock::{MockOakClientSession, MockOakServerSession, MockOakSessionFactory};
     use anyhow::{anyhow, Result};
     use core::mem;
-    use mock::{MockOakClientSession, MockOakServerSession, MockOakSessionFactory};
     use oak_proto_rust::oak::session::v1::{
         SessionRequest as OakSessionRequest, SessionResponse as OakSessionResponse,
     };
