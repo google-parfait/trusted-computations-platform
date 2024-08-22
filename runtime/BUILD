@@ -27,11 +27,6 @@ rust_library(
     visibility = ["//visibility:public"],
     deps = [
         "//proto:tcp_proto",
-        "@crates_index//:anyhow",
-        "@crates_index//:hashbrown",
-        "@crates_index//:prost",
-        "@crates_index//:slog",
-        "@crates_index//:spin",
         "@oak//micro_rpc",
         "@oak//oak_attestation",
         "@oak//oak_attestation_verification",
@@ -39,11 +34,16 @@ rust_library(
         "@oak//oak_proto_rust",
         "@oak//oak_restricted_kernel_sdk",
         "@oak//oak_session",
+        "@oak_crates_index//:anyhow",
+        "@oak_crates_index//:hashbrown",
+        "@oak_crates_index//:prost",
+        "@oak_crates_index//:slog",
+        "@oak_crates_index//:spin",
         "@raft_rs//:raft",
     ] + select({
         "@platforms//os:linux": [
-            "@crates_index//:mockall",
-            "@crates_index//:slog-term",
+            "@oak_crates_index//:mockall",
+            "@oak_crates_index//:slog-term",
         ],
         "//conditions:default": [],
     }),
@@ -57,7 +57,7 @@ rust_test(
         "std",
     ],
     deps = [
-        "@crates_index//:googletest",
-        "@crates_index//:mockall",
+        "@oak_crates_index//:googletest",
+        "@oak_crates_index//:mockall",
     ],
 )

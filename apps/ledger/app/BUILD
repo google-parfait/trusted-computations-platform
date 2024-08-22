@@ -22,10 +22,10 @@ rust_binary(
         "//apps/ledger/service:tcp_ledger_service",
         "//proto:tcp_proto",
         "//runtime:tcp_runtime",
-        "@crates_index//:hashbrown",
-        "@crates_index//:prost",
         "@oak//micro_rpc",
         "@oak//oak_restricted_kernel_interface",
         "@oak//oak_restricted_kernel_sdk",
+        "@oak_crates_index//:hashbrown",
+        "@oak_crates_index//:prost",
     ],
 )

@@ -54,17 +54,17 @@ rust_library(
         ":build",
         "//proto:tcp_proto",
         "//runtime:tcp_runtime",
-        "@crates_index//:hashbrown",
-        "@crates_index//:prost",
-        "@crates_index//:prost-types",
-        "@crates_index//:rand",
-        "@crates_index//:slog",
         "@oak//micro_rpc",
         "@oak//oak_attestation_verification",
         "@oak//oak_proto_rust",
         "@oak//oak_restricted_kernel_sdk",
+        "@oak_crates_index//:hashbrown",
+        "@oak_crates_index//:prost",
+        "@oak_crates_index//:prost-types",
+        "@oak_crates_index//:rand",
+        "@oak_crates_index//:slog",
     ] + select({
-        "@platforms//os:linux": ["@crates_index//:slog-term"],
+        "@platforms//os:linux": ["@oak_crates_index//:slog-term"],
         "//conditions:default": [],
     }),
 )
@@ -77,8 +77,8 @@ rust_test(
         "std",
     ],
     deps = [
-        "@crates_index//:googletest",
-        "@crates_index//:mockall",
+        "@oak_crates_index//:googletest",
+        "@oak_crates_index//:mockall",
     ],
 )
 
@@ -93,8 +93,8 @@ rust_test(
         ":tcp_tablet_store_service",
         "//integration:tcp_integration",
         "//proto:tcp_proto",
-        "@crates_index//:googletest",
-        "@crates_index//:mockall",
-        "@crates_index//:prost",
+        "@oak_crates_index//:googletest",
+        "@oak_crates_index//:mockall",
+        "@oak_crates_index//:prost",
     ],
 )

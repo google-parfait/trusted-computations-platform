@@ -53,6 +53,10 @@ fn main() -> Result<()> {
         &["src/endpoint.proto"],
         &[
             "src",
+            std::env::var("DESCRIPTOR_PROTO")
+                .unwrap()
+                .strip_suffix("/google/protobuf/descriptor.proto")
+                .unwrap(),
             std::env::var("DIGEST_PROTO")
                 .unwrap()
                 .strip_suffix("/proto/digest.proto")

@@ -34,6 +34,7 @@ cargo_build_script(
         "@com_google_protobuf//:well_known_type_protos",
         "@oak//proto:digest.proto",
         "@oak//proto/attestation:endorsement.proto",
+        "@oak//proto/attestation:eventlog.proto",
         "@oak//proto/attestation:evidence.proto",
         "@oak//proto/attestation:reference_value.proto",
         "@oak//proto/attestation:tcb_version.proto",
@@ -53,9 +54,9 @@ rust_library(
     visibility = ["//visibility:public"],
     deps = [
         ":build",
-        "@crates_index//:prost",
-        "@crates_index//:prost-types",
         "@oak//micro_rpc",
         "@oak//oak_proto_rust",
+        "@oak_crates_index//:prost",
+        "@oak_crates_index//:prost-types",
     ],
 )

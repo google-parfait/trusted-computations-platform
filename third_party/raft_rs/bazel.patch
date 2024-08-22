@@ -7,17 +7,17 @@
 +    name = "raft",
 +    srcs = glob(["src/**/*.rs"]),
 +    crate_features = ["prost-codec"],
-+    proc_macro_deps = ["@crates_index//:getset"],
++    proc_macro_deps = ["@oak_crates_index//:getset"],
 +    visibility = ["//visibility:public"],
 +    deps = [
 +        "//proto:raft-proto",
-+        "@crates_index//:ahash",
-+        "@crates_index//:getrandom",
-+        "@crates_index//:hashbrown",
-+        "@crates_index//:prost",
-+        "@crates_index//:rand",
-+        "@crates_index//:slog",
-+        "@crates_index//:spin",
++        "@oak_crates_index//:ahash",
++        "@oak_crates_index//:getrandom",
++        "@oak_crates_index//:hashbrown",
++        "@oak_crates_index//:prost",
++        "@oak_crates_index//:rand",
++        "@oak_crates_index//:slog",
++        "@oak_crates_index//:spin",
 +    ],
 +)
 
@@ -32,12 +32,12 @@
 +    crate_root = "src/lib.rs",
 +    srcs = glob(["src/**/*.rs"]),
 +    crate_features = ["prost-codec"],
-+    proc_macro_deps = ["@crates_index//:prost-derive"],
++    proc_macro_deps = ["@oak_crates_index//:prost-derive"],
 +    visibility = ["//visibility:public"],
 +    deps = [
 +        ":build",
-+        "@crates_index//:lazy_static",
-+        "@crates_index//:prost",
++        "@oak_crates_index//:lazy_static",
++        "@oak_crates_index//:prost",
 +    ],
 +)
 +
@@ -50,7 +50,7 @@
 +    data = glob(["proto/**/*.proto"]),
 +    tools = ["@com_google_protobuf//:protoc"],
 +    deps = [
-+        "@crates_index//:prost-build",
++        "@oak_crates_index//:prost-build",
 +        "@oak//oak_proto_build_utils",
 +    ],
 +)

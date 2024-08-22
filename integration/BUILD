@@ -31,14 +31,14 @@ rust_library(
     deps = [
         "//proto:tcp_proto",
         "//runtime:tcp_runtime",
-        "@crates_index//:hashbrown",
-        "@crates_index//:prost",
-        "@crates_index//:prost-types",
-        "@crates_index//:slog",
         "@oak//micro_rpc",
+        "@oak_crates_index//:hashbrown",
+        "@oak_crates_index//:prost",
+        "@oak_crates_index//:prost-types",
+        "@oak_crates_index//:slog",
         "@raft_rs//:raft",
     ] + select({
-        "@platforms//os:linux": ["@crates_index//:slog-term"],
+        "@platforms//os:linux": ["@oak_crates_index//:slog-term"],
         "//conditions:default": [],
     }),
 )

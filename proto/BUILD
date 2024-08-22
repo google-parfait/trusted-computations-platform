@@ -20,12 +20,16 @@ cargo_build_script(
     srcs = ["build.rs"],
     build_script_env = {
         "PROTOC": "$(execpath @com_google_protobuf//:protoc)",
-        "DIGEST_PROTO": "$(execpath @oak//proto:digest.proto)",
+        "DESCRIPTOR_PROTO": "$(location @com_google_protobuf//:descriptor_proto_srcs)",
+        "DIGEST_PROTO": "$(location @oak//proto:digest.proto)",
     },
     crate_features = ["bazel"],
     data = glob(["src/*.proto"]) + [
+        "@com_google_protobuf//:descriptor_proto_srcs",
+        "@com_google_protobuf//:well_known_type_protos",
         "@oak//proto:digest.proto",
         "@oak//proto/attestation:endorsement.proto",
+        "@oak//proto/attestation:eventlog.proto",
         "@oak//proto/attestation:evidence.proto",
         "@oak//proto/attestation:reference_value.proto",
         "@oak//proto/attestation:tcb_version.proto",
@@ -43,12 +47,12 @@ cargo_build_script(
 rust_library(
     name = "tcp_proto",
     srcs = glob(["src/*.rs"]),
-    proc_macro_deps = ["@crates_index//:prost-derive"],
+    proc_macro_deps = ["@oak_crates_index//:prost-derive"],
     visibility = ["//visibility:public"],
     deps = [
         ":build",
-        "@crates_index//:prost",
         "@oak//micro_rpc",
         "@oak//oak_proto_rust",
+        "@oak_crates_index//:prost",
     ],
 )

@@ -63,13 +63,9 @@ rules_proto_toolchains()
 
 http_archive(
     name = "oak",
-    repo_mapping = {
-        "@oak_crates_index": "@crates_index",
-        "@oak_no_std_crates_index": "@crates_index",
-    },
-    sha256 = "8a05482dd7f00f1e3b1ff08d57642ced46ac19b7fc3ce5ce2b904708a0c86237",
-    strip_prefix = "oak-c698e8a4d4ba626737d5249ca015b08b511aa591",
-    url = "https://github.com/project-oak/oak/archive/c698e8a4d4ba626737d5249ca015b08b511aa591.tar.gz",
+    sha256 = "71437c5030a4660ecf1b5fda1231e1aeb9543cc84636f99a2bdf354add099913",
+    strip_prefix = "oak-b78e5f5c4be5d25e4b6c6009099c84edaf1c0b36",
+    url = "https://github.com/project-oak/oak/archive/b78e5f5c4be5d25e4b6c6009099c84edaf1c0b36.tar.gz",
 )
 
 load("@oak//bazel:repositories.bzl", "oak_toolchain_repositories")
@@ -85,35 +81,16 @@ load("@oak//bazel/rust:defs.bzl", "setup_rust_dependencies")
 setup_rust_dependencies()
 
 load("@oak//bazel/crates:repositories.bzl", "create_oak_crate_repositories")
-load("//:bazel/crates.bzl", "TCP_NO_STD_PACKAGES", "TCP_PACKAGES", "alias_crates_repository")
+load("//:bazel/crates.bzl", "TCP_NO_STD_PACKAGES", "TCP_PACKAGES")
 
 create_oak_crate_repositories(
     extra_no_std_packages = TCP_NO_STD_PACKAGES,
     extra_packages = TCP_PACKAGES,
 )
 
-alias_crates_repository(
-    name = "crates_index",
-    overrides = {
-        "prost-types,@platforms//os:none": "@oak//third_party/prost-types",
-    },
-    repositories = {
-        "@platforms//os:none": "oak_no_std_crates_index",
-        "//conditions:default": "oak_crates_index",
-    },
-)
+load("@oak//bazel/crates:crates.bzl", "load_oak_crate_repositories")
 
-load("@oak_crates_index//:defs.bzl", "crate_repositories")
-
-crate_repositories()
-
-load("@oak_no_std_crates_index//:defs.bzl", no_std_crate_repositories = "crate_repositories")
-
-no_std_crate_repositories()
-
-load("@oak_no_std_no_avx_crates_index//:defs.bzl", no_std_no_avx_crate_repositories = "crate_repositories")
-
-no_std_no_avx_crate_repositories()
+load_oak_crate_repositories()
 
 http_archive(
     name = "aspect_gcc_toolchain",

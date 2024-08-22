@@ -25,26 +25,10 @@ _COMMON_PACKAGES = {
         version = "0.8.3",
         default_features = False,
     ),
-    "bitmask": crate.spec(
+    "hashbrown": crate.spec(
         default_features = False,
-        version = "0.5.0",
-    ),
-    "byteorder": crate.spec(
-        default_features = False,
-        version = "1.4.3",
-    ),
-    "core2": crate.spec(
-        default_features = False,
-        version = "0.4.0",
-    ),
-    "libflate": crate.spec(
-        default_features = False,
-        version = "2.0.0",
-    ),
-    "rand": crate.spec(
-        version = "0.8.0",
-        default_features = False,
-        features = ["alloc", "small_rng", "getrandom"],
+        features = ["ahash"],
+        version = "0.14.3",
     ),
     "slog": crate.spec(
         version = "2.2.0",
@@ -57,17 +41,11 @@ _COMMON_PACKAGES = {
 
 # Crates used for std builds.
 TCP_PACKAGES = _COMMON_PACKAGES | {
-    "assert_cmd": crate.spec(
-        version = "2.0.14",
-    ),
     "getset": crate.spec(
         version = "0.1.1",
     ),
     "googletest": crate.spec(
         version = "0.11.0",
-    ),
-    "insta": crate.spec(
-        version = "1.38.0",
     ),
     "mockall": crate.spec(
         version = "0.11.4",
@@ -84,16 +62,15 @@ TCP_NO_STD_PACKAGES = _COMMON_PACKAGES | {
         default_features = False,
         features = ["alloc"],
     ),
-    "libm": crate.spec(
-        version = "0.2.8",
-    ),
     "p384": crate.spec(
         version = "0.13.0",
         default_features = False,
         features = ["ecdsa", "pem"],
     ),
-    "rlsf": crate.spec(
-        version = "0.2.1",
+    "rand": crate.spec(
+        version = "0.8.5",
+        default_features = False,
+        features = ["alloc", "small_rng", "getrandom"],
     ),
     "rsa": crate.spec(
         version = "0.9.6",
@@ -119,66 +96,4 @@ TCP_NO_STD_PACKAGES = _COMMON_PACKAGES | {
         default_features = False,
         features = ["pem"],
     ),
-    "zerocopy": crate.spec(
-        version = "0.7.32",
-    ),
 }
-
-def _alias_crates_repository(repository_ctx):
-    repositories = repository_ctx.attr.repositories
-
-    overrides = {}
-    for key, target in repository_ctx.attr.overrides.items():
-        crate, condition = key.split(",", 1)
-        overrides.setdefault(crate, {})[condition] = target
-
-    crates = {}
-    for repo_name in repositories.values():
-        path = repository_ctx.path(Label("@{}//:BUILD.bazel".format(repo_name)))
-        cmd = repository_ctx.execute(["sed", "-ne", "s/\\s*name = \"\\(.*\\)\",/\\1/p", path])
-        if cmd.return_code != 0:
-            fail("Failed to parse {}:\n{}".format(path, cmd.stderr))
-        crates.update({crate: True for crate in cmd.stdout.splitlines()})
-
-    contents = "package(default_visibility = [\"//visibility:public\"])\n"
-    for crate in crates.keys():
-        contents += """
-alias(
-    name = "{}",
-    actual = select({{
-""".format(crate)
-        for condition, repo_name in repositories.items():
-            default_target = "@{}//:{}".format(repo_name, crate)
-            target = overrides.get(crate, {}).get(condition, default_target)
-            contents += "        \"{}\": \"{}\",\n".format(condition, target)
-        contents += """    }),
-    tags = ["manual"],
-)
-"""
-
-    repository_ctx.file("BUILD", contents, executable = False)
-
-alias_crates_repository = repository_rule(
-    implementation = _alias_crates_repository,
-    doc = """Creates a repository that selects between other crates_repository rules.
-
-Example:
-
-    alias_crates_repository(
-        name = "crates_index",
-        repositories = {
-            "@platforms//os:none": "no_std_crates_index",
-            "//conditions:default": "std_crates_index",
-        },
-    )
-""",
-    attrs = {
-        "repositories": attr.string_dict(
-            mandatory = True,
-            doc = "Map from select condition to repo name.",
-        ),
-        "overrides": attr.string_dict(
-            doc = "Map from \"crate,condition\" to a label to use instead of the default.",
-        ),
-    },
-)
