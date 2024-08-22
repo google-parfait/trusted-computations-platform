@@ -74,13 +74,13 @@ rust_library(
         "@crates_index//:sha2",
         "@crates_index//:slog",
         "@oak//micro_rpc",
+        "@oak//oak_attestation",
         "@oak//oak_attestation_verification",
         "@oak//oak_proto_rust",
         "@oak//oak_restricted_kernel_sdk",
     ] + select({
         "@platforms//os:linux": [
             "@crates_index//:slog-term",
-            "@oak//oak_attestation",
         ],
         "//conditions:default": [],
     }),
