@@ -154,7 +154,9 @@ impl LedgerService {
                 ..Default::default()
             })
             .payload(claims.to_vec().map_err(anyhow::Error::msg)?)
-            .try_create_signature(b"", |msg| Ok(self.signer.sign(msg)?.signature))?
+            .try_create_signature(b"", |msg| {
+                Ok::<Vec<u8>, anyhow::Error>(self.signer.sign(msg)?.signature)
+            })?
             .build()
             .to_vec()
             .map_err(anyhow::Error::msg)

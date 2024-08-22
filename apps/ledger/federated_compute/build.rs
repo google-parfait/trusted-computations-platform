@@ -14,6 +14,7 @@
 
 use std::io::Result;
 
+#[cfg(not(feature = "bazel"))]
 fn main() -> Result<()> {
     micro_rpc_build::compile(
         &[
@@ -30,5 +31,36 @@ fn main() -> Result<()> {
             ..Default::default()
         },
     );
+    Ok(())
+}
+
+#[cfg(feature = "bazel")]
+fn main() -> Result<()> {
+    micro_rpc_build::compile(
+        &[
+            "proto/access_policy.proto",
+            "proto/blob_header.proto",
+            "proto/ledger.proto",
+        ],
+        &[
+            "proto",
+            std::env::var("EVIDENCE_PROTO")
+                .unwrap()
+                .strip_suffix("/proto/attestation/evidence.proto")
+                .unwrap(),
+            std::env::var("DESCRIPTOR_PROTO")
+                .unwrap()
+                .strip_suffix("/google/protobuf/descriptor.proto")
+                .unwrap(),
+        ],
+        micro_rpc_build::CompileOptions {
+            extern_paths: vec![micro_rpc_build::ExternPath::new(
+                ".oak.attestation.v1",
+                "::oak_proto_rust::oak::attestation::v1",
+            )],
+            ..Default::default()
+        },
+    );
+    oak_proto_build_utils::fix_prost_derives().unwrap();
     Ok(())
 }
