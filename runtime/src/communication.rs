@@ -11,6 +11,7 @@
 // WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
+//
 
 use core::mem;
 
@@ -617,6 +618,7 @@ mod test {
                 contents: message_contents,
                 ..Default::default()
             }),
+            ..Default::default()
         }
     }
 
@@ -645,6 +647,7 @@ mod test {
                 contents: payload_contents,
                 ..Default::default()
             }),
+            ..Default::default()
         }
     }
 
@@ -673,6 +676,7 @@ mod test {
                 contents: payload_contents,
                 ..Default::default()
             }),
+            ..Default::default()
         }
     }
 

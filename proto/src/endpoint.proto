@@ -276,8 +276,10 @@ message DeliverSystemMessage {
   uint64 recipient_replica_id = 1;
   // The replica id of the sender.
   uint64 sender_replica_id = 2;
+  // Message to be delivered, potentially encrypted. Use `Payload` instead.
+  bytes message_contents = 3 [deprecated=true];
   // Payload to be delivered, potentially encrypted.
-  Payload payload = 3;
+  Payload payload = 4;
 }
 
 // Request to deliver part of snapshot.
@@ -289,8 +291,10 @@ message DeliverSnapshotRequest {
   // The unique id that is used to correlate attempt to deliver part of the
   // snapshot and failure or response.
   uint64 delivery_id = 3;
+  // The serialized payload message, potentially encrypted. Use `Payload` instead.
+  bytes payload_contents = 4 [deprecated=true];
   // Payload carrying the serialized `SnapshotContent` message, potentially encrypted.
-  Payload payload = 4;
+  Payload payload = 5;
 
   message SnapshotContent {
     // The id of the snapshot being sent. It is used to resolve conflicts of
@@ -342,8 +346,10 @@ message DeliverSnapshotResponse {
   // The unique id that is used to correlate attempt to deliver part of the
   // snapshot and failure or response.
   uint64 delivery_id = 3;
+  // The serialized payload message, potentially encrypted. Use `Payload` instead.
+  bytes payload_contents = 4 [deprecated=true];
   // Payload carrying the serialized `SnapshotAck` message, potentially encrypted.
-  Payload payload = 4;
+  Payload payload = 5;
 
   message SnapshotAck {
     // The id of the snapshot being received.

@@ -499,6 +499,7 @@ impl<
                             contents: serialize_raft_message(&raft_message).unwrap(),
                             ..Default::default()
                         }),
+                        ..Default::default()
                     },
                 ))?;
         }
@@ -1496,6 +1497,7 @@ mod test {
                         contents: serialize_raft_message(raft_message).unwrap(),
                         ..Default::default()
                     }),
+                    ..Default::default()
                 },
             )),
         };
@@ -1510,6 +1512,7 @@ mod test {
                 contents: serialize_raft_message(raft_message).unwrap(),
                 ..Default::default()
             }),
+            ..Default::default()
         })
     }
 
@@ -1554,6 +1557,7 @@ mod test {
                 contents: vec![4, 5, 6, 7, 8, 9].into(),
                 ..Default::default()
             }),
+            ..Default::default()
         }
     }
 
@@ -1580,6 +1584,7 @@ mod test {
                 contents: vec![6, 7, 8, 9].into(),
                 ..Default::default()
             }),
+            ..Default::default()
         }
     }
 

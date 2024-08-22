@@ -654,6 +654,7 @@ impl SnapshotSender for DefaultSnapshotSender {
                 contents: payload_contents,
                 ..Default::default()
             }),
+            ..Default::default()
         })
     }
 
@@ -705,6 +706,7 @@ impl SnapshotSender for DefaultSnapshotSender {
                 contents: response_payload.encode_to_vec().into(),
                 ..Default::default()
             }),
+            ..Default::default()
         }
     }
 
@@ -1250,6 +1252,7 @@ mod test {
                 contents: payload.encode_to_vec().into(),
                 ..Default::default()
             }),
+            ..Default::default()
         }
     }
 
@@ -1278,6 +1281,7 @@ mod test {
                 contents: payload.encode_to_vec().into(),
                 ..Default::default()
             }),
+            ..Default::default()
         }
     }
 
@@ -1651,6 +1655,7 @@ mod test {
                 contents: payload.encode_to_vec().into(),
                 ..Default::default()
             }),
+            ..Default::default()
         }
     }
 
