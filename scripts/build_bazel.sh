@@ -33,13 +33,13 @@ readonly BAZELISK="${BAZELISK:-bazelisk}"
 ${BAZELISK} test //...
 
 if [ "$1" == "release" ] || [ "$1" == "debug" ]; then
-  mode=$([ "$1" == "release" ] && echo "-c opt" || echo "")
+  mode=$([ "$1" == "release" ] && echo "opt" || echo "dbg")
   # BINARY_OUTPUTS_DIR may be unset if this script is run manually; it'll
   # always be set during CI builds.
   if [[ -n "${BINARY_OUTPUTS_DIR}" ]]; then
-    ${BAZELISK} run $mode //:install_binaries -- --destdir "${BINARY_OUTPUTS_DIR}"
+    ${BAZELISK} run -c $mode //:install_binaries -- --destdir "${BINARY_OUTPUTS_DIR}"
   else
     # If unset, verify the binaries can be built with -c opt.
-    ${BAZELISK} build $mode //:install_binaries
+    ${BAZELISK} build -c $mode //:install_binaries
   fi
 fi
