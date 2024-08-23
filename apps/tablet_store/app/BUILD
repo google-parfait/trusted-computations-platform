@@ -18,6 +18,7 @@ rust_binary(
     name = "tcp_tablet_store_enclave_app",
     srcs = glob(["src/*.rs"]),
     platform = "@oak//:x86_64-unknown-none",
+    visibility = ["//:__pkg__"],
     deps = [
         "//apps/tablet_store/service:tcp_tablet_store_service",
         "//proto:tcp_proto",

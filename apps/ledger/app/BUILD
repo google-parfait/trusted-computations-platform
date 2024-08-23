@@ -18,6 +18,7 @@ rust_binary(
     name = "tcp_ledger_enclave_app",
     srcs = glob(["src/*.rs"]),
     platform = "@oak//:x86_64-unknown-none",
+    visibility = ["//:__pkg__"],
     deps = [
         "//apps/ledger/service:tcp_ledger_service",
         "//proto:tcp_proto",

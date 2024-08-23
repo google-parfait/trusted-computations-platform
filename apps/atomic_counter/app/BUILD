@@ -18,6 +18,7 @@ rust_binary(
     name = "tcp_atomic_counter_enclave_app",
     srcs = glob(["src/*.rs"]),
     platform = "@oak//:x86_64-unknown-none",
+    visibility = ["//:__pkg__"],
     deps = [
         "//apps/atomic_counter/service:tcp_atomic_counter_service",
         "//proto:tcp_proto",

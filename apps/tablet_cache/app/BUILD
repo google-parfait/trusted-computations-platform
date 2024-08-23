@@ -18,6 +18,7 @@ rust_binary(
     name = "tcp_tablet_cache_enclave_app",
     srcs = glob(["src/*.rs"]),
     platform = "@oak//:x86_64-unknown-none",
+    visibility = ["//:__pkg__"],
     deps = [
         "//apps/tablet_cache/service:tcp_tablet_cache_service",
         "//proto:tcp_proto",
