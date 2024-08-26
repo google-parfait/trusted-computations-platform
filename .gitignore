@@ -1,6 +1,6 @@
 /.cargo-cache/
 /.sccache-cache/
 /target/
-/.vscode/
 /.direnv/
 /bazel-*
+rust-project.json
