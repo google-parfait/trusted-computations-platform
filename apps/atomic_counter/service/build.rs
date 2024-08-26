@@ -14,23 +14,6 @@
 
 use std::io::Result;
 
-#[cfg(not(feature = "bazel"))]
-fn main() -> Result<()> {
-    micro_rpc_build::compile(
-        &["proto/atomic_counter.proto"],
-        &["proto"],
-        micro_rpc_build::CompileOptions {
-            bytes: vec![
-                ".apps.atomic_counter.service.CounterSnapshotValue".to_string(),
-                ".apps.atomic_counter.service.CounterRequest".to_string(),
-            ],
-            ..Default::default()
-        },
-    );
-    Ok(())
-}
-
-#[cfg(feature = "bazel")]
 fn main() -> Result<()> {
     micro_rpc_build::compile(
         &["proto/atomic_counter.proto"],

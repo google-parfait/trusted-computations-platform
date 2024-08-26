@@ -28,7 +28,6 @@ cargo_build_script(
         "DESCRIPTOR_PROTO": "$(location @com_google_protobuf//:descriptor_proto_srcs)",
         "EVIDENCE_PROTO": "$(location @oak//proto/attestation:evidence.proto)",
     },
-    crate_features = ["bazel"],
     data = glob(["proto/*.proto"]) + [
         "@com_google_protobuf//:descriptor_proto_srcs",
         "@com_google_protobuf//:well_known_type_protos",

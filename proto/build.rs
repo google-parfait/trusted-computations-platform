@@ -14,40 +14,6 @@
 
 use std::io::Result;
 
-#[cfg(not(feature = "bazel"))]
-fn main() -> Result<()> {
-    micro_rpc_build::compile(
-        &["src/endpoint.proto"],
-        &["src", "../proto_stubs"],
-        micro_rpc_build::CompileOptions {
-            bytes: vec![
-                ".runtime.endpoint.StartReplicaRequest".to_string(),
-                ".runtime.endpoint.DeliverSystemMessage".to_string(),
-                ".runtime.endpoint.DeliverSnapshotRequest".to_string(),
-                ".runtime.endpoint.DeliverSnapshotResponse".to_string(),
-                ".runtime.endpoint.ExecuteProposalRequest".to_string(),
-                ".runtime.endpoint.ExecuteProposalResponse".to_string(),
-                ".runtime.endpoint.DeliverAppMessage".to_string(),
-                ".runtime.endpoint.Entry".to_string(),
-                ".runtime.endpoint.Payload".to_string(),
-            ],
-            extern_paths: vec![
-                micro_rpc_build::ExternPath::new(
-                    ".oak.attestation.v1",
-                    "::oak_proto_rust::oak::attestation::v1",
-                ),
-                micro_rpc_build::ExternPath::new(
-                    ".oak.session.v1",
-                    "::oak_proto_rust::oak::session::v1",
-                ),
-            ],
-            ..Default::default()
-        },
-    );
-    Ok(())
-}
-
-#[cfg(feature = "bazel")]
 fn main() -> Result<()> {
     micro_rpc_build::compile(
         &["src/endpoint.proto"],

@@ -14,27 +14,6 @@
 
 use std::io::Result;
 
-#[cfg(not(feature = "bazel"))]
-fn main() -> Result<()> {
-    micro_rpc_build::compile(
-        &[
-            "proto/access_policy.proto",
-            "proto/blob_header.proto",
-            "proto/ledger.proto",
-        ],
-        &["proto", "../../../proto_stubs"],
-        micro_rpc_build::CompileOptions {
-            extern_paths: vec![micro_rpc_build::ExternPath::new(
-                ".oak.attestation.v1",
-                "::oak_proto_rust::oak::attestation::v1",
-            )],
-            ..Default::default()
-        },
-    );
-    Ok(())
-}
-
-#[cfg(feature = "bazel")]
 fn main() -> Result<()> {
     micro_rpc_build::compile(
         &[

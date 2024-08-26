@@ -21,7 +21,6 @@ cargo_build_script(
     build_script_env = {
         "PROTOC": "$(execpath @com_google_protobuf//:protoc)",
     },
-    crate_features = ["bazel"],
     data = glob(["proto/**"]) + [
         "@com_google_protobuf//:descriptor_proto_srcs",
         "@com_google_protobuf//:well_known_type_protos",

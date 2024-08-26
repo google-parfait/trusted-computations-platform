@@ -14,34 +14,6 @@
 
 use std::io::Result;
 
-#[cfg(not(feature = "bazel"))]
-fn main() -> Result<()> {
-    micro_rpc_build::compile(
-        &["proto/ledger_actor.proto"],
-        &[
-            "proto",
-            "../federated_compute/proto",
-            "../../../proto",
-            "../../../proto_stubs",
-        ],
-        micro_rpc_build::CompileOptions {
-            extern_paths: vec![
-                micro_rpc_build::ExternPath::new(
-                    ".oak.attestation.v1",
-                    "::oak_proto_rust::oak::attestation::v1",
-                ),
-                micro_rpc_build::ExternPath::new(
-                    ".fcp.confidentialcompute",
-                    "::federated_compute::proto",
-                ),
-            ],
-            ..Default::default()
-        },
-    );
-    Ok(())
-}
-
-#[cfg(feature = "bazel")]
 fn main() -> Result<()> {
     micro_rpc_build::compile(
         &["proto/ledger_actor.proto"],

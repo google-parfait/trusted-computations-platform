@@ -23,7 +23,6 @@ cargo_build_script(
         "DESCRIPTOR_PROTO": "$(location @com_google_protobuf//:descriptor_proto_srcs)",
         "EVIDENCE_PROTO": "$(location @oak//proto/attestation:evidence.proto)",
     },
-    crate_features = ["bazel"],
     data = glob(["proto/**"]) + [
         "//apps/ledger/federated_compute:proto/access_policy.proto",
         "//apps/ledger/federated_compute:proto/blob_header.proto",
