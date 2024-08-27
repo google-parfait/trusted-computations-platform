@@ -30,8 +30,6 @@ set -x
 # bazel; this usage requires us to not quote ${BAZELISK} when used later.
 readonly BAZELISK="${BAZELISK:-bazelisk}"
 
-${BAZELISK} test //...
-
 if [ "$1" == "release" ] || [ "$1" == "debug" ]; then
   mode=$([ "$1" == "release" ] && echo "opt" || echo "dbg")
   # BINARY_OUTPUTS_DIR may be unset if this script is run manually; it'll
@@ -39,7 +37,15 @@ if [ "$1" == "release" ] || [ "$1" == "debug" ]; then
   if [[ -n "${BINARY_OUTPUTS_DIR}" ]]; then
     ${BAZELISK} run -c $mode //:install_binaries -- --destdir "${BINARY_OUTPUTS_DIR}"
   else
-    # If unset, verify the binaries can be built with -c opt.
+    # If unset, verify the binaries can be built.
     ${BAZELISK} build -c $mode //:install_binaries
   fi
+else
+  # Verify the runtime can be built with no_std support
+  ${BAZELISK} build //runtime:tcp_runtime --platforms=@oak//:x86_64-unknown-none
+  # Verify the binaries can be built.
+  ${BAZELISK} build -c opt //:install_binaries
 fi
+
+# Run all tests
+${BAZELISK} test //...
