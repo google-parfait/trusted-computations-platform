@@ -27,7 +27,8 @@ use oak_proto_rust::oak::session::v1::{
 use oak_session::attestation::AttestationType;
 use oak_session::config::SessionConfig;
 use oak_session::handshake::HandshakeType;
-use oak_session::session::{ClientSession, ServerSession};
+use oak_session::session::{ClientSession, ServerSession, Session};
+use oak_session::ProtocolEngine;
 
 // Factory class for creating instances of `OakClientSession` and `OakServerSession`
 // traits.
@@ -79,16 +80,14 @@ impl OakSessionFactory for DefaultOakSessionFactory {
 
 // Default implementation of `OakClientSession`.
 pub struct DefaultOakClientSession {
-    _inner: ClientSession,
-    incoming_ciphertext: Option<Vec<u8>>,
-    outgoing_ciphertext: Option<Vec<u8>>,
+    inner: ClientSession,
 }
 
 impl DefaultOakClientSession {
     pub fn create() -> Result<Self> {
         // TODO: Revisit config parameters.
         Ok(Self {
-            _inner: ClientSession::create(
+            inner: ClientSession::create(
                 SessionConfig::builder(AttestationType::Bidirectional, HandshakeType::NoiseNN)
                     .set_encryption_provider(Box::new(|sk| {
                         <SessionKeys as TryInto<UnorderedChannelEncryptor>>::try_into(sk)
@@ -96,61 +95,41 @@ impl DefaultOakClientSession {
                     }))
                     .build(),
             )?,
-            incoming_ciphertext: None,
-            outgoing_ciphertext: None,
         })
     }
 }
 
 impl OakSession<SessionResponse, SessionRequest> for DefaultOakClientSession {
-    // TODO: Delegate to `inner` once the implementation is complete on Oak side.
     fn get_outgoing_message(&mut self) -> Result<Option<SessionRequest>> {
-        if self.outgoing_ciphertext.is_some() {
-            return Ok(Some(SessionRequest {
-                request: Some(Request::EncryptedMessage(EncryptedMessage {
-                    ciphertext: self.outgoing_ciphertext.take().unwrap(),
-                    ..Default::default()
-                })),
-            }));
-        }
-        Ok(Some(SessionRequest { request: None }))
+        self.inner.get_outgoing_message()
     }
 
     fn put_incoming_message(&mut self, incoming_message: &SessionResponse) -> Result<Option<()>> {
-        match &incoming_message.response {
-            Some(Response::EncryptedMessage(encrypted_message)) => {
-                self.incoming_ciphertext = Some(encrypted_message.ciphertext.to_vec());
-            }
-            _ => {}
-        }
-        Ok(Some(()))
+        self.inner.put_incoming_message(incoming_message)
     }
 
     fn is_open(&self) -> bool {
-        true
+        self.inner.is_open()
     }
 
     fn write(&mut self, plaintext: &[u8]) -> Result<()> {
-        self.outgoing_ciphertext = Some(plaintext.to_vec());
-        Ok(())
+        self.inner.write(plaintext)
     }
 
     fn read(&mut self) -> Result<Option<Vec<u8>>> {
-        Ok(self.incoming_ciphertext.take())
+        self.inner.read()
     }
 }
 
 // Default implementation of `OakServerSession`.
 pub struct DefaultOakServerSession {
-    _inner: ServerSession,
-    incoming_ciphertext: Option<Vec<u8>>,
-    outgoing_ciphertext: Option<Vec<u8>>,
+    inner: ServerSession,
 }
 
 impl DefaultOakServerSession {
     pub fn create() -> Result<Self> {
         Ok(Self {
-            _inner: ServerSession::new(
+            inner: ServerSession::new(
                 SessionConfig::builder(AttestationType::Bidirectional, HandshakeType::NoiseNN)
                     .set_encryption_provider(Box::new(|sk| {
                         <SessionKeys as TryInto<UnorderedChannelEncryptor>>::try_into(sk)
@@ -158,47 +137,29 @@ impl DefaultOakServerSession {
                     }))
                     .build(),
             ),
-            incoming_ciphertext: None,
-            outgoing_ciphertext: None,
         })
     }
 }
 
 impl OakSession<SessionRequest, SessionResponse> for DefaultOakServerSession {
-    // TODO: Delegate to `inner` once the implementation is complete on Oak side.
     fn get_outgoing_message(&mut self) -> Result<Option<SessionResponse>> {
-        if self.outgoing_ciphertext.is_some() {
-            return Ok(Some(SessionResponse {
-                response: Some(Response::EncryptedMessage(EncryptedMessage {
-                    ciphertext: self.outgoing_ciphertext.take().unwrap(),
-                    ..Default::default()
-                })),
-            }));
-        }
-        Ok(Some(SessionResponse { response: None }))
+        self.inner.get_outgoing_message()
     }
 
     fn put_incoming_message(&mut self, incoming_message: &SessionRequest) -> Result<Option<()>> {
-        match &incoming_message.request {
-            Some(Request::EncryptedMessage(encrypted_message)) => {
-                self.incoming_ciphertext = Some(encrypted_message.ciphertext.to_vec());
-            }
-            _ => {}
-        }
-        Ok(Some(()))
+        self.inner.put_incoming_message(incoming_message)
     }
 
     fn is_open(&self) -> bool {
-        true
+        self.inner.is_open()
     }
 
     fn write(&mut self, plaintext: &[u8]) -> Result<()> {
-        self.outgoing_ciphertext = Some(plaintext.to_vec());
-        Ok(())
+        self.inner.write(plaintext)
     }
 
     fn read(&mut self) -> Result<Option<Vec<u8>>> {
-        Ok(self.incoming_ciphertext.take())
+        self.inner.read()
     }
 }
 
