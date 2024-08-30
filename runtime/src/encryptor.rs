@@ -18,7 +18,8 @@ use alloc::vec::Vec;
 use crate::session::{OakClientSession, OakServerSession};
 use anyhow::{anyhow, Result};
 use oak_proto_rust::oak::session::v1::{
-    session_request::Request, session_response::Response, SessionRequest, SessionResponse,
+    session_request::Request, session_response::Response, EncryptedMessage, SessionRequest,
+    SessionResponse,
 };
 use tcp_proto::runtime::endpoint::Payload;
 
@@ -45,20 +46,24 @@ impl Encryptor for DefaultClientEncryptor {
     fn encrypt(&mut self, plaintext: &[u8]) -> Result<Payload> {
         self.session.write(plaintext)?;
         if let Some(session_request) = self.session.get_outgoing_message()?
-            && let Some(Request::Ciphertext(ciphertext)) = session_request.request
+            && let Some(Request::EncryptedMessage(encrypted_message)) = session_request.request
         {
             Ok(Payload {
-                contents: ciphertext.into(),
-                ..Default::default()
+                contents: encrypted_message.ciphertext.into(),
+                nonce: encrypted_message.nonce.into(),
             })
         } else {
-            Err(anyhow!("No outgoing ciphertext message retrieved."))
+            Err(anyhow!("No outgoing EncryptedMessage retrieved."))
         }
     }
 
     fn decrypt(&mut self, payload: &Payload) -> Result<Vec<u8>> {
         let response = SessionResponse {
-            response: Some(Response::Ciphertext(payload.contents.to_vec())),
+            response: Some(Response::EncryptedMessage(EncryptedMessage {
+                ciphertext: payload.contents.to_vec(),
+                nonce: payload.nonce.to_vec(),
+                ..Default::default()
+            })),
         };
         self.session.put_incoming_message(&response)?;
         let plaintext = self.session.read()?;
@@ -83,10 +88,11 @@ impl Encryptor for DefaultServerEncryptor {
     fn encrypt(&mut self, plaintext: &[u8]) -> Result<Payload> {
         self.session.write(plaintext)?;
         if let Some(session_response) = self.session.get_outgoing_message()?
-            && let Some(Response::Ciphertext(ciphertext)) = session_response.response
+            && let Some(Response::EncryptedMessage(encrypted_message)) = session_response.response
         {
             Ok(Payload {
-                contents: ciphertext.into(),
+                contents: encrypted_message.ciphertext.into(),
+                nonce: encrypted_message.nonce.into(),
                 ..Default::default()
             })
         } else {
@@ -96,7 +102,11 @@ impl Encryptor for DefaultServerEncryptor {
 
     fn decrypt(&mut self, payload: &Payload) -> Result<Vec<u8>> {
         let request = SessionRequest {
-            request: Some(Request::Ciphertext(payload.contents.to_vec())),
+            request: Some(Request::EncryptedMessage(EncryptedMessage {
+                ciphertext: payload.contents.to_vec(),
+                nonce: payload.nonce.to_vec(),
+                ..Default::default()
+            })),
         };
         self.session.put_incoming_message(&request)?;
         let plaintext = self.session.read()?;
@@ -117,7 +127,7 @@ mod test {
     use core::mem;
     use oak_proto_rust::oak::session::v1::{
         session_request::Request, session_response::Response, AttestRequest, AttestResponse,
-        SessionRequest, SessionResponse,
+        EncryptedMessage, SessionRequest, SessionResponse,
     };
     use prost::bytes::Bytes;
     use tcp_proto::runtime::endpoint::Payload;
@@ -250,15 +260,23 @@ mod test {
         }
     }
 
-    fn create_session_request(ciphertext: Bytes) -> SessionRequest {
+    fn create_session_request(ciphertext: Bytes, nonce: Bytes) -> SessionRequest {
         SessionRequest {
-            request: Some(Request::Ciphertext(ciphertext.to_vec())),
+            request: Some(Request::EncryptedMessage(EncryptedMessage {
+                ciphertext: ciphertext.to_vec(),
+                nonce: nonce.to_vec(),
+                ..Default::default()
+            })),
         }
     }
 
-    fn create_session_response(ciphertext: Bytes) -> SessionResponse {
+    fn create_session_response(ciphertext: Bytes, nonce: Bytes) -> SessionResponse {
         SessionResponse {
-            response: Some(Response::Ciphertext(ciphertext.to_vec())),
+            response: Some(Response::EncryptedMessage(EncryptedMessage {
+                ciphertext: ciphertext.to_vec(),
+                nonce: nonce.to_vec(),
+                ..Default::default()
+            })),
         }
     }
 
@@ -266,17 +284,17 @@ mod test {
     fn test_client_encrypt_success() {
         let plaintext: &[u8] = b"plaintext";
         let ciphertext: &[u8] = b"ciphertext";
-        let session_request = create_session_request(ciphertext.into());
+        let nonce: &[u8] = b"123";
+        let session_request = create_session_request(ciphertext.into(), nonce.into());
         let mock_oak_client_session = OakClientSessionBuilder::new()
             .expect_write(plaintext.into(), Ok(()))
             .expect_get_outgoing_message(Ok(Some(session_request)))
             .take();
         let mut encryptor = DefaultClientEncryptor::new(Box::new(mock_oak_client_session));
 
-        assert_eq!(
-            ciphertext.to_vec(),
-            encryptor.encrypt(plaintext).unwrap().contents
-        );
+        let encrypted_payload = encryptor.encrypt(plaintext).unwrap();
+        assert_eq!(ciphertext.to_vec(), encrypted_payload.contents);
+        assert_eq!(nonce, encrypted_payload.nonce);
     }
 
     #[test]
@@ -321,11 +339,13 @@ mod test {
     fn test_client_decrypt_success() {
         let plaintext: &[u8] = b"plaintext";
         let ciphertext: &[u8] = b"ciphertext";
+        let nonce: &[u8] = b"123";
         let payload = Payload {
             contents: ciphertext.into(),
+            nonce: nonce.into(),
             ..Default::default()
         };
-        let session_response = create_session_response(ciphertext.into());
+        let session_response = create_session_response(ciphertext.into(), nonce.into());
         let mock_oak_client_session = OakClientSessionBuilder::new()
             .expect_put_incoming_message(session_response, Ok(Some(())))
             .expect_read(Ok(Some(plaintext.into())))
@@ -338,11 +358,13 @@ mod test {
     #[test]
     fn test_client_decryptor_put_incoming_message_error() {
         let ciphertext: &[u8] = b"ciphertext";
+        let nonce: &[u8] = b"123";
         let payload = Payload {
             contents: ciphertext.into(),
+            nonce: nonce.into(),
             ..Default::default()
         };
-        let session_response = create_session_response(ciphertext.into());
+        let session_response = create_session_response(ciphertext.into(), nonce.into());
         let mock_oak_client_session = OakClientSessionBuilder::new()
             .expect_put_incoming_message(session_response, Err(anyhow!("Err")))
             .take();
@@ -354,11 +376,13 @@ mod test {
     #[test]
     fn test_client_decryptor_read_error() {
         let ciphertext: &[u8] = b"ciphertext";
+        let nonce: &[u8] = b"123";
         let payload = Payload {
             contents: ciphertext.into(),
+            nonce: nonce.into(),
             ..Default::default()
         };
-        let session_response = create_session_response(ciphertext.into());
+        let session_response = create_session_response(ciphertext.into(), nonce.into());
         let mock_oak_client_session = OakClientSessionBuilder::new()
             .expect_put_incoming_message(session_response, Ok(Some(())))
             .expect_read(Err(anyhow!("Err")))
@@ -371,11 +395,13 @@ mod test {
     #[test]
     fn test_client_decryptor_read_none() {
         let ciphertext: &[u8] = b"ciphertext";
+        let nonce: &[u8] = b"123";
         let payload = Payload {
             contents: ciphertext.into(),
+            nonce: nonce.into(),
             ..Default::default()
         };
-        let session_response = create_session_response(ciphertext.into());
+        let session_response = create_session_response(ciphertext.into(), nonce.into());
         let mock_oak_client_session = OakClientSessionBuilder::new()
             .expect_put_incoming_message(session_response, Ok(Some(())))
             .expect_read(Ok(None))
@@ -389,17 +415,17 @@ mod test {
     fn test_server_encrypt_success() {
         let plaintext: &[u8] = b"plaintext";
         let ciphertext: &[u8] = b"ciphertext";
-        let session_response = create_session_response(ciphertext.into());
+        let nonce: &[u8] = b"123";
+        let session_response = create_session_response(ciphertext.into(), nonce.into());
         let mock_oak_server_session = OakServerSessionBuilder::new()
             .expect_write(plaintext.into(), Ok(()))
             .expect_get_outgoing_message(Ok(Some(session_response)))
             .take();
         let mut encryptor = DefaultServerEncryptor::new(Box::new(mock_oak_server_session));
 
-        assert_eq!(
-            ciphertext.to_vec(),
-            encryptor.encrypt(plaintext).unwrap().contents
-        );
+        let encrypted_payload = encryptor.encrypt(plaintext).unwrap();
+        assert_eq!(ciphertext.to_vec(), encrypted_payload.contents);
+        assert_eq!(nonce, encrypted_payload.nonce);
     }
 
     #[test]
@@ -444,11 +470,13 @@ mod test {
     fn test_server_decrypt_success() {
         let plaintext: &[u8] = b"plaintext";
         let ciphertext: &[u8] = b"ciphertext";
+        let nonce: &[u8] = b"123";
         let payload = Payload {
             contents: ciphertext.into(),
+            nonce: nonce.into(),
             ..Default::default()
         };
-        let session_request = create_session_request(ciphertext.into());
+        let session_request = create_session_request(ciphertext.into(), nonce.into());
         let mock_oak_server_session = OakServerSessionBuilder::new()
             .expect_put_incoming_message(session_request, Ok(Some(())))
             .expect_read(Ok(Some(plaintext.into())))
@@ -461,11 +489,13 @@ mod test {
     #[test]
     fn test_server_decryptor_put_incoming_message_error() {
         let ciphertext: &[u8] = b"ciphertext";
+        let nonce: &[u8] = b"123";
         let payload = Payload {
             contents: ciphertext.into(),
+            nonce: nonce.into(),
             ..Default::default()
         };
-        let session_request = create_session_request(ciphertext.into());
+        let session_request = create_session_request(ciphertext.into(), nonce.into());
         let mock_oak_server_session = OakServerSessionBuilder::new()
             .expect_put_incoming_message(session_request, Err(anyhow!("Err")))
             .take();
@@ -477,11 +507,13 @@ mod test {
     #[test]
     fn test_server_decryptor_read_error() {
         let ciphertext: &[u8] = b"ciphertext";
+        let nonce: &[u8] = b"123";
         let payload = Payload {
             contents: ciphertext.into(),
+            nonce: nonce.into(),
             ..Default::default()
         };
-        let session_request = create_session_request(ciphertext.into());
+        let session_request = create_session_request(ciphertext.into(), nonce.into());
         let mock_oak_server_session = OakServerSessionBuilder::new()
             .expect_put_incoming_message(session_request, Ok(Some(())))
             .expect_read(Err(anyhow!("Err")))
@@ -494,11 +526,13 @@ mod test {
     #[test]
     fn test_server_decryptor_read_none() {
         let ciphertext: &[u8] = b"ciphertext";
+        let nonce: &[u8] = b"123";
         let payload = Payload {
             contents: ciphertext.into(),
+            nonce: nonce.into(),
             ..Default::default()
         };
-        let session_request = create_session_request(ciphertext.into());
+        let session_request = create_session_request(ciphertext.into(), nonce.into());
         let mock_oak_server_session = OakServerSessionBuilder::new()
             .expect_put_incoming_message(session_request, Ok(Some(())))
             .expect_read(Ok(None))

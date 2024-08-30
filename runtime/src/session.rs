@@ -21,7 +21,8 @@ use oak_crypto::noise_handshake::{
 };
 use oak_proto_rust::oak::crypto::v1::SessionKeys;
 use oak_proto_rust::oak::session::v1::{
-    session_request::Request, session_response::Response, SessionRequest, SessionResponse,
+    session_request::Request, session_response::Response, EncryptedMessage, SessionRequest,
+    SessionResponse,
 };
 use oak_session::attestation::AttestationType;
 use oak_session::config::SessionConfig;
@@ -89,6 +90,10 @@ impl DefaultOakClientSession {
         Ok(Self {
             _inner: ClientSession::create(
                 SessionConfig::builder(AttestationType::Bidirectional, HandshakeType::NoiseNN)
+                    .set_encryption_provider(Box::new(|sk| {
+                        <SessionKeys as TryInto<UnorderedChannelEncryptor>>::try_into(sk)
+                            .map(|v| Box::new(v) as Box<dyn Encryptor>)
+                    }))
                     .build(),
             )?,
             incoming_ciphertext: None,
@@ -102,9 +107,10 @@ impl OakSession<SessionResponse, SessionRequest> for DefaultOakClientSession {
     fn get_outgoing_message(&mut self) -> Result<Option<SessionRequest>> {
         if self.outgoing_ciphertext.is_some() {
             return Ok(Some(SessionRequest {
-                request: Some(Request::Ciphertext(
-                    self.outgoing_ciphertext.take().unwrap(),
-                )),
+                request: Some(Request::EncryptedMessage(EncryptedMessage {
+                    ciphertext: self.outgoing_ciphertext.take().unwrap(),
+                    ..Default::default()
+                })),
             }));
         }
         Ok(Some(SessionRequest { request: None }))
@@ -112,8 +118,8 @@ impl OakSession<SessionResponse, SessionRequest> for DefaultOakClientSession {
 
     fn put_incoming_message(&mut self, incoming_message: &SessionResponse) -> Result<Option<()>> {
         match &incoming_message.response {
-            Some(Response::Ciphertext(ciphertext)) => {
-                self.incoming_ciphertext = Some(ciphertext.to_vec());
+            Some(Response::EncryptedMessage(encrypted_message)) => {
+                self.incoming_ciphertext = Some(encrypted_message.ciphertext.to_vec());
             }
             _ => {}
         }
@@ -163,9 +169,10 @@ impl OakSession<SessionRequest, SessionResponse> for DefaultOakServerSession {
     fn get_outgoing_message(&mut self) -> Result<Option<SessionResponse>> {
         if self.outgoing_ciphertext.is_some() {
             return Ok(Some(SessionResponse {
-                response: Some(Response::Ciphertext(
-                    self.outgoing_ciphertext.take().unwrap(),
-                )),
+                response: Some(Response::EncryptedMessage(EncryptedMessage {
+                    ciphertext: self.outgoing_ciphertext.take().unwrap(),
+                    ..Default::default()
+                })),
             }));
         }
         Ok(Some(SessionResponse { response: None }))
@@ -173,8 +180,8 @@ impl OakSession<SessionRequest, SessionResponse> for DefaultOakServerSession {
 
     fn put_incoming_message(&mut self, incoming_message: &SessionRequest) -> Result<Option<()>> {
         match &incoming_message.request {
-            Some(Request::Ciphertext(ciphertext)) => {
-                self.incoming_ciphertext = Some(ciphertext.to_vec());
+            Some(Request::EncryptedMessage(encrypted_message)) => {
+                self.incoming_ciphertext = Some(encrypted_message.ciphertext.to_vec());
             }
             _ => {}
         }
