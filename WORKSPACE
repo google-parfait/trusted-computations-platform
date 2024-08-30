@@ -28,6 +28,13 @@ load("@bazel_skylib//:workspace.bzl", "bazel_skylib_workspace")
 bazel_skylib_workspace()
 
 http_archive(
+    name = "bazel_toolchains",
+    sha256 = "02e4f3744f1ce3f6e711e261fd322916ddd18cccd38026352f7a4c0351dbda19",
+    strip_prefix = "bazel-toolchains-5.1.2",
+    url = "https://github.com/bazelbuild/bazel-toolchains/archive/refs/tags/v5.1.2.tar.gz",
+)
+
+http_archive(
     name = "com_google_protobuf",
     sha256 = "1535151efbc7893f38b0578e83cac584f2819974f065698976989ec71c1af84a",
     strip_prefix = "protobuf-27.3",
@@ -81,7 +88,7 @@ load("@oak//bazel/rust:defs.bzl", "setup_rust_dependencies")
 setup_rust_dependencies()
 
 load("@oak//bazel/crates:repositories.bzl", "create_oak_crate_repositories")
-load("//:bazel/crates.bzl", "TCP_NO_STD_PACKAGES", "TCP_PACKAGES")
+load("//bazel:crates.bzl", "TCP_NO_STD_PACKAGES", "TCP_PACKAGES")
 
 create_oak_crate_repositories(
     extra_no_std_packages = TCP_NO_STD_PACKAGES,
@@ -149,7 +156,7 @@ http_archive(
 
 # Stub out unneeded Java proto library rules used by various dependencies. This
 # avoids needing to depend on a Java toolchain.
-load("//:bazel/stub_repo.bzl", "stub_repo")
+load("//bazel:stub_repo.bzl", "stub_repo")
 
 stub_repo(
     name = "io_grpc_grpc_java",
