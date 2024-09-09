@@ -71,6 +71,9 @@ rust_test(
         "testing",
         "std",
     ],
+    env = {
+        "RUST_TEST_THREADS": "1",
+    },
     deps = [
         ":tcp_atomic_counter_service",
         "//integration:tcp_integration",

@@ -56,6 +56,9 @@ rust_test(
         "testing",
         "std",
     ],
+    env = {
+        "RUST_TEST_THREADS": "1",
+    },
     deps = [
         "@oak_crates_index//:googletest",
         "@oak_crates_index//:mockall",
