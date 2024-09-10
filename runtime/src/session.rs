@@ -15,6 +15,7 @@
 use alloc::boxed::Box;
 use alloc::vec::Vec;
 use anyhow::{anyhow, Result};
+use hashbrown::HashSet;
 use oak_crypto::encryptor::{Encryptor, Payload};
 use oak_crypto::noise_handshake::{
     aes_256_gcm_open_in_place, aes_256_gcm_seal_in_place, Nonce, NONCE_LEN, SYMMETRIC_KEY_LEN,
@@ -26,6 +27,8 @@ use oak_session::config::SessionConfig;
 use oak_session::handshake::HandshakeType;
 use oak_session::session::{ClientSession, ServerSession, Session};
 use oak_session::ProtocolEngine;
+
+const UNORDERED_CHANNEL_ENCRYPTOR_WINDOW_SIZE: u32 = 3;
 
 // Factory class for creating instances of `OakClientSession` and `OakServerSession`
 // traits.
@@ -174,15 +177,48 @@ pub struct UnorderedChannelEncryptor {
     read_key: [u8; SYMMETRIC_KEY_LEN],
     write_key: [u8; SYMMETRIC_KEY_LEN],
     write_nonce: Nonce,
+    // The current furthest read nonce seen so far.
+    furthest_read_nonce: u32,
+    // Window size to ratchet receiving nonces in order to avoid receiving
+    // nonces way too far in the past.
+    window_size: u32,
+    // Buffered read nonces with max capacity equivalent to `window_size` i.e.
+    // nonces lower than (`furthest_read_nonce-window_size`) will not be decrypted.
+    buffered_read_nonces: HashSet<u32>,
 }
 
 impl UnorderedChannelEncryptor {
-    fn new(read_key: &[u8; SYMMETRIC_KEY_LEN], write_key: &[u8; SYMMETRIC_KEY_LEN]) -> Self {
+    fn new(
+        read_key: &[u8; SYMMETRIC_KEY_LEN],
+        write_key: &[u8; SYMMETRIC_KEY_LEN],
+        window_size: u32,
+    ) -> Self {
         Self {
             read_key: *read_key,
             write_key: *write_key,
-            write_nonce: Nonce { nonce: 0 },
+            write_nonce: Nonce { nonce: 1 },
+            furthest_read_nonce: 0,
+            window_size,
+            buffered_read_nonces: HashSet::with_capacity(window_size.try_into().unwrap()),
         }
+    }
+
+    fn get_nonce_value(nonce: &[u8; NONCE_LEN]) -> Result<u32> {
+        // Nonce must be 12 bytes with the first 8 bytes padded with 0.
+        if !nonce.starts_with(&[0u8; NONCE_LEN - 4]) {
+            return Err(anyhow!("Invalid nonce received."));
+        }
+        let mut nonce_be_bytes = [0u8; 4];
+        nonce_be_bytes.copy_from_slice(&nonce[NONCE_LEN - 4..]);
+        Ok(u32::from_be_bytes(nonce_be_bytes))
+    }
+
+    fn get_lowest_acceptable_read_nonce(&self) -> u32 {
+        let mut lowest_allowed_nonce = 1;
+        if self.furthest_read_nonce > self.window_size {
+            lowest_allowed_nonce = self.furthest_read_nonce - self.window_size + 1;
+        }
+        lowest_allowed_nonce
     }
 }
 impl Encryptor for UnorderedChannelEncryptor {
@@ -230,7 +266,6 @@ impl Encryptor for UnorderedChannelEncryptor {
     }
 
     fn decrypt(&mut self, payload: &Payload) -> Result<Payload> {
-        let ciphertext = payload.message.as_slice();
         let nonce: [u8; NONCE_LEN] = payload
             .nonce
             .as_ref()
@@ -238,6 +273,41 @@ impl Encryptor for UnorderedChannelEncryptor {
             .clone()
             .try_into()
             .map_err(|e| anyhow!("Failed to extract nonce error: {e:#?}"))?;
+        let nonce_value = UnorderedChannelEncryptor::get_nonce_value(&nonce)?;
+
+        let lowest_acceptable_nonce = self.get_lowest_acceptable_read_nonce();
+        // Nonce is way too far in the past, reject it.
+        if nonce_value < lowest_acceptable_nonce {
+            return Err(anyhow!(
+                "Current nonce {} must be strictly greater than `furthest_read_nonce-window_size`. 
+            furthest_read_nonce {}, window_size {}",
+                nonce_value,
+                self.furthest_read_nonce,
+                self.window_size
+            ));
+        }
+        // Nonce is within the window, check for replayed nonces.
+        else if nonce_value >= lowest_acceptable_nonce && nonce_value <= self.furthest_read_nonce
+        {
+            if self.buffered_read_nonces.contains(&nonce_value) {
+                return Err(anyhow!(
+                    "Current nonce {} was replayed, rejecting message.",
+                    nonce_value,
+                ));
+            }
+            self.buffered_read_nonces.insert(nonce_value);
+        }
+        // Nonce is greater than the furthest seen so far.
+        else {
+            self.furthest_read_nonce = nonce_value;
+            // Retain only buffered nonces in the new window span.
+            let new_lowest_acceptable_nonce = self.get_lowest_acceptable_read_nonce();
+            self.buffered_read_nonces
+                .retain(|&n| n >= new_lowest_acceptable_nonce);
+            self.buffered_read_nonces.insert(nonce_value);
+        }
+
+        let ciphertext = payload.message.as_slice();
         let plaintext =
             aes_256_gcm_open_in_place(&self.read_key, &nonce, &[], Vec::from(ciphertext))
                 .map_err(|()| anyhow!("Failed to decrypt message."))?;
@@ -269,6 +339,7 @@ impl TryFrom<SessionKeys> for UnorderedChannelEncryptor {
                 .as_slice()
                 .try_into()
                 .map_err(|e| anyhow!("Unexpected format of the read key: {e:#?}"))?,
+            UNORDERED_CHANNEL_ENCRYPTOR_WINDOW_SIZE,
         ))
     }
 }
@@ -280,13 +351,21 @@ mod test {
 
     use crate::session::UnorderedChannelEncryptor;
 
+    fn clone_payload(payload: &Payload) -> Payload {
+        Payload {
+            message: payload.message.clone(),
+            nonce: payload.nonce.clone(),
+            aad: payload.aad.clone(),
+        }
+    }
+
     #[test]
     fn test_encryption_decryption_ordered() {
         let key_1 = &[42u8; SYMMETRIC_KEY_LEN];
         let key_2 = &[52u8; SYMMETRIC_KEY_LEN];
         let test_messages = vec![vec![1u8, 2u8, 3u8, 4u8], vec![4u8, 3u8, 2u8, 1u8], vec![]];
-        let mut replica_1 = UnorderedChannelEncryptor::new(key_1, key_2);
-        let mut replica_2 = UnorderedChannelEncryptor::new(key_2, key_1);
+        let mut replica_1 = UnorderedChannelEncryptor::new(key_1, key_2, 0);
+        let mut replica_2 = UnorderedChannelEncryptor::new(key_2, key_1, 0);
 
         for message in &test_messages {
             let payload = Payload {
@@ -301,12 +380,12 @@ mod test {
     }
 
     #[test]
-    fn test_encryption_decryption_unordered() {
+    fn test_encryption_decryption_unordered_window_size_0() {
         let key_1 = &[42u8; SYMMETRIC_KEY_LEN];
         let key_2 = &[52u8; SYMMETRIC_KEY_LEN];
         let test_messages = vec![vec![1u8, 2u8, 3u8, 4u8], vec![4u8, 3u8, 2u8, 1u8]];
-        let mut replica_1 = UnorderedChannelEncryptor::new(key_1, key_2);
-        let mut replica_2 = UnorderedChannelEncryptor::new(key_2, key_1);
+        let mut replica_1 = UnorderedChannelEncryptor::new(key_1, key_2, 0);
+        let mut replica_2 = UnorderedChannelEncryptor::new(key_2, key_1, 0);
 
         let encrypted_payload_1 = replica_1
             .encrypt(&Payload {
@@ -325,8 +404,102 @@ mod test {
 
         // Decrypt in reverse order
         let plaintext_2 = replica_2.decrypt(&encrypted_payload_2).unwrap().message;
-        let plaintext_1 = replica_2.decrypt(&encrypted_payload_1).unwrap().message;
-        assert_eq!(test_messages[0], plaintext_1);
         assert_eq!(test_messages[1], plaintext_2);
+        // Decrypting first message fails since it is from a lower nonce.
+        assert_eq!(true, replica_2.decrypt(&encrypted_payload_1).is_err());
+    }
+
+    #[test]
+    fn test_encryption_decryption_unordered_window_size_3() {
+        let key_1 = &[42u8; SYMMETRIC_KEY_LEN];
+        let key_2 = &[52u8; SYMMETRIC_KEY_LEN];
+        let test_messages = vec![
+            vec![1u8, 2u8, 3u8, 4u8],
+            vec![4u8, 3u8, 2u8, 1u8],
+            vec![1u8, 1u8, 1u8, 1u8],
+            vec![2u8, 2u8, 2u8, 2u8],
+            vec![3u8, 3u8, 3u8, 3u8],
+            vec![4u8, 4u8, 4u8, 4u8],
+        ];
+        let mut replica_1 = UnorderedChannelEncryptor::new(key_1, key_2, 3);
+        let mut replica_2 = UnorderedChannelEncryptor::new(key_2, key_1, 3);
+        let mut encrypted_payloads = vec![];
+        for i in 0..test_messages.len() {
+            encrypted_payloads.push(
+                replica_1
+                    .encrypt(&Payload {
+                        message: test_messages[i].to_vec(),
+                        nonce: None,
+                        aad: None,
+                    })
+                    .unwrap(),
+            );
+        }
+
+        // Out-of-order decryption
+        assert_eq!(
+            test_messages[3],
+            replica_2
+                .decrypt(&clone_payload(&encrypted_payloads[3]))
+                .unwrap()
+                .message
+        );
+        // Decrypting messages within the window should be ok.
+        assert_eq!(
+            test_messages[1],
+            replica_2
+                .decrypt(&clone_payload(&encrypted_payloads[1]))
+                .unwrap()
+                .message
+        );
+        assert_eq!(
+            test_messages[2],
+            replica_2
+                .decrypt(&clone_payload(&encrypted_payloads[2]))
+                .unwrap()
+                .message
+        );
+        // Replaying message should fail.
+        assert_eq!(
+            true,
+            replica_2
+                .decrypt(&clone_payload(&encrypted_payloads[3]))
+                .is_err()
+        );
+        assert_eq!(
+            true,
+            replica_2
+                .decrypt(&clone_payload(&encrypted_payloads[2]))
+                .is_err()
+        );
+        assert_eq!(
+            true,
+            replica_2
+                .decrypt(&clone_payload(&encrypted_payloads[1]))
+                .is_err()
+        );
+        // Decrypting messages outside the window should fail.
+        assert_eq!(
+            true,
+            replica_2
+                .decrypt(&clone_payload(&encrypted_payloads[0]))
+                .is_err()
+        );
+
+        // Decrypt more messages in order.
+        assert_eq!(
+            test_messages[4],
+            replica_2
+                .decrypt(&clone_payload(&encrypted_payloads[4]))
+                .unwrap()
+                .message
+        );
+        assert_eq!(
+            test_messages[5],
+            replica_2
+                .decrypt(&clone_payload(&encrypted_payloads[5]))
+                .unwrap()
+                .message
+        );
     }
 }
