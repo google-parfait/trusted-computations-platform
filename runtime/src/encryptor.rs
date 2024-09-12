@@ -50,7 +50,7 @@ impl Encryptor for DefaultClientEncryptor {
         {
             Ok(Payload {
                 contents: encrypted_message.ciphertext.into(),
-                nonce: encrypted_message.nonce.into(),
+                nonce: encrypted_message.nonce.unwrap().into(),
             })
         } else {
             Err(anyhow!("No outgoing EncryptedMessage retrieved."))
@@ -61,7 +61,7 @@ impl Encryptor for DefaultClientEncryptor {
         let response = SessionResponse {
             response: Some(Response::EncryptedMessage(EncryptedMessage {
                 ciphertext: payload.contents.to_vec(),
-                nonce: payload.nonce.to_vec(),
+                nonce: Some(payload.nonce.to_vec()),
                 ..Default::default()
             })),
         };
@@ -92,7 +92,7 @@ impl Encryptor for DefaultServerEncryptor {
         {
             Ok(Payload {
                 contents: encrypted_message.ciphertext.into(),
-                nonce: encrypted_message.nonce.into(),
+                nonce: encrypted_message.nonce.unwrap().into(),
                 ..Default::default()
             })
         } else {
@@ -104,7 +104,7 @@ impl Encryptor for DefaultServerEncryptor {
         let request = SessionRequest {
             request: Some(Request::EncryptedMessage(EncryptedMessage {
                 ciphertext: payload.contents.to_vec(),
-                nonce: payload.nonce.to_vec(),
+                nonce: Some(payload.nonce.to_vec()),
                 ..Default::default()
             })),
         };
@@ -264,7 +264,7 @@ mod test {
         SessionRequest {
             request: Some(Request::EncryptedMessage(EncryptedMessage {
                 ciphertext: ciphertext.to_vec(),
-                nonce: nonce.to_vec(),
+                nonce: Some(nonce.to_vec()),
                 ..Default::default()
             })),
         }
@@ -274,7 +274,7 @@ mod test {
         SessionResponse {
             response: Some(Response::EncryptedMessage(EncryptedMessage {
                 ciphertext: ciphertext.to_vec(),
-                nonce: nonce.to_vec(),
+                nonce: Some(nonce.to_vec()),
                 ..Default::default()
             })),
         }

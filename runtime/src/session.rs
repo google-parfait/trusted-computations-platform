@@ -20,10 +20,7 @@ use oak_crypto::noise_handshake::{
     aes_256_gcm_open_in_place, aes_256_gcm_seal_in_place, Nonce, NONCE_LEN, SYMMETRIC_KEY_LEN,
 };
 use oak_proto_rust::oak::crypto::v1::SessionKeys;
-use oak_proto_rust::oak::session::v1::{
-    session_request::Request, session_response::Response, EncryptedMessage, SessionRequest,
-    SessionResponse,
-};
+use oak_proto_rust::oak::session::v1::{PlaintextMessage, SessionRequest, SessionResponse};
 use oak_session::attestation::AttestationType;
 use oak_session::config::SessionConfig;
 use oak_session::handshake::HandshakeType;
@@ -113,11 +110,14 @@ impl OakSession<SessionResponse, SessionRequest> for DefaultOakClientSession {
     }
 
     fn write(&mut self, plaintext: &[u8]) -> Result<()> {
-        self.inner.write(plaintext)
+        self.inner.write(&PlaintextMessage {
+            plaintext: plaintext.to_vec(),
+        })
     }
 
     fn read(&mut self) -> Result<Option<Vec<u8>>> {
-        self.inner.read()
+        let plaintext_message = self.inner.read()?;
+        Ok(plaintext_message.map(|m| m.plaintext))
     }
 }
 
@@ -155,11 +155,14 @@ impl OakSession<SessionRequest, SessionResponse> for DefaultOakServerSession {
     }
 
     fn write(&mut self, plaintext: &[u8]) -> Result<()> {
-        self.inner.write(plaintext)
+        self.inner.write(&PlaintextMessage {
+            plaintext: plaintext.to_vec(),
+        })
     }
 
     fn read(&mut self) -> Result<Option<Vec<u8>>> {
-        self.inner.read()
+        let plaintext_message = self.inner.read()?;
+        Ok(plaintext_message.map(|m| m.plaintext))
     }
 }
 
@@ -183,7 +186,7 @@ impl UnorderedChannelEncryptor {
     }
 }
 impl Encryptor for UnorderedChannelEncryptor {
-    fn encrypt(&mut self, payload: Payload) -> Result<Payload> {
+    fn encrypt(&mut self, payload: &Payload) -> Result<Payload> {
         const PADDING_GRANULARITY: usize = 32;
         let plaintext = payload.message.as_slice();
 
@@ -226,11 +229,13 @@ impl Encryptor for UnorderedChannelEncryptor {
         })
     }
 
-    fn decrypt(&mut self, payload: Payload) -> Result<Payload> {
+    fn decrypt(&mut self, payload: &Payload) -> Result<Payload> {
         let ciphertext = payload.message.as_slice();
         let nonce: [u8; NONCE_LEN] = payload
             .nonce
+            .as_ref()
             .unwrap()
+            .clone()
             .try_into()
             .map_err(|e| anyhow!("Failed to extract nonce error: {e:#?}"))?;
         let plaintext =
@@ -289,8 +294,8 @@ mod test {
                 nonce: None,
                 aad: None,
             };
-            let encrypted_payload = replica_1.encrypt(payload).unwrap();
-            let plaintext = replica_2.decrypt(encrypted_payload).unwrap().message;
+            let encrypted_payload = replica_1.encrypt(&payload).unwrap();
+            let plaintext = replica_2.decrypt(&encrypted_payload).unwrap().message;
             assert_eq!(message, &plaintext);
         }
     }
@@ -304,14 +309,14 @@ mod test {
         let mut replica_2 = UnorderedChannelEncryptor::new(key_2, key_1);
 
         let encrypted_payload_1 = replica_1
-            .encrypt(Payload {
+            .encrypt(&Payload {
                 message: test_messages[0].to_vec(),
                 nonce: None,
                 aad: None,
             })
             .unwrap();
         let encrypted_payload_2 = replica_1
-            .encrypt(Payload {
+            .encrypt(&Payload {
                 message: test_messages[1].to_vec(),
                 nonce: None,
                 aad: None,
@@ -319,8 +324,8 @@ mod test {
             .unwrap();
 
         // Decrypt in reverse order
-        let plaintext_2 = replica_2.decrypt(encrypted_payload_2).unwrap().message;
-        let plaintext_1 = replica_2.decrypt(encrypted_payload_1).unwrap().message;
+        let plaintext_2 = replica_2.decrypt(&encrypted_payload_2).unwrap().message;
+        let plaintext_1 = replica_2.decrypt(&encrypted_payload_1).unwrap().message;
         assert_eq!(test_messages[0], plaintext_1);
         assert_eq!(test_messages[1], plaintext_2);
     }
