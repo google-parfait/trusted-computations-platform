@@ -500,6 +500,17 @@ impl CommunicationState {
                     });
                     Ok(in_message::Msg::DeliverSnapshotResponse(msg))
                 }),
+            in_message::Msg::SecureChannelHandshake(msg) => {
+                // Receiving SecureChannelHandshake in Completed state indicates that the last
+                // attempt likely failed on the other side.
+                // Transition to error state so that handshake can be retried after enough ticks
+                // have passed.
+                let err = anyhow!(
+                    "SecureChannelHandshake received in Completed state. Transitioning to Failed state to retry handshake later."
+                );
+                self.transition_to_failed(&err);
+                return None;
+            }
             _ => Err(anyhow!(format!(
                 "Unexpected message encountered for decryption {:?}",
                 message
