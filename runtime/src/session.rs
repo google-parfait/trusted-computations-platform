@@ -88,7 +88,7 @@ impl DefaultOakClientSession {
         // TODO: Revisit config parameters.
         Ok(Self {
             inner: ClientSession::create(
-                SessionConfig::builder(AttestationType::Bidirectional, HandshakeType::NoiseNN)
+                SessionConfig::builder(AttestationType::Unattested, HandshakeType::NoiseNN)
                     .set_encryption_provider(Box::new(|sk| {
                         <SessionKeys as TryInto<UnorderedChannelEncryptor>>::try_into(sk)
                             .map(|v| Box::new(v) as Box<dyn Encryptor>)
@@ -133,7 +133,7 @@ impl DefaultOakServerSession {
     pub fn create() -> Result<Self> {
         Ok(Self {
             inner: ServerSession::new(
-                SessionConfig::builder(AttestationType::Bidirectional, HandshakeType::NoiseNN)
+                SessionConfig::builder(AttestationType::Unattested, HandshakeType::NoiseNN)
                     .set_encryption_provider(Box::new(|sk| {
                         <SessionKeys as TryInto<UnorderedChannelEncryptor>>::try_into(sk)
                             .map(|v| Box::new(v) as Box<dyn Encryptor>)
