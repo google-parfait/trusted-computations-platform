@@ -651,9 +651,9 @@ impl<
         // Update snapshot processor with the latest raft cluster state.
         self.update_snapshot_cluster_change();
 
-        // Update communication module with the latest raft cluster state.
+        // Update communication module with the latest set of known replicas.
         self.communication
-            .process_cluster_change(&self.raft_state.committed_cluster_config);
+            .process_cluster_change(&self.raft_progress.config_state.voters);
 
         // Sent out cluster check message with the update.
         self.stash_message(out_message::Msg::CheckCluster(CheckClusterResponse {
