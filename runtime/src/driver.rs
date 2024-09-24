@@ -752,6 +752,7 @@ impl<
         let communication_config = match &start_replica_request.raft_config {
             Some(raft_config) => Some(CommunicationConfig {
                 handshake_retry_tick: raft_config.handshake_retry_tick,
+                handshake_initiated_tick_timeout: raft_config.heartbeat_tick * 3,
             }),
             None => None,
         };
