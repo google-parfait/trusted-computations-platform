@@ -16,7 +16,7 @@ use crate::encryptor::{DefaultClientEncryptor, DefaultServerEncryptor, Encryptor
 use crate::session::{OakClientSession, OakServerSession, OakSessionFactory};
 use alloc::{boxed::Box, format};
 use anyhow::{anyhow, Error, Result};
-use slog::{debug, warn, Logger};
+use slog::{info, warn, Logger};
 use tcp_proto::runtime::endpoint::{
     secure_channel_handshake::{
         noise_protocol, noise_protocol::initiator_request::Message::SessionRequest,
@@ -169,7 +169,7 @@ impl ClientHandshakeSession {
                 },
             )))
         } else {
-            debug!(
+            info!(
                 self.logger,
                 "No outgoing `SessionRequest` message retrieved.",
             );
@@ -194,7 +194,7 @@ impl HandshakeSession for ClientHandshakeSession {
                     && let Some(RecipientResponse(ref recipient_response)) = noise_protocol.message
                     && let Some(SessionResponse(ref session_response)) = recipient_response.message
                 {
-                    debug!(
+                    info!(
                         self.logger,
                         "ClientHandshakeSession: Replica {} received SessionResponse from replica {}",
                         self.self_replica_id,
@@ -214,7 +214,7 @@ impl HandshakeSession for ClientHandshakeSession {
                 }
             }
             State::Completed => {
-                debug!(
+                info!(
                     self.logger,
                     "Ignoring message since handshake already completed."
                 );
@@ -230,7 +230,7 @@ impl HandshakeSession for ClientHandshakeSession {
     fn take_out_message(&mut self) -> Result<Option<SecureChannelHandshake>> {
         return match self.state {
             State::Unknown => {
-                debug!(
+                info!(
                     self.logger,
                     "ClientHandshakeSession: Replica {} initiating SessionRequest with peer {}",
                     self.self_replica_id,
@@ -244,7 +244,7 @@ impl HandshakeSession for ClientHandshakeSession {
             }
             State::Initiated => {
                 if self.session.is_open() {
-                    debug!(
+                    info!(
                         self.logger,
                         "ClientHandshakeSession: Replica {} completed handshake with peer {}",
                         self.self_replica_id,
@@ -253,7 +253,7 @@ impl HandshakeSession for ClientHandshakeSession {
                     self.state = State::Completed;
                     Ok(None)
                 } else {
-                    debug!(
+                    info!(
                         self.logger,
                         "ClientHandshakeSession: Replica {} retrieving next SessionRequest for peer {}",
                         self.self_replica_id,
@@ -266,7 +266,7 @@ impl HandshakeSession for ClientHandshakeSession {
                 }
             }
             State::Completed => {
-                debug!(
+                info!(
                     self.logger,
                     "No messages to take out since handshake already completed."
                 );
@@ -342,7 +342,7 @@ impl ServerHandshakeSession {
                 },
             )))
         } else {
-            debug!(
+            info!(
                 self.logger,
                 "No outgoing `SessionResponse` message retrieved.",
             );
@@ -359,7 +359,7 @@ impl HandshakeSession for ServerHandshakeSession {
                     && let Some(InitiatorRequest(ref initiator_request)) = noise_protocol.message
                     && let Some(SessionRequest(ref session_request)) = initiator_request.message
                 {
-                    debug!(
+                    info!(
                         self.logger,
                         "ServerHandshakeSession: Replica {} received SessionRequest from peer {}",
                         self.self_replica_id,
@@ -382,7 +382,7 @@ impl HandshakeSession for ServerHandshakeSession {
                 }
             }
             State::Completed => {
-                debug!(
+                info!(
                     self.logger,
                     "Ignoring message since handshake already completed."
                 );
@@ -398,11 +398,11 @@ impl HandshakeSession for ServerHandshakeSession {
     fn take_out_message(&mut self) -> Result<Option<SecureChannelHandshake>> {
         return match self.state {
             State::Unknown => {
-                debug!(self.logger, "No messages to take out in state Unknown");
+                info!(self.logger, "No messages to take out in state Unknown");
                 Ok(None)
             }
             State::Initiated => {
-                debug!(
+                info!(
                     self.logger,
                     "ServerHandshakeSession: Replica {} responding with SessionResponse to peer {}",
                     self.self_replica_id,
@@ -417,7 +417,7 @@ impl HandshakeSession for ServerHandshakeSession {
                 Ok(session_response)
             }
             State::Completed => {
-                debug!(
+                info!(
                     self.logger,
                     "No messages to take out since handshake already completed."
                 );

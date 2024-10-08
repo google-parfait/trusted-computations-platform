@@ -26,7 +26,7 @@ use alloc::vec::Vec;
 use alloc::{boxed::Box, vec};
 use anyhow::anyhow;
 use hashbrown::HashMap;
-use slog::{debug, o, warn, Logger};
+use slog::{info, o, warn, Logger};
 use tcp_proto::runtime::endpoint::*;
 
 // Configuration for the Communication Module.
@@ -373,7 +373,7 @@ impl CommunicationState {
 
     // Resets the state machine but preserves any messages not sent out yet.
     fn reset_state_machine(&mut self) {
-        debug!(self.logger, "Resetting state");
+        info!(self.logger, "Resetting state");
         self.handshake_state = HandshakeState::Unknown;
         self.pending_handshake_message = None;
         self.handshake_session = None;
