@@ -17,7 +17,8 @@ use crate::ledger::service::{ledger_event::*, ledger_request::*, ledger_response
 use crate::ledger::{Ledger, LedgerService};
 
 use alloc::{boxed::Box, collections::LinkedList};
-use oak_restricted_kernel_sdk::{attestation::EvidenceProvider, crypto::Signer};
+use oak_crypto::signer::Signer;
+use oak_restricted_kernel_sdk::attestation::EvidenceProvider;
 use prost::{bytes::Bytes, Message};
 use slog::{debug, error, warn};
 use tcp_runtime::model::{

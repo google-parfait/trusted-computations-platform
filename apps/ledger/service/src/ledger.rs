@@ -31,8 +31,9 @@ use crate::ledger::service::*;
 use federated_compute::proto::*;
 
 use oak_attestation::dice::evidence_to_proto;
+use oak_crypto::signer::Signer;
 use oak_proto_rust::oak::attestation::v1::Evidence;
-use oak_restricted_kernel_sdk::{attestation::EvidenceProvider, crypto::Signer};
+use oak_restricted_kernel_sdk::attestation::EvidenceProvider;
 
 use prost::Message;
 use rand::{rngs::OsRng, RngCore};
@@ -155,7 +156,7 @@ impl LedgerService {
             })
             .payload(claims.to_vec().map_err(anyhow::Error::msg)?)
             .try_create_signature(b"", |msg| {
-                Ok::<Vec<u8>, anyhow::Error>(self.signer.sign(msg)?.signature)
+                Ok::<Vec<u8>, anyhow::Error>(self.signer.sign(msg))
             })?
             .build()
             .to_vec()
@@ -645,10 +646,8 @@ mod tests {
     fn test_create_key() {
         struct FakeSigner;
         impl Signer for FakeSigner {
-            fn sign(&self, message: &[u8]) -> anyhow::Result<Signature> {
-                return Ok(Signature {
-                    signature: Sha256::digest(message).to_vec(),
-                });
+            fn sign(&self, message: &[u8]) -> Vec<u8> {
+                return Sha256::digest(message).to_vec();
             }
         }
         let mut ledger = LedgerService::create(
@@ -866,11 +865,7 @@ mod tests {
             .create_signature(b"", |message| {
                 // The MockSigner signs the key with application signing key provided by the
                 // MockEvidenceProvider.
-                MockSigner::create()
-                    .unwrap()
-                    .sign(message)
-                    .unwrap()
-                    .signature
+                MockSigner::create().unwrap().sign(message)
             })
             .build()
             .to_vec()
@@ -952,11 +947,7 @@ mod tests {
             .create_signature(b"", |message| {
                 // The MockSigner signs the key with application signing key provided by the
                 // MockEvidenceProvider.
-                MockSigner::create()
-                    .unwrap()
-                    .sign(message)
-                    .unwrap()
-                    .signature
+                MockSigner::create().unwrap().sign(message)
             })
             .build()
             .to_vec()

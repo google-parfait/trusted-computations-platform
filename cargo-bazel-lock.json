@@ -1,5 +1,5 @@
 {
-  "checksum": "9bad35d4160c9b064955677d1c4983b4c93520caa2a0f56eb97c0c9b572441b3",
+  "checksum": "d470ed2f67bbce14764dbcdb318e85337b963a1f782687a23d7ab8bf795b6f41",
   "crates": {
     "acpi 5.0.0": {
       "name": "acpi",
@@ -1286,6 +1286,57 @@
       ],
       "license_file": "LICENSE-APACHE"
     },
+    "assert-json-diff 2.0.2": {
+      "name": "assert-json-diff",
+      "version": "2.0.2",
+      "package_url": "https://github.com/davidpdrsn/assert-json-diff.git",
+      "repository": {
+        "Http": {
+          "url": "https://static.crates.io/crates/assert-json-diff/2.0.2/download",
+          "sha256": "47e4f2b81832e72834d7518d8487a0396a28cc408186a2e8854c0f98011faf12"
+        }
+      },
+      "targets": [
+        {
+          "Library": {
+            "crate_name": "assert_json_diff",
+            "crate_root": "src/lib.rs",
+            "srcs": {
+              "allow_empty": true,
+              "include": [
+                "**/*.rs"
+              ]
+            }
+          }
+        }
+      ],
+      "library_target_name": "assert_json_diff",
+      "common_attrs": {
+        "compile_data_glob": [
+          "**"
+        ],
+        "deps": {
+          "common": [
+            {
+              "id": "serde 1.0.208",
+              "target": "serde"
+            },
+            {
+              "id": "serde_json 1.0.125",
+              "target": "serde_json"
+            }
+          ],
+          "selects": {}
+        },
+        "edition": "2018",
+        "version": "2.0.2"
+      },
+      "license": "MIT",
+      "license_ids": [
+        "MIT"
+      ],
+      "license_file": "LICENSE"
+    },
     "assertables 7.0.1": {
       "name": "assertables",
       "version": "7.0.1",
@@ -1415,7 +1466,7 @@
         "deps": {
           "common": [
             {
-              "id": "futures-core 0.3.30",
+              "id": "futures-core 0.3.31",
               "target": "futures_core"
             },
             {
@@ -1737,7 +1788,7 @@
               "target": "bytes"
             },
             {
-              "id": "futures-util 0.3.30",
+              "id": "futures-util 0.3.31",
               "target": "futures_util"
             },
             {
@@ -1883,7 +1934,7 @@
               "target": "bytes"
             },
             {
-              "id": "futures-util 0.3.30",
+              "id": "futures-util 0.3.31",
               "target": "futures_util"
             },
             {
@@ -2554,7 +2605,7 @@
         "deps": {
           "common": [
             {
-              "id": "futures-core 0.3.30",
+              "id": "futures-core 0.3.31",
               "target": "futures_core"
             },
             {
@@ -6219,6 +6270,7 @@
         ],
         "crate_features": {
           "common": [
+            "alloc",
             "default",
             "std"
           ],
@@ -6274,6 +6326,7 @@
         ],
         "crate_features": {
           "common": [
+            "alloc",
             "lib_has_std"
           ],
           "selects": {}
@@ -6340,6 +6393,7 @@
         ],
         "crate_features": {
           "common": [
+            "alloc",
             "lib_has_std"
           ],
           "selects": {}
@@ -6577,6 +6631,10 @@
               "target": "arrayvec"
             },
             {
+              "id": "assert-json-diff 2.0.2",
+              "target": "assert_json_diff"
+            },
+            {
               "id": "assertables 7.0.1",
               "target": "assertables"
             },
@@ -6645,6 +6703,10 @@
               "target": "curve25519_dalek"
             },
             {
+              "id": "derive_builder 0.20.0",
+              "target": "derive_builder"
+            },
+            {
               "id": "ecdsa 0.16.9",
               "target": "ecdsa"
             },
@@ -6657,11 +6719,11 @@
               "target": "env_logger"
             },
             {
-              "id": "futures 0.3.30",
+              "id": "futures 0.3.31",
               "target": "futures"
             },
             {
-              "id": "futures-util 0.3.30",
+              "id": "futures-util 0.3.31",
               "target": "futures_util"
             },
             {
@@ -8598,14 +8660,14 @@
       ],
       "license_file": "LICENSE.txt"
     },
-    "futures 0.3.30": {
+    "futures 0.3.31": {
       "name": "futures",
-      "version": "0.3.30",
+      "version": "0.3.31",
       "package_url": "https://github.com/rust-lang/futures-rs",
       "repository": {
         "Http": {
-          "url": "https://static.crates.io/crates/futures/0.3.30/download",
-          "sha256": "645c6916888f6cb6350d2550b80fb63e734897a8498abe35cfb732b6487804b0"
+          "url": "https://static.crates.io/crates/futures/0.3.31/download",
+          "sha256": "65bc07b1a8bc7c85c5f2e110c476c7389b4554ba72af57d8445ea63a576b0876"
         }
       },
       "targets": [
@@ -8641,38 +8703,38 @@
         "deps": {
           "common": [
             {
-              "id": "futures-channel 0.3.30",
+              "id": "futures-channel 0.3.31",
               "target": "futures_channel"
             },
             {
-              "id": "futures-core 0.3.30",
+              "id": "futures-core 0.3.31",
               "target": "futures_core"
             },
             {
-              "id": "futures-executor 0.3.30",
+              "id": "futures-executor 0.3.31",
               "target": "futures_executor"
             },
             {
-              "id": "futures-io 0.3.30",
+              "id": "futures-io 0.3.31",
               "target": "futures_io"
             },
             {
-              "id": "futures-sink 0.3.30",
+              "id": "futures-sink 0.3.31",
               "target": "futures_sink"
             },
             {
-              "id": "futures-task 0.3.30",
+              "id": "futures-task 0.3.31",
               "target": "futures_task"
             },
             {
-              "id": "futures-util 0.3.30",
+              "id": "futures-util 0.3.31",
               "target": "futures_util"
             }
           ],
           "selects": {}
         },
         "edition": "2018",
-        "version": "0.3.30"
+        "version": "0.3.31"
       },
       "license": "MIT OR Apache-2.0",
       "license_ids": [
@@ -8681,14 +8743,14 @@
       ],
       "license_file": "LICENSE-APACHE"
     },
-    "futures-channel 0.3.30": {
+    "futures-channel 0.3.31": {
       "name": "futures-channel",
-      "version": "0.3.30",
+      "version": "0.3.31",
       "package_url": "https://github.com/rust-lang/futures-rs",
       "repository": {
         "Http": {
-          "url": "https://static.crates.io/crates/futures-channel/0.3.30/download",
-          "sha256": "eac8f7d7865dcb88bd4373ab671c8cf4508703796caa2b1985a9ca867b3fcb78"
+          "url": "https://static.crates.io/crates/futures-channel/0.3.31/download",
+          "sha256": "2dff15bf788c671c1934e366d07e30c1814a8ef514e1af724a602e8a2fbe1b10"
         }
       },
       "targets": [
@@ -8723,18 +8785,18 @@
         "deps": {
           "common": [
             {
-              "id": "futures-core 0.3.30",
+              "id": "futures-core 0.3.31",
               "target": "futures_core"
             },
             {
-              "id": "futures-sink 0.3.30",
+              "id": "futures-sink 0.3.31",
               "target": "futures_sink"
             }
           ],
           "selects": {}
         },
         "edition": "2018",
-        "version": "0.3.30"
+        "version": "0.3.31"
       },
       "license": "MIT OR Apache-2.0",
       "license_ids": [
@@ -8743,14 +8805,14 @@
       ],
       "license_file": "LICENSE-APACHE"
     },
-    "futures-core 0.3.30": {
+    "futures-core 0.3.31": {
       "name": "futures-core",
-      "version": "0.3.30",
+      "version": "0.3.31",
       "package_url": "https://github.com/rust-lang/futures-rs",
       "repository": {
         "Http": {
-          "url": "https://static.crates.io/crates/futures-core/0.3.30/download",
-          "sha256": "dfc6580bb841c5a68e9ef15c77ccc837b40a7504914d52e47b8b0e9bbda25a1d"
+          "url": "https://static.crates.io/crates/futures-core/0.3.31/download",
+          "sha256": "05f29059c0c2090612e8d742178b0580d2dc940c837851ad723096f87af6663e"
         }
       },
       "targets": [
@@ -8781,7 +8843,7 @@
           "selects": {}
         },
         "edition": "2018",
-        "version": "0.3.30"
+        "version": "0.3.31"
       },
       "license": "MIT OR Apache-2.0",
       "license_ids": [
@@ -8790,14 +8852,14 @@
       ],
       "license_file": "LICENSE-APACHE"
     },
-    "futures-executor 0.3.30": {
+    "futures-executor 0.3.31": {
       "name": "futures-executor",
-      "version": "0.3.30",
+      "version": "0.3.31",
       "package_url": "https://github.com/rust-lang/futures-rs",
       "repository": {
         "Http": {
-          "url": "https://static.crates.io/crates/futures-executor/0.3.30/download",
-          "sha256": "a576fc72ae164fca6b9db127eaa9a9dda0d61316034f33a0a0d4eda41f02b01d"
+          "url": "https://static.crates.io/crates/futures-executor/0.3.31/download",
+          "sha256": "1e28d1d997f585e54aebc3f97d39e72338912123a67330d723fdbb564d646c9f"
         }
       },
       "targets": [
@@ -8829,22 +8891,22 @@
         "deps": {
           "common": [
             {
-              "id": "futures-core 0.3.30",
+              "id": "futures-core 0.3.31",
               "target": "futures_core"
             },
             {
-              "id": "futures-task 0.3.30",
+              "id": "futures-task 0.3.31",
               "target": "futures_task"
             },
             {
-              "id": "futures-util 0.3.30",
+              "id": "futures-util 0.3.31",
               "target": "futures_util"
             }
           ],
           "selects": {}
         },
         "edition": "2018",
-        "version": "0.3.30"
+        "version": "0.3.31"
       },
       "license": "MIT OR Apache-2.0",
       "license_ids": [
@@ -8853,14 +8915,14 @@
       ],
       "license_file": "LICENSE-APACHE"
     },
-    "futures-io 0.3.30": {
+    "futures-io 0.3.31": {
       "name": "futures-io",
-      "version": "0.3.30",
+      "version": "0.3.31",
       "package_url": "https://github.com/rust-lang/futures-rs",
       "repository": {
         "Http": {
-          "url": "https://static.crates.io/crates/futures-io/0.3.30/download",
-          "sha256": "a44623e20b9681a318efdd71c299b6b222ed6f231972bfe2f224ebad6311f0c1"
+          "url": "https://static.crates.io/crates/futures-io/0.3.31/download",
+          "sha256": "9e5c1b78ca4aae1ac06c48a526a655760685149f0d465d21f37abfe57ce075c6"
         }
       },
       "targets": [
@@ -8889,7 +8951,7 @@
           "selects": {}
         },
         "edition": "2018",
-        "version": "0.3.30"
+        "version": "0.3.31"
       },
       "license": "MIT OR Apache-2.0",
       "license_ids": [
@@ -8898,14 +8960,14 @@
       ],
       "license_file": "LICENSE-APACHE"
     },
-    "futures-macro 0.3.30": {
+    "futures-macro 0.3.31": {
       "name": "futures-macro",
-      "version": "0.3.30",
+      "version": "0.3.31",
       "package_url": "https://github.com/rust-lang/futures-rs",
       "repository": {
         "Http": {
-          "url": "https://static.crates.io/crates/futures-macro/0.3.30/download",
-          "sha256": "87750cf4b7a4c0625b1529e4c543c2182106e4dedc60a2a6455e00d212c489ac"
+          "url": "https://static.crates.io/crates/futures-macro/0.3.31/download",
+          "sha256": "162ee34ebcb7c64a8abebc059ce0fee27c2262618d7b60ed8faf72fef13c3650"
         }
       },
       "targets": [
@@ -8945,7 +9007,7 @@
           "selects": {}
         },
         "edition": "2018",
-        "version": "0.3.30"
+        "version": "0.3.31"
       },
       "license": "MIT OR Apache-2.0",
       "license_ids": [
@@ -8954,14 +9016,14 @@
       ],
       "license_file": "LICENSE-APACHE"
     },
-    "futures-sink 0.3.30": {
+    "futures-sink 0.3.31": {
       "name": "futures-sink",
-      "version": "0.3.30",
+      "version": "0.3.31",
       "package_url": "https://github.com/rust-lang/futures-rs",
       "repository": {
         "Http": {
-          "url": "https://static.crates.io/crates/futures-sink/0.3.30/download",
-          "sha256": "9fb8e00e87438d937621c1c6269e53f536c14d3fbd6a042bb24879e57d474fb5"
+          "url": "https://static.crates.io/crates/futures-sink/0.3.31/download",
+          "sha256": "e575fab7d1e0dcb8d0c7bcf9a63ee213816ab51902e6d244a95819acacf1d4f7"
         }
       },
       "targets": [
@@ -8992,7 +9054,7 @@
           "selects": {}
         },
         "edition": "2018",
-        "version": "0.3.30"
+        "version": "0.3.31"
       },
       "license": "MIT OR Apache-2.0",
       "license_ids": [
@@ -9001,14 +9063,14 @@
       ],
       "license_file": "LICENSE-APACHE"
     },
-    "futures-task 0.3.30": {
+    "futures-task 0.3.31": {
       "name": "futures-task",
-      "version": "0.3.30",
+      "version": "0.3.31",
       "package_url": "https://github.com/rust-lang/futures-rs",
       "repository": {
         "Http": {
-          "url": "https://static.crates.io/crates/futures-task/0.3.30/download",
-          "sha256": "38d84fa142264698cdce1a9f9172cf383a0c82de1bddcf3092901442c4097004"
+          "url": "https://static.crates.io/crates/futures-task/0.3.31/download",
+          "sha256": "f90f7dce0722e95104fcb095585910c0977252f286e354b5e3bd38902cd99988"
         }
       },
       "targets": [
@@ -9038,7 +9100,7 @@
           "selects": {}
         },
         "edition": "2018",
-        "version": "0.3.30"
+        "version": "0.3.31"
       },
       "license": "MIT OR Apache-2.0",
       "license_ids": [
@@ -9047,14 +9109,14 @@
       ],
       "license_file": "LICENSE-APACHE"
     },
-    "futures-util 0.3.30": {
+    "futures-util 0.3.31": {
       "name": "futures-util",
-      "version": "0.3.30",
+      "version": "0.3.31",
       "package_url": "https://github.com/rust-lang/futures-rs",
       "repository": {
         "Http": {
-          "url": "https://static.crates.io/crates/futures-util/0.3.30/download",
-          "sha256": "3d6401deb83407ab3da39eba7e33987a73c3df0c82b4bb5813ee871c19c41d48"
+          "url": "https://static.crates.io/crates/futures-util/0.3.31/download",
+          "sha256": "9fa08315bb612088cc391249efdc3bc77536f16c91f6cf495e6fbe85b20a4a81"
         }
       },
       "targets": [
@@ -9098,23 +9160,23 @@
         "deps": {
           "common": [
             {
-              "id": "futures-channel 0.3.30",
+              "id": "futures-channel 0.3.31",
               "target": "futures_channel"
             },
             {
-              "id": "futures-core 0.3.30",
+              "id": "futures-core 0.3.31",
               "target": "futures_core"
             },
             {
-              "id": "futures-io 0.3.30",
+              "id": "futures-io 0.3.31",
               "target": "futures_io"
             },
             {
-              "id": "futures-sink 0.3.30",
+              "id": "futures-sink 0.3.31",
               "target": "futures_sink"
             },
             {
-              "id": "futures-task 0.3.30",
+              "id": "futures-task 0.3.31",
               "target": "futures_task"
             },
             {
@@ -9140,13 +9202,13 @@
         "proc_macro_deps": {
           "common": [
             {
-              "id": "futures-macro 0.3.30",
+              "id": "futures-macro 0.3.31",
               "target": "futures_macro"
             }
           ],
           "selects": {}
         },
-        "version": "0.3.30"
+        "version": "0.3.31"
       },
       "license": "MIT OR Apache-2.0",
       "license_ids": [
@@ -9916,15 +9978,15 @@
               "target": "fnv"
             },
             {
-              "id": "futures-core 0.3.30",
+              "id": "futures-core 0.3.31",
               "target": "futures_core"
             },
             {
-              "id": "futures-sink 0.3.30",
+              "id": "futures-sink 0.3.31",
               "target": "futures_sink"
             },
             {
-              "id": "futures-util 0.3.30",
+              "id": "futures-util 0.3.31",
               "target": "futures_util"
             },
             {
@@ -10007,11 +10069,11 @@
               "target": "fnv"
             },
             {
-              "id": "futures-core 0.3.30",
+              "id": "futures-core 0.3.31",
               "target": "futures_core"
             },
             {
-              "id": "futures-sink 0.3.30",
+              "id": "futures-sink 0.3.31",
               "target": "futures_sink"
             },
             {
@@ -11052,7 +11114,7 @@
               "target": "bytes"
             },
             {
-              "id": "futures-util 0.3.30",
+              "id": "futures-util 0.3.31",
               "target": "futures_util"
             },
             {
@@ -11319,15 +11381,15 @@
               "target": "bytes"
             },
             {
-              "id": "futures-channel 0.3.30",
+              "id": "futures-channel 0.3.31",
               "target": "futures_channel"
             },
             {
-              "id": "futures-core 0.3.30",
+              "id": "futures-core 0.3.31",
               "target": "futures_core"
             },
             {
-              "id": "futures-util 0.3.30",
+              "id": "futures-util 0.3.31",
               "target": "futures_util"
             },
             {
@@ -11437,11 +11499,11 @@
               "target": "bytes"
             },
             {
-              "id": "futures-channel 0.3.30",
+              "id": "futures-channel 0.3.31",
               "target": "futures_channel"
             },
             {
-              "id": "futures-util 0.3.30",
+              "id": "futures-util 0.3.31",
               "target": "futures_util"
             },
             {
@@ -11608,11 +11670,11 @@
               "target": "bytes"
             },
             {
-              "id": "futures-channel 0.3.30",
+              "id": "futures-channel 0.3.31",
               "target": "futures_channel"
             },
             {
-              "id": "futures-util 0.3.30",
+              "id": "futures-util 0.3.31",
               "target": "futures_util"
             },
             {
@@ -14319,7 +14381,7 @@
               "target": "bytes"
             },
             {
-              "id": "futures 0.3.30",
+              "id": "futures 0.3.31",
               "target": "futures"
             },
             {
@@ -14399,7 +14461,7 @@
               "target": "bytes"
             },
             {
-              "id": "futures 0.3.30",
+              "id": "futures 0.3.31",
               "target": "futures"
             },
             {
@@ -15488,11 +15550,11 @@
         "deps": {
           "common": [
             {
-              "id": "futures-core 0.3.30",
+              "id": "futures-core 0.3.31",
               "target": "futures_core"
             },
             {
-              "id": "futures-sink 0.3.30",
+              "id": "futures-sink 0.3.31",
               "target": "futures_sink"
             },
             {
@@ -15576,7 +15638,7 @@
         "deps": {
           "common": [
             {
-              "id": "futures-core 0.3.30",
+              "id": "futures-core 0.3.31",
               "target": "futures_core"
             },
             {
@@ -15800,15 +15862,15 @@
               "target": "crossbeam_channel"
             },
             {
-              "id": "futures-channel 0.3.30",
+              "id": "futures-channel 0.3.31",
               "target": "futures_channel"
             },
             {
-              "id": "futures-executor 0.3.30",
+              "id": "futures-executor 0.3.31",
               "target": "futures_executor"
             },
             {
-              "id": "futures-util 0.3.30",
+              "id": "futures-util 0.3.31",
               "target": "futures_util"
             },
             {
@@ -20087,7 +20149,7 @@
         "deps": {
           "common": [
             {
-              "id": "futures 0.3.30",
+              "id": "futures 0.3.31",
               "target": "futures"
             },
             {
@@ -21469,7 +21531,7 @@
         "deps": {
           "common": [
             {
-              "id": "futures-core 0.3.30",
+              "id": "futures-core 0.3.31",
               "target": "futures_core",
               "alias": "futures_core_0_3"
             },
@@ -24598,7 +24660,7 @@
         "deps": {
           "common": [
             {
-              "id": "futures-core 0.3.30",
+              "id": "futures-core 0.3.31",
               "target": "futures_core"
             },
             {
@@ -24665,11 +24727,11 @@
               "target": "bytes"
             },
             {
-              "id": "futures-core 0.3.30",
+              "id": "futures-core 0.3.31",
               "target": "futures_core"
             },
             {
-              "id": "futures-sink 0.3.30",
+              "id": "futures-sink 0.3.31",
               "target": "futures_sink"
             },
             {
@@ -24737,7 +24799,7 @@
               "target": "bytes"
             },
             {
-              "id": "futures 0.3.30",
+              "id": "futures 0.3.31",
               "target": "futures"
             },
             {
@@ -25184,11 +25246,11 @@
         "deps": {
           "common": [
             {
-              "id": "futures-core 0.3.30",
+              "id": "futures-core 0.3.31",
               "target": "futures_core"
             },
             {
-              "id": "futures-util 0.3.30",
+              "id": "futures-util 0.3.31",
               "target": "futures_util"
             },
             {
@@ -25292,11 +25354,11 @@
               "target": "bytes"
             },
             {
-              "id": "futures-core 0.3.30",
+              "id": "futures-core 0.3.31",
               "target": "futures_core"
             },
             {
-              "id": "futures-util 0.3.30",
+              "id": "futures-util 0.3.31",
               "target": "futures_util"
             },
             {
@@ -31348,6 +31410,7 @@
     "aml 0.16.4",
     "anyhow 1.0.86",
     "arrayvec 0.7.6",
+    "assert-json-diff 2.0.2",
     "assertables 7.0.1",
     "async-recursion 1.1.1",
     "async-stream 0.3.5",
@@ -31368,11 +31431,12 @@
     "criterion 0.5.1",
     "criterion-macro 0.4.0",
     "curve25519-dalek 4.1.1",
+    "derive_builder 0.20.0",
     "ecdsa 0.16.9",
     "elf 0.7.4",
     "env_logger 0.11.5",
-    "futures 0.3.30",
-    "futures-util 0.3.30",
+    "futures 0.3.31",
+    "futures-util 0.3.31",
     "getrandom 0.2.15",
     "getset 0.1.2",
     "goblin 0.8.2",

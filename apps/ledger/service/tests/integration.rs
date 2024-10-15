@@ -33,9 +33,9 @@ mod test {
         assert_that,
         prelude::{contains_substring, displays_as, err},
     };
+    use oak_crypto::signer::Signer;
     use oak_proto_rust::oak::attestation::v1::Evidence;
     use oak_proto_rust::oak::crypto::v1::Signature;
-    use oak_restricted_kernel_sdk::crypto::Signer;
     use oak_restricted_kernel_sdk::testing::{MockEvidenceProvider, MockSigner};
     use sha2::{Digest, Sha256};
 
@@ -274,10 +274,8 @@ mod test {
     fn test_create_key() {
         struct FakeSigner;
         impl Signer for FakeSigner {
-            fn sign(&self, message: &[u8]) -> anyhow::Result<Signature> {
-                return Ok(Signature {
-                    signature: Sha256::digest(message).to_vec(),
-                });
+            fn sign(&self, message: &[u8]) -> Vec<u8> {
+                return Sha256::digest(message).to_vec();
             }
         }
         let mut ledger =
@@ -600,11 +598,7 @@ mod test {
             .create_signature(b"", |message| {
                 // The MockSigner signs the key with application signing key provided by the
                 // MockEvidenceProvider.
-                MockSigner::create()
-                    .unwrap()
-                    .sign(message)
-                    .unwrap()
-                    .signature
+                MockSigner::create().unwrap().sign(message)
             })
             .build()
             .to_vec()
@@ -686,11 +680,7 @@ mod test {
             .create_signature(b"", |message| {
                 // The MockSigner signs the key with application signing key provided by the
                 // MockEvidenceProvider.
-                MockSigner::create()
-                    .unwrap()
-                    .sign(message)
-                    .unwrap()
-                    .signature
+                MockSigner::create().unwrap().sign(message)
             })
             .build()
             .to_vec()

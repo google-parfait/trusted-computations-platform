@@ -140,11 +140,11 @@ pub struct DefaultOakServerSession {
 impl DefaultOakServerSession {
     pub fn create() -> Result<Self> {
         Ok(Self {
-            inner: ServerSession::new(
+            inner: ServerSession::create(
                 SessionConfig::builder(AttestationType::Unattested, HandshakeType::NoiseNN)
                     .set_encryption_provider(Box::new(DefaultEncryptorProvider))
                     .build(),
-            ),
+            )?,
         })
     }
 }
