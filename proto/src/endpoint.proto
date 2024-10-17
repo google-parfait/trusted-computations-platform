@@ -121,12 +121,11 @@ message StartReplicaRequest {
   RaftConfig raft_config = 3;
   // Serialized application configuration, accessible through the actor context.
   bytes app_config = 4;
-  // Attestation configuration for this replica. Can be used for verification
-  // with other peers.
-  AttestationConfig attestation_config = 5;
   // Indicates if this is an ephemeral node i.e. it is not replicated and raft is
   // disabled.
   bool is_ephemeral = 6;
+
+  reserved 5;
 }
 
 message StartReplicaResponse {
@@ -173,13 +172,6 @@ message RaftConfig {
   // The number of tick events that must pass before retrying handshake with a
   // previously failed replica.
   uint64 handshake_retry_tick = 6;
-}
-
-message AttestationConfig {
-  // Oak ReferenceValues specifying the binaries running at each layer of
-  // the DICE attestation. These are used for verifying claims from other
-  // raft peers.
-  oak.attestation.v1.ReferenceValues reference_values = 1;
 }
 
 // Instructs the trusted application to stop the corresponding replica.
@@ -434,26 +426,18 @@ message SecureChannelHandshake {
 
     message InitiatorRequest {
       oneof message {
-         // Request message for remote attestation.
-         oak.session.v1.AttestRequest attest_request = 1 [deprecated = true];
-         // Request message for the crypto handshake needed to establish a set
-         // of session keys.
-         oak.session.v1.HandshakeRequest handshake_request = 2 [deprecated = true];
         // Request message for establishing a session with a peer.
         oak.session.v1.SessionRequest session_request = 3;
       }
+      reserved 1,2;
     }
 
     message RecipientResponse {
       oneof message {
-        // Response message for remote attestation.
-        oak.session.v1.AttestResponse attest_response = 1 [deprecated = true];
-        // Response message for the crypto handshake needed to establish a set
-        // of session keys.
-        oak.session.v1.HandshakeResponse handshake_response = 2 [deprecated = true];
         // Response to `SessionRequest` message.
         oak.session.v1.SessionResponse session_response = 3;
       }
+      reserved 1,2;
     }
   }
 }

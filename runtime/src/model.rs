@@ -19,6 +19,7 @@ use alloc::vec::Vec;
 use core::fmt;
 use core::option::Option;
 use core::result::Result;
+use oak_proto_rust::oak::attestation::v1::ReferenceValues;
 use prost::bytes::Bytes;
 use prost::Message;
 use slog::Logger;
@@ -267,4 +268,9 @@ pub trait Actor {
         context: ActorEventContext,
         event: ActorEvent,
     ) -> Result<EventOutcome, ActorError>;
+
+    /// Returns the Oak ReferenceValues specifying the binaries running at each layer of
+    /// the DICE attestation. These are used for verifying claims from other
+    /// raft peers.
+    fn get_reference_values(&self) -> ReferenceValues;
 }

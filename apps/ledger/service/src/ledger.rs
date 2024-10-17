@@ -30,10 +30,9 @@ use crate::budget::{self, BudgetTracker};
 use crate::ledger::service::*;
 use federated_compute::proto::*;
 
-use oak_attestation::dice::evidence_to_proto;
 use oak_crypto::signer::Signer;
 use oak_proto_rust::oak::attestation::v1::Evidence;
-use oak_restricted_kernel_sdk::attestation::EvidenceProvider;
+use oak_restricted_kernel_sdk::Attester;
 
 use prost::Message;
 use rand::{rngs::OsRng, RngCore};
@@ -80,13 +79,10 @@ pub struct LedgerService {
 }
 
 impl LedgerService {
-    pub fn create(
-        evidence_provider: Box<dyn EvidenceProvider>,
-        signer: Box<dyn Signer>,
-    ) -> anyhow::Result<Self> {
+    pub fn create(attester: Box<dyn Attester>, signer: Box<dyn Signer>) -> anyhow::Result<Self> {
         // Pre-generate and convert the evidence so that we don't have to do it every time a key is
         // created.
-        let evidence = evidence_to_proto(evidence_provider.get_evidence().clone())?;
+        let evidence = attester.quote()?;
         Ok(Self {
             evidence,
             signer,
@@ -608,13 +604,12 @@ mod tests {
         ApplicationMatcher,
     };
     use googletest::prelude::*;
-    use oak_proto_rust::oak::crypto::v1::Signature;
-    use oak_restricted_kernel_sdk::testing::{MockEvidenceProvider, MockSigner};
+    use oak_restricted_kernel_sdk::testing::{MockAttester, MockSigner};
 
     /// Helper function to create a LedgerService with one key.
     fn create_ledger_service() -> (LedgerService, Vec<u8>) {
         let mut ledger = LedgerService::create(
-            Box::new(MockEvidenceProvider::create().unwrap()),
+            Box::new(MockAttester::create().unwrap()),
             Box::new(MockSigner::create().unwrap()),
         )
         .unwrap();
@@ -651,7 +646,7 @@ mod tests {
             }
         }
         let mut ledger = LedgerService::create(
-            Box::new(MockEvidenceProvider::create().unwrap()),
+            Box::new(MockAttester::create().unwrap()),
             Box::new(FakeSigner),
         )
         .unwrap();
@@ -864,7 +859,7 @@ mod tests {
             )
             .create_signature(b"", |message| {
                 // The MockSigner signs the key with application signing key provided by the
-                // MockEvidenceProvider.
+                // MockAttester.
                 MockSigner::create().unwrap().sign(message)
             })
             .build()
@@ -946,7 +941,7 @@ mod tests {
             )
             .create_signature(b"", |message| {
                 // The MockSigner signs the key with application signing key provided by the
-                // MockEvidenceProvider.
+                // MockAttester.
                 MockSigner::create().unwrap().sign(message)
             })
             .build()
@@ -1450,7 +1445,7 @@ mod tests {
     #[test]
     fn test_produce_create_key_event_monotonic_time() {
         let mut ledger = LedgerService::create(
-            Box::new(MockEvidenceProvider::create().unwrap()),
+            Box::new(MockAttester::create().unwrap()),
             Box::new(MockSigner::create().unwrap()),
         )
         .unwrap();
@@ -1518,7 +1513,7 @@ mod tests {
     #[test]
     fn test_apply_create_key_event_twice() {
         let mut ledger = LedgerService::create(
-            Box::new(MockEvidenceProvider::create().unwrap()),
+            Box::new(MockAttester::create().unwrap()),
             Box::new(MockSigner::create().unwrap()),
         )
         .unwrap();
@@ -1550,7 +1545,7 @@ mod tests {
     #[test]
     fn test_apply_create_key_event_invalid_public_key() {
         let mut ledger = LedgerService::create(
-            Box::new(MockEvidenceProvider::create().unwrap()),
+            Box::new(MockAttester::create().unwrap()),
             Box::new(MockSigner::create().unwrap()),
         )
         .unwrap();
@@ -1579,7 +1574,7 @@ mod tests {
     #[test]
     fn test_apply_create_key_event_invalid_private_key() {
         let mut ledger = LedgerService::create(
-            Box::new(MockEvidenceProvider::create().unwrap()),
+            Box::new(MockAttester::create().unwrap()),
             Box::new(MockSigner::create().unwrap()),
         )
         .unwrap();

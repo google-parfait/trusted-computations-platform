@@ -222,15 +222,10 @@ pub fn verify_attestation<'a>(
 /// Helper function that returns a test Evidence message.
 #[cfg(any(test, feature = "testing"))]
 pub fn get_test_evidence() -> Evidence {
-    use oak_restricted_kernel_sdk::{attestation::EvidenceProvider, testing::MockEvidenceProvider};
+    use oak_restricted_kernel_sdk::{testing::MockAttester, Attester};
 
-    oak_attestation::dice::evidence_to_proto(
-        MockEvidenceProvider::create()
-            .unwrap()
-            .get_evidence()
-            .clone(),
-    )
-    .unwrap()
+    let mock_attester = MockAttester::create().expect("failed to create mock attester");
+    mock_attester.quote().expect("couldn't get evidence")
 }
 
 /// Helper function that returns a test Endorsements message.

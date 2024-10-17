@@ -34,6 +34,7 @@ use crate::snapshot::{
 };
 use alloc::boxed::Box;
 use alloc::vec::Vec;
+use oak_proto_rust::oak::attestation::v1::ReferenceValues;
 use oak_proto_rust::oak::session::v1::{SessionRequest, SessionResponse};
 use prost::bytes::Bytes;
 use raft::{
@@ -65,6 +66,8 @@ mock! {
         fn on_process_command(&mut self, command: Option<ActorCommand>) -> Result<CommandOutcome, ActorError>;
 
         fn on_apply_event(&mut self, context: ActorEventContext, event: ActorEvent) -> Result<EventOutcome, ActorError>;
+
+        fn get_reference_values(&self) -> ReferenceValues;
     }
 }
 

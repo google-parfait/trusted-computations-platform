@@ -24,6 +24,12 @@ use alloc::{
     string::{String, ToString},
 };
 use hashbrown::HashMap;
+use oak_proto_rust::oak::attestation::v1::{
+    binary_reference_value, kernel_binary_reference_value, reference_values, text_reference_value,
+    ApplicationLayerReferenceValues, BinaryReferenceValue, InsecureReferenceValues,
+    KernelBinaryReferenceValue, KernelLayerReferenceValues, OakRestrictedKernelReferenceValues,
+    ReferenceValues, RootLayerReferenceValues, SkipVerification, TextReferenceValue,
+};
 use prost::{bytes::Bytes, Message};
 use slog::{debug, warn};
 use tcp_runtime::model::{
@@ -262,5 +268,43 @@ impl Actor for CounterActor {
         }
 
         Ok(EventOutcome::with_none())
+    }
+
+    fn get_reference_values(&self) -> ReferenceValues {
+        let skip = BinaryReferenceValue {
+            r#type: Some(binary_reference_value::Type::Skip(
+                SkipVerification::default(),
+            )),
+        };
+        ReferenceValues {
+            r#type: Some(reference_values::Type::OakRestrictedKernel(
+                OakRestrictedKernelReferenceValues {
+                    root_layer: Some(RootLayerReferenceValues {
+                        insecure: Some(InsecureReferenceValues::default()),
+                        ..Default::default()
+                    }),
+                    kernel_layer: Some(KernelLayerReferenceValues {
+                        kernel: Some(KernelBinaryReferenceValue {
+                            r#type: Some(kernel_binary_reference_value::Type::Skip(
+                                SkipVerification::default(),
+                            )),
+                        }),
+                        kernel_cmd_line_text: Some(TextReferenceValue {
+                            r#type: Some(text_reference_value::Type::Skip(
+                                SkipVerification::default(),
+                            )),
+                        }),
+                        init_ram_fs: Some(skip.clone()),
+                        memory_map: Some(skip.clone()),
+                        acpi: Some(skip.clone()),
+                        ..Default::default()
+                    }),
+                    application_layer: Some(ApplicationLayerReferenceValues {
+                        binary: Some(skip.clone()),
+                        configuration: Some(skip.clone()),
+                    }),
+                },
+            )),
+        }
     }
 }

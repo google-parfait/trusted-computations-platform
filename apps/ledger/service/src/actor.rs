@@ -18,7 +18,13 @@ use crate::ledger::{Ledger, LedgerService};
 
 use alloc::{boxed::Box, collections::LinkedList};
 use oak_crypto::signer::Signer;
-use oak_restricted_kernel_sdk::attestation::EvidenceProvider;
+use oak_proto_rust::oak::attestation::v1::{
+    binary_reference_value, kernel_binary_reference_value, reference_values, text_reference_value,
+    ApplicationLayerReferenceValues, BinaryReferenceValue, InsecureReferenceValues,
+    KernelBinaryReferenceValue, KernelLayerReferenceValues, OakRestrictedKernelReferenceValues,
+    ReferenceValues, RootLayerReferenceValues, SkipVerification, TextReferenceValue,
+};
+use oak_restricted_kernel_sdk::Attester;
 use prost::{bytes::Bytes, Message};
 use slog::{debug, error, warn};
 use tcp_runtime::model::{
@@ -42,13 +48,10 @@ pub struct LedgerActor {
 }
 
 impl LedgerActor {
-    pub fn create(
-        evidence_provider: Box<dyn EvidenceProvider>,
-        signer: Box<dyn Signer>,
-    ) -> anyhow::Result<Self> {
+    pub fn create(attester: Box<dyn Attester>, signer: Box<dyn Signer>) -> anyhow::Result<Self> {
         Ok(LedgerActor {
             context: None,
-            ledger: LedgerService::create(evidence_provider, signer)?,
+            ledger: LedgerService::create(attester, signer)?,
             key_rewrapping_entries: LinkedList::new(),
         })
     }
@@ -409,12 +412,50 @@ impl Actor for LedgerActor {
             )))
         })
     }
+
+    fn get_reference_values(&self) -> ReferenceValues {
+        let skip = BinaryReferenceValue {
+            r#type: Some(binary_reference_value::Type::Skip(
+                SkipVerification::default(),
+            )),
+        };
+        ReferenceValues {
+            r#type: Some(reference_values::Type::OakRestrictedKernel(
+                OakRestrictedKernelReferenceValues {
+                    root_layer: Some(RootLayerReferenceValues {
+                        insecure: Some(InsecureReferenceValues::default()),
+                        ..Default::default()
+                    }),
+                    kernel_layer: Some(KernelLayerReferenceValues {
+                        kernel: Some(KernelBinaryReferenceValue {
+                            r#type: Some(kernel_binary_reference_value::Type::Skip(
+                                SkipVerification::default(),
+                            )),
+                        }),
+                        kernel_cmd_line_text: Some(TextReferenceValue {
+                            r#type: Some(text_reference_value::Type::Skip(
+                                SkipVerification::default(),
+                            )),
+                        }),
+                        init_ram_fs: Some(skip.clone()),
+                        memory_map: Some(skip.clone()),
+                        acpi: Some(skip.clone()),
+                        ..Default::default()
+                    }),
+                    application_layer: Some(ApplicationLayerReferenceValues {
+                        binary: Some(skip.clone()),
+                        configuration: Some(skip.clone()),
+                    }),
+                },
+            )),
+        }
+    }
 }
 
 #[cfg(all(test, feature = "std"))]
 mod tests {
     use super::*;
-    use oak_restricted_kernel_sdk::testing::{MockEvidenceProvider, MockSigner};
+    use oak_restricted_kernel_sdk::testing::{MockAttester, MockSigner};
     use tcp_runtime::logger::log::create_logger;
     use tcp_runtime::mock::MockActorContext;
 
@@ -428,7 +469,7 @@ mod tests {
             .return_const::<Bytes>(config.encode_to_vec().into());
 
         let mut actor = LedgerActor::create(
-            Box::new(MockEvidenceProvider::create().unwrap()),
+            Box::new(MockAttester::create().unwrap()),
             Box::new(MockSigner::create().unwrap()),
         )
         .unwrap();

@@ -304,7 +304,6 @@ impl<A: Actor> FakePlatform<A> {
                     handshake_retry_tick: 1,
                 }),
                 app_config: app_config,
-                attestation_config: None,
                 is_ephemeral: false,
             })),
         });

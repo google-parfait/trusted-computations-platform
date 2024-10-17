@@ -1382,7 +1382,6 @@ mod test {
                 replica_id_hint,
                 raft_config: Some(raft_config),
                 app_config: app_config,
-                attestation_config: None,
                 is_ephemeral: false,
             })),
         };
@@ -2559,7 +2558,6 @@ mod test {
                         replica_id_hint: node_id,
                         raft_config: None,
                         app_config: self_config.into(),
-                        attestation_config: None,
                         is_ephemeral: true,
                     })),
                 }),

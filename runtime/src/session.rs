@@ -176,12 +176,9 @@ impl OakSession<SessionRequest, SessionResponse> for DefaultOakServerSession {
 
 #[cfg(all(test, feature = "std"))]
 mod test {
-    use oak_crypto::encryptor::Encryptor;
     use oak_crypto::{encryptor::Payload, noise_handshake::SYMMETRIC_KEY_LEN};
     use oak_proto_rust::oak::crypto::v1::SessionKeys;
     use oak_session::config::EncryptorProvider;
-
-    use crate::session::UnorderedChannelEncryptor;
 
     use super::DefaultEncryptorProvider;
 

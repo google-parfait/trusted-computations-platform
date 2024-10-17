@@ -36,7 +36,7 @@ mod test {
     use oak_crypto::signer::Signer;
     use oak_proto_rust::oak::attestation::v1::Evidence;
     use oak_proto_rust::oak::crypto::v1::Signature;
-    use oak_restricted_kernel_sdk::testing::{MockEvidenceProvider, MockSigner};
+    use oak_restricted_kernel_sdk::testing::{MockAttester, MockSigner};
     use sha2::{Digest, Sha256};
 
     use tcp_integration::harness::*;
@@ -77,7 +77,7 @@ mod test {
         }
 
         fn create_actor_with_signer(signer: Box<dyn Signer>) -> LedgerActor {
-            LedgerActor::create(Box::new(MockEvidenceProvider::create().unwrap()), signer).unwrap()
+            LedgerActor::create(Box::new(MockAttester::create().unwrap()), signer).unwrap()
         }
 
         fn start(&mut self, num_replicas: u64) {
@@ -597,7 +597,7 @@ mod test {
             )
             .create_signature(b"", |message| {
                 // The MockSigner signs the key with application signing key provided by the
-                // MockEvidenceProvider.
+                // MockAttester.
                 MockSigner::create().unwrap().sign(message)
             })
             .build()
@@ -679,7 +679,7 @@ mod test {
             )
             .create_signature(b"", |message| {
                 // The MockSigner signs the key with application signing key provided by the
-                // MockEvidenceProvider.
+                // MockAttester.
                 MockSigner::create().unwrap().sign(message)
             })
             .build()

@@ -22,7 +22,7 @@ extern crate tcp_runtime;
 
 use alloc::boxed::Box;
 use oak_restricted_kernel_sdk::{
-    attestation::InstanceEvidenceProvider,
+    attestation::InstanceAttester,
     channel::{start_blocking_server, FileDescriptorChannel},
     crypto::InstanceSigner,
     entrypoint,
@@ -40,7 +40,7 @@ fn run_server() -> ! {
 
     let mut invocation_stats = StaticSampleStore::<1000>::new().unwrap();
     let actor = LedgerActor::create(
-        Box::new(InstanceEvidenceProvider::create().unwrap()),
+        Box::new(InstanceAttester::create().unwrap()),
         Box::new(InstanceSigner::create().unwrap()),
     )
     .expect("LedgerActor failed to create");
