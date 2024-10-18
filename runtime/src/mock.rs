@@ -33,9 +33,11 @@ use crate::snapshot::{
     SnapshotError, SnapshotReceiver, SnapshotReceiverImpl, SnapshotSender, SnapshotSenderImpl,
 };
 use alloc::boxed::Box;
+use alloc::sync::Arc;
 use alloc::vec::Vec;
 use oak_proto_rust::oak::attestation::v1::ReferenceValues;
 use oak_proto_rust::oak::session::v1::{SessionRequest, SessionResponse};
+use oak_session::clock::Clock;
 use prost::bytes::Bytes;
 use raft::{
     eraftpb::ConfChange as RaftConfigChange, eraftpb::ConfState as RaftConfigState,
@@ -250,7 +252,7 @@ mock! {
     }
 
     impl CommunicationModule for CommunicationModule {
-        fn init(&mut self, replica_id: u64, logger: Logger, config: Option<CommunicationConfig>);
+        fn init(&mut self, replica_id: u64, logger: Logger, clock: Arc<dyn Clock>, config: Option<CommunicationConfig>);
 
         fn process_out_message(&mut self, message: out_message::Msg) -> Result<(), PalError>;
 
@@ -277,6 +279,7 @@ mock! {
             self_replica_id: u64,
             peer_replica_id: u64,
             role: Role,
+            clock: Arc<dyn Clock>,
             logger: Logger,
         ) -> anyhow::Result<Box<dyn HandshakeSession>>;
     }
@@ -313,9 +316,9 @@ mock! {
     }
 
     impl OakSessionFactory for OakSessionFactory {
-        fn get_oak_client_session(&self) -> anyhow::Result<Box<dyn OakClientSession>>;
+        fn get_oak_client_session(&self, clock: Arc<dyn Clock>,) -> anyhow::Result<Box<dyn OakClientSession>>;
 
-        fn get_oak_server_session(&self) -> anyhow::Result<Box<dyn OakServerSession>>;
+        fn get_oak_server_session(&self, clock: Arc<dyn Clock>,) -> anyhow::Result<Box<dyn OakServerSession>>;
     }
 }
 
@@ -350,5 +353,14 @@ mock! {
     fn write(&mut self, plaintext: &[u8]) -> anyhow::Result<()>;
 
     fn read(&mut self) -> anyhow::Result<Option<Vec<u8>>>;
+    }
+}
+
+mock! {
+    pub Clock {
+    }
+
+    impl Clock for Clock {
+        fn get_current_time_ms(&self) -> i64;
     }
 }

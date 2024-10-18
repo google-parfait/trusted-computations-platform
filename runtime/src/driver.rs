@@ -26,12 +26,15 @@ use crate::util::raft::{
 };
 use alloc::boxed::Box;
 use alloc::rc::Rc;
+use alloc::sync::Arc;
 use alloc::{vec, vec::Vec};
 use core::convert::TryFrom;
 use core::{
     cell::{RefCell, RefMut},
     cmp, mem,
+    sync::atomic::{AtomicI64, Ordering},
 };
+use oak_session::clock::Clock;
 use prost::{bytes::Bytes, Message};
 use raft::{
     eraftpb::ConfChangeType as RaftConfigChangeType, eraftpb::ConfState as RaftConfigState,
@@ -130,6 +133,22 @@ impl ActorContext for DriverContext {
     }
 }
 
+struct DefaultClock {
+    instant: AtomicI64,
+}
+
+impl DefaultClock {
+    fn set_instant(&self, instant: i64) {
+        self.instant.store(instant, Ordering::Relaxed);
+    }
+}
+
+impl Clock for DefaultClock {
+    fn get_current_time_ms(&self) -> i64 {
+        self.instant.load(Ordering::Relaxed)
+    }
+}
+
 #[derive(PartialEq, Eq)]
 enum DriverState {
     Created,
@@ -178,6 +197,7 @@ pub struct Driver<R: Raft, S: Store, P: SnapshotProcessor, A: Actor, C: Communic
     raft_progress: RaftProgress,
     communication: C,
     is_ephemeral: bool,
+    clock: Arc<DefaultClock>,
 }
 
 impl<
@@ -219,6 +239,9 @@ impl<
             raft_progress: RaftProgress::new(),
             communication,
             is_ephemeral: false,
+            clock: Arc::new(DefaultClock {
+                instant: AtomicI64::new(0),
+            }),
         }
     }
 
@@ -670,6 +693,7 @@ impl<
         let instant = self.instant;
         let leader = self.check_raft_leadership();
         self.mut_core().set_state(instant, leader);
+        self.clock.set_instant(instant as i64);
     }
 
     fn check_driver_state(&self, state: DriverState) -> Result<(), PalError> {
@@ -760,6 +784,7 @@ impl<
         self.communication.init(
             self.id,
             self.logger.new(o!("type" => "communication")),
+            Arc::clone(&self.clock) as _,
             communication_config,
         );
 
@@ -2001,7 +2026,7 @@ mod test {
         fn expect_init(mut self, replica_id: u64) -> CommunicationBuilder {
             self.mock_communication_module
                 .expect_init()
-                .with(eq(replica_id), always(), always())
+                .with(eq(replica_id), always(), always(), always())
                 .once()
                 .return_const(());
 

@@ -13,12 +13,14 @@
 // limitations under the License.
 
 use alloc::boxed::Box;
+use alloc::sync::Arc;
 use alloc::vec::Vec;
 use anyhow::Result;
 use oak_crypto::encryptor::Encryptor;
 use oak_proto_rust::oak::crypto::v1::SessionKeys;
 use oak_proto_rust::oak::session::v1::{PlaintextMessage, SessionRequest, SessionResponse};
 use oak_session::attestation::AttestationType;
+use oak_session::clock::Clock;
 use oak_session::config::{EncryptorProvider, SessionConfig};
 use oak_session::encryptors::UnorderedChannelEncryptor;
 use oak_session::handshake::HandshakeType;
@@ -32,9 +34,9 @@ const UNORDERED_CHANNEL_ENCRYPTOR_WINDOW_SIZE: u32 = 3;
 pub trait OakSessionFactory {
     // Returns OakClientSession, responsible for initiating handshake between 2 raft
     // replicas using Noise protocol.
-    fn get_oak_client_session(&self) -> Result<Box<dyn OakClientSession>>;
+    fn get_oak_client_session(&self, clock: Arc<dyn Clock>) -> Result<Box<dyn OakClientSession>>;
     // Returns OakServerSession, recipient of the handshake message from the client.
-    fn get_oak_server_session(&self) -> Result<Box<dyn OakServerSession>>;
+    fn get_oak_server_session(&self, clock: Arc<dyn Clock>) -> Result<Box<dyn OakServerSession>>;
 }
 
 /// Session representing an end-to-end encrypted bidirectional streaming session
@@ -64,13 +66,13 @@ pub trait OakServerSession = OakSession<SessionRequest, SessionResponse>;
 pub struct DefaultOakSessionFactory {}
 
 impl OakSessionFactory for DefaultOakSessionFactory {
-    fn get_oak_client_session(&self) -> Result<Box<dyn OakClientSession>> {
-        let client_session = DefaultOakClientSession::create()?;
+    fn get_oak_client_session(&self, clock: Arc<dyn Clock>) -> Result<Box<dyn OakClientSession>> {
+        let client_session = DefaultOakClientSession::create(clock)?;
         Ok(Box::new(client_session))
     }
 
-    fn get_oak_server_session(&self) -> Result<Box<dyn OakServerSession>> {
-        let server_session = DefaultOakServerSession::create()?;
+    fn get_oak_server_session(&self, clock: Arc<dyn Clock>) -> Result<Box<dyn OakServerSession>> {
+        let server_session = DefaultOakServerSession::create(clock)?;
         Ok(Box::new(server_session))
     }
 }
@@ -96,7 +98,7 @@ pub struct DefaultOakClientSession {
 }
 
 impl DefaultOakClientSession {
-    pub fn create() -> Result<Self> {
+    pub fn create(_clock: Arc<dyn Clock>) -> Result<Self> {
         Ok(Self {
             inner: ClientSession::create(
                 SessionConfig::builder(AttestationType::Unattested, HandshakeType::NoiseNN)
@@ -138,7 +140,7 @@ pub struct DefaultOakServerSession {
 }
 
 impl DefaultOakServerSession {
-    pub fn create() -> Result<Self> {
+    pub fn create(_clock: Arc<dyn Clock>) -> Result<Self> {
         Ok(Self {
             inner: ServerSession::create(
                 SessionConfig::builder(AttestationType::Unattested, HandshakeType::NoiseNN)

@@ -14,8 +14,10 @@
 
 use crate::encryptor::{DefaultClientEncryptor, DefaultServerEncryptor, Encryptor};
 use crate::session::{OakClientSession, OakServerSession, OakSessionFactory};
+use alloc::sync::Arc;
 use alloc::{boxed::Box, format};
 use anyhow::{anyhow, Error, Result};
+use oak_session::clock::Clock;
 use slog::{info, warn, Logger};
 use tcp_proto::runtime::endpoint::{
     secure_channel_handshake::{
@@ -44,6 +46,7 @@ pub trait HandshakeSessionProvider {
         self_replica_id: u64,
         peer_replica_id: u64,
         role: Role,
+        clock: Arc<dyn Clock>,
         logger: Logger,
     ) -> Result<Box<dyn HandshakeSession>>;
 }
@@ -86,6 +89,7 @@ impl HandshakeSessionProvider for DefaultHandshakeSessionProvider {
         self_replica_id: u64,
         peer_replica_id: u64,
         role: Role,
+        clock: Arc<dyn Clock>,
         logger: Logger,
     ) -> Result<Box<dyn HandshakeSession>> {
         match role {
@@ -93,13 +97,13 @@ impl HandshakeSessionProvider for DefaultHandshakeSessionProvider {
                 logger,
                 self_replica_id,
                 peer_replica_id,
-                self.session_factory.get_oak_client_session()?,
+                self.session_factory.get_oak_client_session(clock)?,
             ))),
             Role::Recipient => Ok(Box::new(ServerHandshakeSession::new(
                 logger,
                 self_replica_id,
                 peer_replica_id,
-                self.session_factory.get_oak_server_session()?,
+                self.session_factory.get_oak_server_session(clock)?,
             ))),
         }
     }
@@ -453,7 +457,10 @@ mod test {
         HandshakeSessionProvider, Role, ServerHandshakeSession,
     };
     use crate::logger::log::create_logger;
-    use crate::mock::{MockOakClientSession, MockOakServerSession, MockOakSessionFactory};
+    use crate::mock::{
+        MockClock, MockOakClientSession, MockOakServerSession, MockOakSessionFactory,
+    };
+    use alloc::sync::Arc;
     use anyhow::{anyhow, Result};
     use core::mem;
     use oak_proto_rust::oak::session::v1::{
@@ -516,7 +523,7 @@ mod test {
         ) -> OakSessionFactoryBuilder {
             self.mock_oak_session_factory
                 .expect_get_oak_client_session()
-                .return_once(move || Ok(Box::new(mock_oak_session)));
+                .return_once(move |_| Ok(Box::new(mock_oak_session)));
             self
         }
 
@@ -526,7 +533,7 @@ mod test {
         ) -> OakSessionFactoryBuilder {
             self.mock_oak_session_factory
                 .expect_get_oak_server_session()
-                .return_once(move || Ok(Box::new(mock_oak_session)));
+                .return_once(move |_| Ok(Box::new(mock_oak_session)));
             self
         }
 
@@ -649,11 +656,13 @@ mod test {
             .take();
         let handshake_session_provider =
             DefaultHandshakeSessionProvider::new(Box::new(mock_oak_session_factory));
+        let clock = MockClock::new();
         let mut client_handshake_session = handshake_session_provider
             .get(
                 self_replica_id,
                 peer_replica_id,
                 Role::Initiator,
+                Arc::new(clock),
                 create_logger(),
             )
             .unwrap();
@@ -793,11 +802,13 @@ mod test {
             .take();
         let handshake_session_provider =
             DefaultHandshakeSessionProvider::new(Box::new(mock_oak_session_factory));
+        let clock = MockClock::new();
         let mut server_handshake_session = handshake_session_provider
             .get(
                 self_replica_id,
                 peer_replica_id,
                 Role::Recipient,
+                Arc::new(clock),
                 create_logger(),
             )
             .unwrap();

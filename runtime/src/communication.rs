@@ -22,10 +22,12 @@ use crate::{
     platform::PalError,
 };
 use alloc::format;
+use alloc::sync::Arc;
 use alloc::vec::Vec;
 use alloc::{boxed::Box, vec};
 use anyhow::anyhow;
 use hashbrown::HashMap;
+use oak_session::clock::Clock;
 use slog::{info, o, warn, Logger};
 use tcp_proto::runtime::endpoint::*;
 
@@ -46,7 +48,13 @@ pub trait CommunicationModule {
     /// Initializes the ReplicaCommunicationManager for the given replica id.
     ///
     /// The ReplicaCommunicationManager must be initialized before first use.
-    fn init(&mut self, replica_id: u64, logger: Logger, config: Option<CommunicationConfig>);
+    fn init(
+        &mut self,
+        replica_id: u64,
+        logger: Logger,
+        clock: Arc<dyn Clock>,
+        config: Option<CommunicationConfig>,
+    );
 
     /// Process an outgoing message to a replica.
     ///
@@ -106,6 +114,7 @@ pub struct DefaultCommunicationModule {
     replica_id: u64,
     handshake_session_provider: Box<dyn HandshakeSessionProvider>,
     config: CommunicationConfig,
+    clock: Option<Arc<dyn Clock>>,
 }
 
 impl DefaultCommunicationModule {
@@ -120,6 +129,7 @@ impl DefaultCommunicationModule {
                 handshake_retry_tick: 1,
                 handshake_initiated_tick_timeout: 10,
             },
+            clock: None,
         }
     }
 
@@ -132,12 +142,19 @@ impl DefaultCommunicationModule {
 }
 
 impl CommunicationModule for DefaultCommunicationModule {
-    fn init(&mut self, id: u64, logger: Logger, config: Option<CommunicationConfig>) {
+    fn init(
+        &mut self,
+        id: u64,
+        logger: Logger,
+        clock: Arc<dyn Clock>,
+        config: Option<CommunicationConfig>,
+    ) {
         self.replica_id = id;
         self.logger = logger;
         if config.is_some() {
             self.config = config.unwrap();
         }
+        self.clock = Some(clock);
     }
 
     fn process_out_message(&mut self, message: out_message::Msg) -> Result<(), PalError> {
@@ -174,6 +191,7 @@ impl CommunicationModule for DefaultCommunicationModule {
                     self.replica_id,
                     peer_replica_id,
                     Role::Initiator,
+                    Arc::clone(&self.clock.as_ref().unwrap()),
                     logger.new(o!("type" => "handshake")),
                 )
                 .map_err(|err| {
@@ -236,6 +254,7 @@ impl CommunicationModule for DefaultCommunicationModule {
                     self.replica_id,
                     peer_replica_id,
                     Role::Recipient,
+                    Arc::clone(&self.clock.as_ref().unwrap()),
                     logger.new(o!("type" => "handshake")),
                 )
                 .map_err(|err| {
@@ -614,11 +633,14 @@ mod test {
     use crate::communication::mem;
     use crate::handshake::Role;
     use crate::logger::log::create_logger;
-    use crate::mock::{MockEncryptor, MockHandshakeSession, MockHandshakeSessionProvider};
+    use crate::mock::{
+        MockClock, MockEncryptor, MockHandshakeSession, MockHandshakeSessionProvider,
+    };
     use crate::{
         communication::{CommunicationConfig, CommunicationModule, DefaultCommunicationModule},
         platform::PalError,
     };
+    use alloc::sync::Arc;
     use alloc::vec;
     use alloc::vec::Vec;
     use anyhow::anyhow;
@@ -755,9 +777,15 @@ mod test {
         ) -> HandshakeSessionProviderBuilder {
             self.mock_handshake_session_provider
                 .expect_get()
-                .with(eq(self_replica_id), eq(peer_replica_id), eq(role), always())
+                .with(
+                    eq(self_replica_id),
+                    eq(peer_replica_id),
+                    eq(role),
+                    always(),
+                    always(),
+                )
                 .once()
-                .return_once(move |_, _, _, _| Ok(Box::new(mock_handshake_session)));
+                .return_once(move |_, _, _, _, _| Ok(Box::new(mock_handshake_session)));
             self
         }
 
@@ -907,8 +935,8 @@ mod test {
                 create_deliver_system_message(self_replica_id, peer_replica_id_a)
             ))
         );
-
-        communication_module.init(self_replica_id, create_logger(), None);
+        let clock = MockClock::new();
+        communication_module.init(self_replica_id, create_logger(), Arc::new(clock), None);
 
         assert_eq!(
             Ok(()),
@@ -1083,8 +1111,8 @@ mod test {
                 create_deliver_system_message(peer_replica_id_a, self_replica_id)
             ))
         );
-
-        communication_module.init(self_replica_id, create_logger(), None);
+        let clock = MockClock::new();
+        communication_module.init(self_replica_id, create_logger(), Arc::new(clock), None);
 
         assert_eq!(
             Ok(None),
@@ -1259,9 +1287,10 @@ mod test {
             DefaultCommunicationModule::new(Box::new(mock_handshake_session_provider_a));
         let mut communication_module_b =
             DefaultCommunicationModule::new(Box::new(mock_handshake_session_provider_b));
-
-        communication_module_a.init(peer_replica_id_a, create_logger(), None);
-        communication_module_b.init(peer_replica_id_b, create_logger(), None);
+        let clock_a = MockClock::new();
+        let clock_b = MockClock::new();
+        communication_module_a.init(peer_replica_id_a, create_logger(), Arc::new(clock_a), None);
+        communication_module_b.init(peer_replica_id_b, create_logger(), Arc::new(clock_b), None);
 
         // Handshake initiated from a to b.
         assert_eq!(
@@ -1462,9 +1491,10 @@ mod test {
             DefaultCommunicationModule::new(Box::new(mock_handshake_session_provider_a));
         let mut communication_module_b =
             DefaultCommunicationModule::new(Box::new(mock_handshake_session_provider_b));
-
-        communication_module_a.init(peer_replica_id_a, create_logger(), None);
-        communication_module_b.init(peer_replica_id_b, create_logger(), None);
+        let clock_a = MockClock::new();
+        let clock_b = MockClock::new();
+        communication_module_a.init(peer_replica_id_a, create_logger(), Arc::new(clock_a), None);
+        communication_module_b.init(peer_replica_id_b, create_logger(), Arc::new(clock_b), None);
 
         // First round trip of handshake messages.
         assert_eq!(
@@ -1601,9 +1631,10 @@ mod test {
             create_deliver_system_message(peer_replica_id_a, peer_replica_id_b);
         let deliver_system_message_b_to_a =
             create_deliver_system_message(peer_replica_id_b, peer_replica_id_a);
-
-        communication_module_a.init(peer_replica_id_a, create_logger(), None);
-        communication_module_b.init(peer_replica_id_b, create_logger(), None);
+        let clock_a = MockClock::new();
+        let clock_b = MockClock::new();
+        communication_module_a.init(peer_replica_id_a, create_logger(), Arc::new(clock_a), None);
+        communication_module_b.init(peer_replica_id_b, create_logger(), Arc::new(clock_b), None);
 
         assert_eq!(
             Ok(()),
@@ -1709,8 +1740,8 @@ mod test {
             .take();
         let mut communication_module_a =
             DefaultCommunicationModule::new(Box::new(mock_handshake_session_provider_a));
-
-        communication_module_a.init(peer_replica_id_a, create_logger(), None);
+        let clock = MockClock::new();
+        communication_module_a.init(peer_replica_id_a, create_logger(), Arc::new(clock), None);
 
         // Handshake initiated from a to b.
         assert_eq!(
@@ -1875,8 +1906,8 @@ mod test {
 
         let mut communication_module =
             DefaultCommunicationModule::new(Box::new(mock_handshake_session_provider));
-
-        communication_module.init(peer_replica_id_a, create_logger(), config);
+        let clock = MockClock::new();
+        communication_module.init(peer_replica_id_a, create_logger(), Arc::new(clock), config);
 
         // Initiate handshake.
         assert_eq!(
@@ -2068,8 +2099,8 @@ mod test {
 
         let mut communication_module =
             DefaultCommunicationModule::new(Box::new(mock_handshake_session_provider));
-
-        communication_module.init(peer_replica_id_a, create_logger(), config);
+        let clock = MockClock::new();
+        communication_module.init(peer_replica_id_a, create_logger(), Arc::new(clock), config);
 
         // Initiate handshake.
         assert_eq!(
