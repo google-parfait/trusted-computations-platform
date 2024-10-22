@@ -27,6 +27,7 @@ use alloc::vec::Vec;
 use alloc::{boxed::Box, vec};
 use anyhow::anyhow;
 use hashbrown::HashMap;
+use oak_proto_rust::oak::attestation::v1::ReferenceValues;
 use oak_session::clock::Clock;
 use slog::{info, o, warn, Logger};
 use tcp_proto::runtime::endpoint::*;
@@ -52,6 +53,7 @@ pub trait CommunicationModule {
         &mut self,
         replica_id: u64,
         logger: Logger,
+        reference_values: ReferenceValues,
         clock: Arc<dyn Clock>,
         config: Option<CommunicationConfig>,
     );
@@ -114,6 +116,7 @@ pub struct DefaultCommunicationModule {
     replica_id: u64,
     handshake_session_provider: Box<dyn HandshakeSessionProvider>,
     config: CommunicationConfig,
+    reference_values: Option<ReferenceValues>,
     clock: Option<Arc<dyn Clock>>,
 }
 
@@ -129,6 +132,7 @@ impl DefaultCommunicationModule {
                 handshake_retry_tick: 1,
                 handshake_initiated_tick_timeout: 10,
             },
+            reference_values: None,
             clock: None,
         }
     }
@@ -146,6 +150,7 @@ impl CommunicationModule for DefaultCommunicationModule {
         &mut self,
         id: u64,
         logger: Logger,
+        reference_values: ReferenceValues,
         clock: Arc<dyn Clock>,
         config: Option<CommunicationConfig>,
     ) {
@@ -154,6 +159,7 @@ impl CommunicationModule for DefaultCommunicationModule {
         if config.is_some() {
             self.config = config.unwrap();
         }
+        self.reference_values = Some(reference_values);
         self.clock = Some(clock);
     }
 
@@ -191,6 +197,7 @@ impl CommunicationModule for DefaultCommunicationModule {
                     self.replica_id,
                     peer_replica_id,
                     Role::Initiator,
+                    self.reference_values.clone().unwrap(),
                     Arc::clone(&self.clock.as_ref().unwrap()),
                     logger.new(o!("type" => "handshake")),
                 )
@@ -254,6 +261,7 @@ impl CommunicationModule for DefaultCommunicationModule {
                     self.replica_id,
                     peer_replica_id,
                     Role::Recipient,
+                    self.reference_values.clone().unwrap(),
                     Arc::clone(&self.clock.as_ref().unwrap()),
                     logger.new(o!("type" => "handshake")),
                 )
@@ -644,6 +652,7 @@ mod test {
     use alloc::vec;
     use alloc::vec::Vec;
     use anyhow::anyhow;
+    use oak_proto_rust::oak::attestation::v1::ReferenceValues;
     use prost::bytes::Bytes;
     use tcp_proto::runtime::endpoint::*;
 
@@ -783,9 +792,10 @@ mod test {
                     eq(role),
                     always(),
                     always(),
+                    always(),
                 )
                 .once()
-                .return_once(move |_, _, _, _, _| Ok(Box::new(mock_handshake_session)));
+                .return_once(move |_, _, _, _, _, _| Ok(Box::new(mock_handshake_session)));
             self
         }
 
@@ -936,7 +946,13 @@ mod test {
             ))
         );
         let clock = MockClock::new();
-        communication_module.init(self_replica_id, create_logger(), Arc::new(clock), None);
+        communication_module.init(
+            self_replica_id,
+            create_logger(),
+            ReferenceValues::default(),
+            Arc::new(clock),
+            None,
+        );
 
         assert_eq!(
             Ok(()),
@@ -1112,7 +1128,13 @@ mod test {
             ))
         );
         let clock = MockClock::new();
-        communication_module.init(self_replica_id, create_logger(), Arc::new(clock), None);
+        communication_module.init(
+            self_replica_id,
+            create_logger(),
+            ReferenceValues::default(),
+            Arc::new(clock),
+            None,
+        );
 
         assert_eq!(
             Ok(None),
@@ -1289,8 +1311,20 @@ mod test {
             DefaultCommunicationModule::new(Box::new(mock_handshake_session_provider_b));
         let clock_a = MockClock::new();
         let clock_b = MockClock::new();
-        communication_module_a.init(peer_replica_id_a, create_logger(), Arc::new(clock_a), None);
-        communication_module_b.init(peer_replica_id_b, create_logger(), Arc::new(clock_b), None);
+        communication_module_a.init(
+            peer_replica_id_a,
+            create_logger(),
+            ReferenceValues::default(),
+            Arc::new(clock_a),
+            None,
+        );
+        communication_module_b.init(
+            peer_replica_id_b,
+            create_logger(),
+            ReferenceValues::default(),
+            Arc::new(clock_b),
+            None,
+        );
 
         // Handshake initiated from a to b.
         assert_eq!(
@@ -1493,8 +1527,20 @@ mod test {
             DefaultCommunicationModule::new(Box::new(mock_handshake_session_provider_b));
         let clock_a = MockClock::new();
         let clock_b = MockClock::new();
-        communication_module_a.init(peer_replica_id_a, create_logger(), Arc::new(clock_a), None);
-        communication_module_b.init(peer_replica_id_b, create_logger(), Arc::new(clock_b), None);
+        communication_module_a.init(
+            peer_replica_id_a,
+            create_logger(),
+            ReferenceValues::default(),
+            Arc::new(clock_a),
+            None,
+        );
+        communication_module_b.init(
+            peer_replica_id_b,
+            create_logger(),
+            ReferenceValues::default(),
+            Arc::new(clock_b),
+            None,
+        );
 
         // First round trip of handshake messages.
         assert_eq!(
@@ -1633,8 +1679,20 @@ mod test {
             create_deliver_system_message(peer_replica_id_b, peer_replica_id_a);
         let clock_a = MockClock::new();
         let clock_b = MockClock::new();
-        communication_module_a.init(peer_replica_id_a, create_logger(), Arc::new(clock_a), None);
-        communication_module_b.init(peer_replica_id_b, create_logger(), Arc::new(clock_b), None);
+        communication_module_a.init(
+            peer_replica_id_a,
+            create_logger(),
+            ReferenceValues::default(),
+            Arc::new(clock_a),
+            None,
+        );
+        communication_module_b.init(
+            peer_replica_id_b,
+            create_logger(),
+            ReferenceValues::default(),
+            Arc::new(clock_b),
+            None,
+        );
 
         assert_eq!(
             Ok(()),
@@ -1741,7 +1799,13 @@ mod test {
         let mut communication_module_a =
             DefaultCommunicationModule::new(Box::new(mock_handshake_session_provider_a));
         let clock = MockClock::new();
-        communication_module_a.init(peer_replica_id_a, create_logger(), Arc::new(clock), None);
+        communication_module_a.init(
+            peer_replica_id_a,
+            create_logger(),
+            ReferenceValues::default(),
+            Arc::new(clock),
+            None,
+        );
 
         // Handshake initiated from a to b.
         assert_eq!(
@@ -1907,7 +1971,13 @@ mod test {
         let mut communication_module =
             DefaultCommunicationModule::new(Box::new(mock_handshake_session_provider));
         let clock = MockClock::new();
-        communication_module.init(peer_replica_id_a, create_logger(), Arc::new(clock), config);
+        communication_module.init(
+            peer_replica_id_a,
+            create_logger(),
+            ReferenceValues::default(),
+            Arc::new(clock),
+            config,
+        );
 
         // Initiate handshake.
         assert_eq!(
@@ -2100,7 +2170,13 @@ mod test {
         let mut communication_module =
             DefaultCommunicationModule::new(Box::new(mock_handshake_session_provider));
         let clock = MockClock::new();
-        communication_module.init(peer_replica_id_a, create_logger(), Arc::new(clock), config);
+        communication_module.init(
+            peer_replica_id_a,
+            create_logger(),
+            ReferenceValues::default(),
+            Arc::new(clock),
+            config,
+        );
 
         // Initiate handshake.
         assert_eq!(

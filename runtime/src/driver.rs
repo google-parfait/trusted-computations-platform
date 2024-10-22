@@ -784,6 +784,7 @@ impl<
         self.communication.init(
             self.id,
             self.logger.new(o!("type" => "communication")),
+            self.actor.get_reference_values(),
             Arc::clone(&self.clock) as _,
             communication_config,
         );
@@ -1348,6 +1349,7 @@ mod test {
     use super::*;
     use crate::mock::{MockActor, MockCommunicationModule, MockHost, MockRaft, MockStore};
     use crate::model::ActorError;
+    use oak_proto_rust::oak::attestation::v1::ReferenceValues;
     use raft::eraftpb::{
         ConfChange as RaftConfigChange, EntryType as RaftEntryType, MessageType as RaftMessageType,
     };
@@ -2023,10 +2025,20 @@ mod test {
             }
         }
 
-        fn expect_init(mut self, replica_id: u64) -> CommunicationBuilder {
+        fn expect_init(
+            mut self,
+            replica_id: u64,
+            reference_values: ReferenceValues,
+        ) -> CommunicationBuilder {
             self.mock_communication_module
                 .expect_init()
-                .with(eq(replica_id), always(), always(), always())
+                .with(
+                    eq(replica_id),
+                    always(),
+                    eq(reference_values),
+                    always(),
+                    always(),
+                )
                 .once()
                 .return_const(());
 
@@ -2114,6 +2126,18 @@ mod test {
 
         fn expect_on_shutdown(&mut self) -> &mut DriverBuilder {
             self.mock_actor.expect_on_shutdown().once().return_const(());
+
+            self
+        }
+
+        fn expect_get_reference_values(
+            &mut self,
+            reference_values: ReferenceValues,
+        ) -> &mut DriverBuilder {
+            self.mock_actor
+                .expect_get_reference_values()
+                .once()
+                .return_once(|| reference_values);
 
             self
         }
@@ -2236,12 +2260,13 @@ mod test {
             .expect_receiver_try_complete(None);
 
         let communication_builder = CommunicationBuilder::new()
-            .expect_init(node_id)
+            .expect_init(node_id, ReferenceValues::default())
             .expect_make_tick()
             .expect_take_out_messages(Vec::new());
 
         let mut driver = DriverBuilder::new()
             .expect_on_init(|_| Ok(()))
+            .expect_get_reference_values(ReferenceValues::default())
             .expect_on_save_snapshot(Ok(init_snapshot.clone()))
             .expect_on_process_command(None, Ok(CommandOutcome::with_none()))
             .take(raft_builder, snapshot_builder, communication_builder);
@@ -2286,13 +2311,14 @@ mod test {
             .expect_receiver_try_complete(None);
 
         let communication_builder = CommunicationBuilder::new()
-            .expect_init(node_id)
+            .expect_init(node_id, ReferenceValues::default())
             .expect_make_tick()
             .expect_take_out_messages(Vec::new())
             .expect_take_out_messages(Vec::new());
 
         let mut driver = DriverBuilder::new()
             .expect_on_init(|_| Ok(()))
+            .expect_get_reference_values(ReferenceValues::default())
             .expect_on_save_snapshot(Ok(init_snapshot.clone()))
             .expect_on_process_command(None, Ok(CommandOutcome::with_none()))
             .expect_on_shutdown()
@@ -2366,7 +2392,7 @@ mod test {
             .expect_receiver_try_complete(None);
 
         let communication_builder = CommunicationBuilder::new()
-            .expect_init(node_id)
+            .expect_init(node_id, ReferenceValues::default())
             .expect_make_tick()
             .expect_make_tick()
             .expect_make_tick()
@@ -2376,6 +2402,7 @@ mod test {
 
         let mut driver = DriverBuilder::new()
             .expect_on_init(|_| Ok(()))
+            .expect_get_reference_values(ReferenceValues::default())
             .expect_on_save_snapshot(Ok(init_snapshot.clone()))
             .expect_on_process_command(None, Ok(CommandOutcome::with_none()))
             .expect_on_process_command(
@@ -2468,7 +2495,7 @@ mod test {
         let exp_self_config = self_config.clone();
 
         let communication_builder = CommunicationBuilder::new()
-            .expect_init(node_id)
+            .expect_init(node_id, ReferenceValues::default())
             .expect_make_tick()
             .expect_take_out_messages(Vec::new());
 
@@ -2481,6 +2508,7 @@ mod test {
 
                 Ok(())
             })
+            .expect_get_reference_values(ReferenceValues::default())
             .expect_on_save_snapshot(Ok(init_snapshot.clone()))
             .expect_on_process_command(None, Ok(CommandOutcome::with_none()))
             .take(raft_builder, snapshot_builder, communication_builder);
@@ -2535,7 +2563,7 @@ mod test {
         let raft_builder = RaftBuilder::new().expect_leader(false);
         let snapshot_builder = SnapshotBuilder::new();
         let communication_builder = CommunicationBuilder::new()
-            .expect_init(node_id)
+            .expect_init(node_id, ReferenceValues::default())
             .expect_make_tick()
             .expect_make_tick()
             .expect_take_out_messages(Vec::new())
@@ -2553,6 +2581,7 @@ mod test {
 
                 Ok(())
             })
+            .expect_get_reference_values(ReferenceValues::default())
             .expect_on_process_command(None, Ok(CommandOutcome::with_none()))
             .expect_on_process_command(
                 Some(actor_command_1.clone()),
@@ -2644,7 +2673,7 @@ mod test {
             .expect_receiver_try_complete(None);
 
         let communication_builder = CommunicationBuilder::new()
-            .expect_init(node_id)
+            .expect_init(node_id, ReferenceValues::default())
             .expect_make_tick()
             .expect_make_tick()
             .expect_take_out_messages(Vec::new())
@@ -2652,6 +2681,7 @@ mod test {
 
         let mut driver = DriverBuilder::new()
             .expect_on_init(|_| Ok(()))
+            .expect_get_reference_values(ReferenceValues::default())
             .expect_on_save_snapshot(Ok(init_snapshot.clone()))
             .expect_on_process_command(None, Ok(CommandOutcome::with_none()))
             .take(raft_builder, snapshot_builder, communication_builder);
@@ -2719,7 +2749,7 @@ mod test {
             .expect_sender_next_request(None);
 
         let communication_builder = CommunicationBuilder::new()
-            .expect_init(node_id)
+            .expect_init(node_id, ReferenceValues::default())
             .expect_make_tick()
             .expect_take_out_messages(Vec::new())
             .expect_process_cluster_change(vec![node_id])
@@ -2728,6 +2758,7 @@ mod test {
 
         let mut driver = DriverBuilder::new()
             .expect_on_init(|_| Ok(()))
+            .expect_get_reference_values(ReferenceValues::default())
             .expect_on_save_snapshot(Ok(init_snapshot.clone()))
             .expect_on_process_command(None, Ok(CommandOutcome::with_none()))
             .take(raft_builder, snapshot_builder, communication_builder);
@@ -2844,7 +2875,7 @@ mod test {
             .expect_receiver_try_complete(None);
 
         let communication_builder = CommunicationBuilder::new()
-            .expect_init(node_id)
+            .expect_init(node_id, ReferenceValues::default())
             .expect_make_tick()
             .expect_take_out_messages(Vec::new())
             .expect_process_out_message(create_deliver_system_message_response(&message_a), Ok(()))
@@ -2858,6 +2889,7 @@ mod test {
 
         let mut driver = DriverBuilder::new()
             .expect_on_init(|_| Ok(()))
+            .expect_get_reference_values(ReferenceValues::default())
             .expect_on_save_snapshot(Ok(init_snapshot.clone()))
             .expect_on_load_snapshot(snapshot.data.into(), Ok(()))
             .expect_on_process_command(None, Ok(CommandOutcome::with_none()))
@@ -2927,7 +2959,7 @@ mod test {
             .expect_receiver_try_complete(None);
 
         let communication_builder = CommunicationBuilder::new()
-            .expect_init(node_id)
+            .expect_init(node_id, ReferenceValues::default())
             .expect_make_tick()
             .expect_make_tick()
             .expect_take_out_messages(Vec::new())
@@ -2935,6 +2967,7 @@ mod test {
 
         let mut driver = DriverBuilder::new()
             .expect_on_init(|_| Ok(()))
+            .expect_get_reference_values(ReferenceValues::default())
             .expect_on_save_snapshot(Ok(init_snapshot.clone()))
             .expect_on_process_command(None, Ok(CommandOutcome::with_none()))
             .take(raft_builder, snapshot_builder, communication_builder);
@@ -2996,7 +3029,7 @@ mod test {
             .expect_receiver_try_complete(None);
 
         let communication_builder = CommunicationBuilder::new()
-            .expect_init(node_id)
+            .expect_init(node_id, ReferenceValues::default())
             .expect_make_tick()
             .expect_take_out_messages(Vec::new())
             .expect_process_in_message(
@@ -3020,6 +3053,7 @@ mod test {
 
         let mut driver = DriverBuilder::new()
             .expect_on_init(|_| Ok(()))
+            .expect_get_reference_values(ReferenceValues::default())
             .expect_on_save_snapshot(Ok(init_snapshot.clone()))
             .expect_on_process_command(None, Ok(CommandOutcome::with_none()))
             .take(raft_builder, snapshot_builder, communication_builder);
@@ -3135,7 +3169,7 @@ mod test {
             .expect_receiver_try_complete(None);
 
         let communication_builder = CommunicationBuilder::new()
-            .expect_init(node_id)
+            .expect_init(node_id, ReferenceValues::default())
             .expect_make_tick()
             .expect_make_tick()
             .expect_make_tick()
@@ -3145,6 +3179,7 @@ mod test {
 
         let mut driver = DriverBuilder::new()
             .expect_on_init(|_| Ok(()))
+            .expect_get_reference_values(ReferenceValues::default())
             .expect_on_save_snapshot(Ok(init_snapshot.clone()))
             .expect_on_process_command(None, Ok(CommandOutcome::with_none()))
             .expect_on_apply_event(
@@ -3250,7 +3285,7 @@ mod test {
             );
 
         let communication_builder = CommunicationBuilder::new()
-            .expect_init(node_id)
+            .expect_init(node_id, ReferenceValues::default())
             .expect_make_tick()
             .expect_take_out_messages(Vec::new())
             .expect_process_in_message(
@@ -3282,6 +3317,7 @@ mod test {
 
         let mut driver = DriverBuilder::new()
             .expect_on_init(|_| Ok(()))
+            .expect_get_reference_values(ReferenceValues::default())
             .expect_on_save_snapshot(Ok(init_snapshot.clone()))
             .expect_on_process_command(None, Ok(CommandOutcome::with_none()))
             .take(raft_builder, snapshot_builder, communication_builder);
@@ -3415,7 +3451,7 @@ mod test {
             .expect_sender_try_complete(None);
 
         let communication_builder = CommunicationBuilder::new()
-            .expect_init(node_id)
+            .expect_init(node_id, ReferenceValues::default())
             .expect_process_cluster_change(vec![node_id])
             .expect_process_out_message(
                 wrap_deliver_snapshot_request_out(deliver_snapshot_request.clone()),
@@ -3440,6 +3476,7 @@ mod test {
 
         let mut driver = DriverBuilder::new()
             .expect_on_init(|_| Ok(()))
+            .expect_get_reference_values(ReferenceValues::default())
             .expect_on_save_snapshot(Ok(init_snapshot.clone()))
             .expect_on_process_command(None, Ok(CommandOutcome::with_none()))
             .take(raft_builder, snapshot_builder, communication_builder);

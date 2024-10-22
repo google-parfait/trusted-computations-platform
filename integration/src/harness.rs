@@ -15,9 +15,16 @@
 #![allow(dead_code)]
 
 use alloc::{boxed::Box, vec::Vec};
+use anyhow::{Error, Result};
 use core::cell::RefCell;
 use core::mem;
 use hashbrown::HashMap;
+use oak_proto_rust::oak::attestation::v1::{
+    endorsements, Endorsements, Evidence, OakRestrictedKernelEndorsements, RootLayerEndorsements,
+};
+use oak_restricted_kernel_sdk::testing::{MockAttester, MockSigner};
+use oak_session::attestation::{Attester, Endorser};
+use oak_session::session_binding::{SessionBinder, SignatureBinder, SignatureBinderBuilder};
 use prost::bytes::Bytes;
 use slog::{info, Logger};
 use tcp_proto::runtime::endpoint::raft_config::SnapshotConfig;
@@ -28,7 +35,9 @@ use tcp_runtime::handshake::DefaultHandshakeSessionProvider;
 use tcp_runtime::logger::log::create_logger;
 use tcp_runtime::model::Actor;
 use tcp_runtime::platform::{Application, Host};
-use tcp_runtime::session::DefaultOakSessionFactory;
+use tcp_runtime::session::{
+    DefaultOakSessionFactory, OakAttesterFactory, OakEndorserFactory, OakSessionBinderFactory,
+};
 use tcp_runtime::snapshot::{
     DefaultSnapshotProcessor, DefaultSnapshotReceiver, DefaultSnapshotSender,
 };
@@ -248,6 +257,67 @@ impl<A: Actor> FakeCluster<A> {
     pub fn stop(&mut self) {}
 }
 
+pub struct FakeOakAttesterFactory {}
+
+impl OakAttesterFactory for FakeOakAttesterFactory {
+    fn get(&self) -> Result<Box<dyn Attester>> {
+        Ok(Box::new(MockAttester::create().unwrap()))
+    }
+}
+
+pub struct FakeEndorser {}
+
+impl Endorser for FakeEndorser {
+    fn endorse(&self, _evidence: Option<&Evidence>) -> anyhow::Result<Endorsements> {
+        Ok(Endorsements {
+            r#type: Some(endorsements::Type::OakRestrictedKernel(
+                OakRestrictedKernelEndorsements {
+                    root_layer: Some(RootLayerEndorsements::default()),
+                    ..Default::default()
+                },
+            )),
+            ..Default::default()
+        })
+    }
+}
+
+pub struct FakeEndorserFactory {}
+
+impl OakEndorserFactory for FakeEndorserFactory {
+    fn get(&self) -> Result<Box<dyn Endorser>> {
+        Ok(Box::new(FakeEndorser {}))
+    }
+}
+
+pub struct FakeOakSessionBinder {
+    signature_binder: SignatureBinder,
+}
+
+impl FakeOakSessionBinder {
+    pub fn create() -> Result<Self> {
+        let mock_signer = MockSigner::create().unwrap();
+        let signature_binder = SignatureBinderBuilder::default()
+            .signer(Box::new(mock_signer))
+            .build()
+            .map_err(Error::msg)?;
+        Ok(Self { signature_binder })
+    }
+}
+
+impl SessionBinder for FakeOakSessionBinder {
+    fn bind(&self, bound_data: &[u8]) -> Vec<u8> {
+        self.signature_binder.bind(bound_data)
+    }
+}
+
+pub struct FakeOakSessionBinderFactory {}
+
+impl OakSessionBinderFactory for FakeOakSessionBinderFactory {
+    fn get(&self) -> Result<Box<dyn SessionBinder>> {
+        Ok(Box::new(FakeOakSessionBinder::create()?))
+    }
+}
+
 pub struct FakePlatform<A: Actor> {
     id: u64,
     messages_in: Vec<InMessage>,
@@ -279,7 +349,11 @@ impl<A: Actor> FakePlatform<A> {
                 ),
                 actor,
                 DefaultCommunicationModule::new(Box::new(DefaultHandshakeSessionProvider::new(
-                    Box::new(DefaultOakSessionFactory {}),
+                    Box::new(DefaultOakSessionFactory::new(
+                        Box::new(FakeOakSessionBinderFactory {}),
+                        Box::new(FakeOakAttesterFactory {}),
+                        Box::new(FakeEndorserFactory {}),
+                    )),
                 ))),
             )),
             host: RefCell::new(FakeHost::new(app_config)),

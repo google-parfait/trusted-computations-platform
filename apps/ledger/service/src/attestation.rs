@@ -23,7 +23,7 @@ use federated_compute::proto::{
     value_matcher::Kind as ValueMatcherKind, value_matcher::NumberMatcher, ApplicationMatcher,
     StructMatcher, ValueMatcher,
 };
-use oak_attestation_verification::verifier::{verify, verify_dice_chain};
+use oak_attestation_verification::verifier::{verify, verify_dice_chain_and_extract_evidence};
 use oak_proto_rust::oak::attestation::v1::{Endorsements, Evidence, ReferenceValues};
 use p256::ecdsa::{signature::Verifier, Signature, VerifyingKey};
 use prost::Message;
@@ -178,7 +178,8 @@ pub fn verify_attestation<'a>(
                 cwt.protected.header.alg.unwrap()
             ));
         }
-        let extracted_evidence = verify_dice_chain(evidence).context("invalid DICE chain")?;
+        let extracted_evidence =
+            verify_dice_chain_and_extract_evidence(evidence).context("invalid DICE chain")?;
         let verifying_key =
             VerifyingKey::from_sec1_bytes(&extracted_evidence.signing_public_key)
                 .map_err(|err| anyhow::anyhow!("invalid application signing key: {:?}", err))?;
@@ -242,6 +243,7 @@ pub fn get_test_endorsements() -> Endorsements {
                 ..Default::default()
             },
         )),
+        ..Default::default()
     }
 }
 
@@ -504,6 +506,7 @@ mod tests {
             r#type: Some(endorsements::Type::OakRestrictedKernel(
                 OakRestrictedKernelEndorsements::default(),
             )),
+            ..Default::default()
         };
         let tag = "tag";
         let (app, key) = verify_attestation(&cwt, Some(&evidence), Some(&endorsements), tag)?;

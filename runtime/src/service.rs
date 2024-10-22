@@ -22,7 +22,10 @@ use crate::communication::DefaultCommunicationModule;
 use crate::handshake::DefaultHandshakeSessionProvider;
 use crate::model::Actor;
 use crate::platform::{Application, Host};
-use crate::session::DefaultOakSessionFactory;
+use crate::session::{
+    DefaultOakAttesterFactory, DefaultOakEndorserFactory, DefaultOakSessionBinderFactory,
+    DefaultOakSessionFactory,
+};
 use crate::snapshot::{DefaultSnapshotReceiver, DefaultSnapshotSender};
 use crate::{
     consensus::RaftSimple, driver::Driver, snapshot::DefaultSnapshotProcessor,
@@ -83,7 +86,11 @@ impl<A: Actor> ApplicationService<A> {
                 ),
                 actor,
                 DefaultCommunicationModule::new(Box::new(DefaultHandshakeSessionProvider::new(
-                    Box::new(DefaultOakSessionFactory {}),
+                    Box::new(DefaultOakSessionFactory::new(
+                        Box::new(DefaultOakSessionBinderFactory {}),
+                        Box::new(DefaultOakAttesterFactory {}),
+                        Box::new(DefaultOakEndorserFactory {}),
+                    )),
                 ))),
             ),
         }

@@ -17,6 +17,7 @@ use crate::session::{OakClientSession, OakServerSession, OakSessionFactory};
 use alloc::sync::Arc;
 use alloc::{boxed::Box, format};
 use anyhow::{anyhow, Error, Result};
+use oak_proto_rust::oak::attestation::v1::ReferenceValues;
 use oak_session::clock::Clock;
 use slog::{info, warn, Logger};
 use tcp_proto::runtime::endpoint::{
@@ -46,6 +47,7 @@ pub trait HandshakeSessionProvider {
         self_replica_id: u64,
         peer_replica_id: u64,
         role: Role,
+        reference_values: ReferenceValues,
         clock: Arc<dyn Clock>,
         logger: Logger,
     ) -> Result<Box<dyn HandshakeSession>>;
@@ -89,6 +91,7 @@ impl HandshakeSessionProvider for DefaultHandshakeSessionProvider {
         self_replica_id: u64,
         peer_replica_id: u64,
         role: Role,
+        reference_values: ReferenceValues,
         clock: Arc<dyn Clock>,
         logger: Logger,
     ) -> Result<Box<dyn HandshakeSession>> {
@@ -97,13 +100,15 @@ impl HandshakeSessionProvider for DefaultHandshakeSessionProvider {
                 logger,
                 self_replica_id,
                 peer_replica_id,
-                self.session_factory.get_oak_client_session(clock)?,
+                self.session_factory
+                    .get_oak_client_session(reference_values, clock)?,
             ))),
             Role::Recipient => Ok(Box::new(ServerHandshakeSession::new(
                 logger,
                 self_replica_id,
                 peer_replica_id,
-                self.session_factory.get_oak_server_session(clock)?,
+                self.session_factory
+                    .get_oak_server_session(reference_values, clock)?,
             ))),
         }
     }
@@ -247,27 +252,30 @@ impl HandshakeSession for ClientHandshakeSession {
                 Ok(session_request)
             }
             State::Initiated => {
+                let mut result = None;
+                let session_request = self
+                    .get_session_request()
+                    .inspect_err(|err| self.transition_to_failed(err))?;
+                if session_request.is_some() {
+                    info!(
+                            self.logger,
+                            "ClientHandshakeSession: Replica {} retrieving next SessionRequest for peer {}",
+                            self.self_replica_id,
+                            self.peer_replica_id
+                        );
+                    result = session_request;
+                }
+
                 if self.session.is_open() {
                     info!(
                         self.logger,
-                        "ClientHandshakeSession: Replica {} completed handshake with peer {}",
+                        "ClientHandshakeSession: {} completed handshake with peer {}",
                         self.self_replica_id,
                         self.peer_replica_id
                     );
                     self.state = State::Completed;
-                    Ok(None)
-                } else {
-                    info!(
-                        self.logger,
-                        "ClientHandshakeSession: Replica {} retrieving next SessionRequest for peer {}",
-                        self.self_replica_id,
-                        self.peer_replica_id
-                    );
-                    let session_request = self
-                        .get_session_request()
-                        .inspect_err(|err| self.transition_to_failed(err))?;
-                    Ok(session_request)
                 }
+                Ok(result)
             }
             State::Completed => {
                 info!(
@@ -416,6 +424,12 @@ impl HandshakeSession for ServerHandshakeSession {
                     .get_session_response()
                     .inspect_err(|err| self.transition_to_failed(err))?;
                 if self.session.is_open() {
+                    info!(
+                        self.logger,
+                        "ServerHandshakeSession: {} completed handshake with peer {}",
+                        self.self_replica_id,
+                        self.peer_replica_id,
+                    );
                     self.state = State::Completed;
                 }
                 Ok(session_response)
@@ -463,6 +477,7 @@ mod test {
     use alloc::sync::Arc;
     use anyhow::{anyhow, Result};
     use core::mem;
+    use oak_proto_rust::oak::attestation::v1::ReferenceValues;
     use oak_proto_rust::oak::session::v1::{
         SessionRequest as OakSessionRequest, SessionResponse as OakSessionResponse,
     };
@@ -523,7 +538,7 @@ mod test {
         ) -> OakSessionFactoryBuilder {
             self.mock_oak_session_factory
                 .expect_get_oak_client_session()
-                .return_once(move |_| Ok(Box::new(mock_oak_session)));
+                .return_once(move |_, _| Ok(Box::new(mock_oak_session)));
             self
         }
 
@@ -533,7 +548,7 @@ mod test {
         ) -> OakSessionFactoryBuilder {
             self.mock_oak_session_factory
                 .expect_get_oak_server_session()
-                .return_once(move |_| Ok(Box::new(mock_oak_session)));
+                .return_once(move |_, _| Ok(Box::new(mock_oak_session)));
             self
         }
 
@@ -650,6 +665,7 @@ mod test {
             .expect_get_outgoing_message(Ok(None))
             .expect_put_incoming_message(OakSessionResponse::default(), Ok(Some(())))
             .expect_is_open(true)
+            .expect_get_outgoing_message(Ok(None))
             .take();
         let mock_oak_session_factory = OakSessionFactoryBuilder::new()
             .expect_get_oak_client_session(mock_oak_client_session)
@@ -662,6 +678,7 @@ mod test {
                 self_replica_id,
                 peer_replica_id,
                 Role::Initiator,
+                ReferenceValues::default(),
                 Arc::new(clock),
                 create_logger(),
             )
@@ -808,6 +825,7 @@ mod test {
                 self_replica_id,
                 peer_replica_id,
                 Role::Recipient,
+                ReferenceValues::default(),
                 Arc::new(clock),
                 create_logger(),
             )

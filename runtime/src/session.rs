@@ -13,30 +13,47 @@
 // limitations under the License.
 
 use alloc::boxed::Box;
+use alloc::string::String;
 use alloc::sync::Arc;
 use alloc::vec::Vec;
 use anyhow::Result;
 use oak_crypto::encryptor::Encryptor;
+use oak_proto_rust::oak::attestation::v1::ReferenceValues;
 use oak_proto_rust::oak::crypto::v1::SessionKeys;
 use oak_proto_rust::oak::session::v1::{PlaintextMessage, SessionRequest, SessionResponse};
-use oak_session::attestation::AttestationType;
+use oak_restricted_kernel_sdk::{
+    attestation::{InstanceAttester, InstanceEndorser},
+    crypto::InstanceSessionBinder,
+};
+use oak_session::attestation::{AttestationType, Attester, Endorser};
 use oak_session::clock::Clock;
 use oak_session::config::{EncryptorProvider, SessionConfig};
+use oak_session::dice_attestation::DiceAttestationVerifier;
 use oak_session::encryptors::UnorderedChannelEncryptor;
 use oak_session::handshake::HandshakeType;
 use oak_session::session::{ClientSession, ServerSession, Session};
+use oak_session::session_binding::SessionBinder;
 use oak_session::ProtocolEngine;
 
 const UNORDERED_CHANNEL_ENCRYPTOR_WINDOW_SIZE: u32 = 3;
+const TCP_ATTESTER_ID: &str = "tcp_attester_id";
 
 // Factory class for creating instances of `OakClientSession` and `OakServerSession`
 // traits.
 pub trait OakSessionFactory {
     // Returns OakClientSession, responsible for initiating handshake between 2 raft
     // replicas using Noise protocol.
-    fn get_oak_client_session(&self, clock: Arc<dyn Clock>) -> Result<Box<dyn OakClientSession>>;
+    fn get_oak_client_session(
+        &self,
+        reference_values: ReferenceValues,
+        clock: Arc<dyn Clock>,
+    ) -> Result<Box<dyn OakClientSession>>;
     // Returns OakServerSession, recipient of the handshake message from the client.
-    fn get_oak_server_session(&self, clock: Arc<dyn Clock>) -> Result<Box<dyn OakServerSession>>;
+    fn get_oak_server_session(
+        &self,
+        reference_values: ReferenceValues,
+        clock: Arc<dyn Clock>,
+    ) -> Result<Box<dyn OakServerSession>>;
 }
 
 /// Session representing an end-to-end encrypted bidirectional streaming session
@@ -62,17 +79,96 @@ pub trait OakSession<I, O> {
 pub trait OakClientSession = OakSession<SessionResponse, SessionRequest>;
 pub trait OakServerSession = OakSession<SessionRequest, SessionResponse>;
 
-// Default implementation of `OakSessionFactory`.
-pub struct DefaultOakSessionFactory {}
+// Factory class for creating instances of `SessionBinder` allows binding
+// session to arbitrary data.
+pub trait OakSessionBinderFactory {
+    fn get(&self) -> Result<Box<dyn SessionBinder>>;
+}
 
+// Factory class for creating instances of oak `Attester`.
+pub trait OakAttesterFactory {
+    fn get(&self) -> Result<Box<dyn Attester>>;
+}
+
+// Factory class for creating instances of oak `Endorser`.
+pub trait OakEndorserFactory {
+    fn get(&self) -> Result<Box<dyn Endorser>>;
+}
+
+// Default implementation of `OakSessionBinderFactory`.
+pub struct DefaultOakSessionBinderFactory {}
+
+impl OakSessionBinderFactory for DefaultOakSessionBinderFactory {
+    fn get(&self) -> Result<Box<dyn SessionBinder>> {
+        Ok(Box::new(InstanceSessionBinder::create()?))
+    }
+}
+
+// Default implementation of `OakAttesterFactory`.
+pub struct DefaultOakAttesterFactory {}
+
+impl OakAttesterFactory for DefaultOakAttesterFactory {
+    fn get(&self) -> Result<Box<dyn Attester>> {
+        Ok(Box::new(InstanceAttester::create()?))
+    }
+}
+
+// Default implementation of `OakEndorserFactory`.
+pub struct DefaultOakEndorserFactory {}
+
+impl OakEndorserFactory for DefaultOakEndorserFactory {
+    fn get(&self) -> Result<Box<dyn Endorser>> {
+        Ok(Box::new(InstanceEndorser {}))
+    }
+}
+// Default implementation of `OakSessionFactory`.
+pub struct DefaultOakSessionFactory {
+    session_binder_factory: Box<dyn OakSessionBinderFactory>,
+    attester_factory: Box<dyn OakAttesterFactory>,
+    endorser_factory: Box<dyn OakEndorserFactory>,
+}
+
+impl DefaultOakSessionFactory {
+    pub fn new(
+        session_binder_factory: Box<dyn OakSessionBinderFactory>,
+        attester_factory: Box<dyn OakAttesterFactory>,
+        endorser_factory: Box<dyn OakEndorserFactory>,
+    ) -> Self {
+        Self {
+            session_binder_factory,
+            attester_factory,
+            endorser_factory,
+        }
+    }
+}
 impl OakSessionFactory for DefaultOakSessionFactory {
-    fn get_oak_client_session(&self, clock: Arc<dyn Clock>) -> Result<Box<dyn OakClientSession>> {
-        let client_session = DefaultOakClientSession::create(clock)?;
+    fn get_oak_client_session(
+        &self,
+        reference_values: ReferenceValues,
+        clock: Arc<dyn Clock>,
+    ) -> Result<Box<dyn OakClientSession>> {
+        let client_session = DefaultOakClientSession::create(
+            self.attester_factory.get()?,
+            self.endorser_factory.get()?,
+            self.session_binder_factory.get()?,
+            reference_values,
+            clock,
+        )?;
         Ok(Box::new(client_session))
     }
 
-    fn get_oak_server_session(&self, clock: Arc<dyn Clock>) -> Result<Box<dyn OakServerSession>> {
-        let server_session = DefaultOakServerSession::create(clock)?;
+    fn get_oak_server_session(
+        &self,
+        reference_values: ReferenceValues,
+        clock: Arc<dyn Clock>,
+    ) -> Result<Box<dyn OakServerSession>> {
+        let server_session = DefaultOakServerSession::create(
+            self.attester_factory.get()?,
+            self.endorser_factory.get()?,
+            self.session_binder_factory.get()?,
+            reference_values,
+            clock,
+        )?;
         Ok(Box::new(server_session))
     }
 }
@@ -98,11 +194,24 @@ pub struct DefaultOakClientSession {
 }
 
 impl DefaultOakClientSession {
-    pub fn create(_clock: Arc<dyn Clock>) -> Result<Self> {
+    pub fn create(
+        attester: Box<dyn Attester>,
+        endorser: Box<dyn Endorser>,
+        session_binder: Box<dyn SessionBinder>,
+        reference_values: ReferenceValues,
+        clock: Arc<dyn Clock>,
+    ) -> Result<Self> {
         Ok(Self {
             inner: ClientSession::create(
-                SessionConfig::builder(AttestationType::Unattested, HandshakeType::NoiseNN)
+                SessionConfig::builder(AttestationType::Bidirectional, HandshakeType::NoiseNN)
+                    .add_self_attester(String::from(TCP_ATTESTER_ID), attester)
+                    .add_self_endorser(String::from(TCP_ATTESTER_ID), endorser)
+                    .add_peer_verifier(
+                        String::from(TCP_ATTESTER_ID),
+                        Box::new(DiceAttestationVerifier::create(reference_values, clock)),
+                    )
                     .set_encryption_provider(Box::new(DefaultEncryptorProvider))
+                    .add_session_binder(String::from(TCP_ATTESTER_ID), session_binder)
                     .build(),
             )?,
         })
@@ -140,11 +249,24 @@ pub struct DefaultOakServerSession {
 }
 
 impl DefaultOakServerSession {
-    pub fn create(_clock: Arc<dyn Clock>) -> Result<Self> {
+    pub fn create(
+        attester: Box<dyn Attester>,
+        endorser: Box<dyn Endorser>,
+        session_binder: Box<dyn SessionBinder>,
+        reference_values: ReferenceValues,
+        clock: Arc<dyn Clock>,
+    ) -> Result<Self> {
         Ok(Self {
             inner: ServerSession::create(
-                SessionConfig::builder(AttestationType::Unattested, HandshakeType::NoiseNN)
+                SessionConfig::builder(AttestationType::Bidirectional, HandshakeType::NoiseNN)
+                    .add_self_attester(String::from(TCP_ATTESTER_ID), attester)
+                    .add_self_endorser(String::from(TCP_ATTESTER_ID), endorser)
+                    .add_peer_verifier(
+                        String::from(TCP_ATTESTER_ID),
+                        Box::new(DiceAttestationVerifier::create(reference_values, clock)),
+                    )
                     .set_encryption_provider(Box::new(DefaultEncryptorProvider))
+                    .add_session_binder(String::from(TCP_ATTESTER_ID), session_binder)
                     .build(),
             )?,
         })

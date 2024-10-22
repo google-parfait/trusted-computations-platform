@@ -252,7 +252,7 @@ mock! {
     }
 
     impl CommunicationModule for CommunicationModule {
-        fn init(&mut self, replica_id: u64, logger: Logger, clock: Arc<dyn Clock>, config: Option<CommunicationConfig>);
+        fn init(&mut self, replica_id: u64, logger: Logger, reference_values: ReferenceValues, clock: Arc<dyn Clock>, config: Option<CommunicationConfig>);
 
         fn process_out_message(&mut self, message: out_message::Msg) -> Result<(), PalError>;
 
@@ -279,6 +279,7 @@ mock! {
             self_replica_id: u64,
             peer_replica_id: u64,
             role: Role,
+            reference_values: ReferenceValues,
             clock: Arc<dyn Clock>,
             logger: Logger,
         ) -> anyhow::Result<Box<dyn HandshakeSession>>;
@@ -316,9 +317,9 @@ mock! {
     }
 
     impl OakSessionFactory for OakSessionFactory {
-        fn get_oak_client_session(&self, clock: Arc<dyn Clock>,) -> anyhow::Result<Box<dyn OakClientSession>>;
+        fn get_oak_client_session(&self, reference_values: ReferenceValues, clock: Arc<dyn Clock>,) -> anyhow::Result<Box<dyn OakClientSession>>;
 
-        fn get_oak_server_session(&self, clock: Arc<dyn Clock>,) -> anyhow::Result<Box<dyn OakServerSession>>;
+        fn get_oak_server_session(&self, reference_values: ReferenceValues, clock: Arc<dyn Clock>,) -> anyhow::Result<Box<dyn OakServerSession>>;
     }
 }
 

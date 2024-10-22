@@ -35,7 +35,6 @@ mod test {
     };
     use oak_crypto::signer::Signer;
     use oak_proto_rust::oak::attestation::v1::Evidence;
-    use oak_proto_rust::oak::crypto::v1::Signature;
     use oak_restricted_kernel_sdk::testing::{MockAttester, MockSigner};
     use sha2::{Digest, Sha256};
 
