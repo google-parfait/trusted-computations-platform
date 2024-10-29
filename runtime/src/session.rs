@@ -203,7 +203,9 @@ impl DefaultOakClientSession {
     ) -> Result<Self> {
         Ok(Self {
             inner: ClientSession::create(
-                SessionConfig::builder(AttestationType::Bidirectional, HandshakeType::NoiseNN)
+                // TODO: Switch to `AttestationType::Bidirectional` and add session_binder
+                // when InstanceEndorser is fully implemented on Oak side.
+                SessionConfig::builder(AttestationType::Unattested, HandshakeType::NoiseNN)
                     .add_self_attester(String::from(TCP_ATTESTER_ID), attester)
                     .add_self_endorser(String::from(TCP_ATTESTER_ID), endorser)
                     .add_peer_verifier(
@@ -211,7 +213,7 @@ impl DefaultOakClientSession {
                         Box::new(DiceAttestationVerifier::create(reference_values, clock)),
                     )
                     .set_encryption_provider(Box::new(DefaultEncryptorProvider))
-                    .add_session_binder(String::from(TCP_ATTESTER_ID), session_binder)
+                    //.add_session_binder(String::from(TCP_ATTESTER_ID), session_binder)
                     .build(),
             )?,
         })
@@ -258,7 +260,9 @@ impl DefaultOakServerSession {
     ) -> Result<Self> {
         Ok(Self {
             inner: ServerSession::create(
-                SessionConfig::builder(AttestationType::Bidirectional, HandshakeType::NoiseNN)
+                // TODO: Switch to `AttestationType::Bidirectional` and add session_binder
+                // when InstanceEndorser is fully implemented on Oak side.
+                SessionConfig::builder(AttestationType::Unattested, HandshakeType::NoiseNN)
                     .add_self_attester(String::from(TCP_ATTESTER_ID), attester)
                     .add_self_endorser(String::from(TCP_ATTESTER_ID), endorser)
                     .add_peer_verifier(
@@ -266,7 +270,7 @@ impl DefaultOakServerSession {
                         Box::new(DiceAttestationVerifier::create(reference_values, clock)),
                     )
                     .set_encryption_provider(Box::new(DefaultEncryptorProvider))
-                    .add_session_binder(String::from(TCP_ATTESTER_ID), session_binder)
+                    //.add_session_binder(String::from(TCP_ATTESTER_ID), session_binder)
                     .build(),
             )?,
         })
