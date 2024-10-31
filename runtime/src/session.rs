@@ -18,13 +18,10 @@ use alloc::sync::Arc;
 use alloc::vec::Vec;
 use anyhow::Result;
 use oak_crypto::encryptor::Encryptor;
-use oak_proto_rust::oak::attestation::v1::ReferenceValues;
+use oak_proto_rust::oak::attestation::v1::{Endorsements, Evidence, ReferenceValues};
 use oak_proto_rust::oak::crypto::v1::SessionKeys;
 use oak_proto_rust::oak::session::v1::{PlaintextMessage, SessionRequest, SessionResponse};
-use oak_restricted_kernel_sdk::{
-    attestation::{InstanceAttester, InstanceEndorser},
-    crypto::InstanceSessionBinder,
-};
+use oak_restricted_kernel_sdk::{attestation::InstanceAttester, crypto::InstanceSessionBinder};
 use oak_session::attestation::{AttestationType, Attester, Endorser};
 use oak_session::clock::Clock;
 use oak_session::config::{EncryptorProvider, SessionConfig};
@@ -41,19 +38,20 @@ const TCP_ATTESTER_ID: &str = "tcp_attester_id";
 // Factory class for creating instances of `OakClientSession` and `OakServerSession`
 // traits.
 pub trait OakSessionFactory {
+    // Initialize the OakSessionFactory.
+    fn init(
+        &mut self,
+        clock: Arc<dyn Clock>,
+        reference_values: ReferenceValues,
+        endorsements: Endorsements,
+    );
+
     // Returns OakClientSession, responsible for initiating handshake between 2 raft
     // replicas using Noise protocol.
-    fn get_oak_client_session(
-        &self,
-        reference_values: ReferenceValues,
-        clock: Arc<dyn Clock>,
-    ) -> Result<Box<dyn OakClientSession>>;
+    fn get_oak_client_session(&self) -> Result<Box<dyn OakClientSession>>;
+
     // Returns OakServerSession, recipient of the handshake message from the client.
-    fn get_oak_server_session(
-        &self,
-        reference_values: ReferenceValues,
-        clock: Arc<dyn Clock>,
-    ) -> Result<Box<dyn OakServerSession>>;
+    fn get_oak_server_session(&self) -> Result<Box<dyn OakServerSession>>;
 }
 
 /// Session representing an end-to-end encrypted bidirectional streaming session
@@ -90,11 +88,6 @@ pub trait OakAttesterFactory {
     fn get(&self) -> Result<Box<dyn Attester>>;
 }
 
-// Factory class for creating instances of oak `Endorser`.
-pub trait OakEndorserFactory {
-    fn get(&self) -> Result<Box<dyn Endorser>>;
-}
-
 // Default implementation of `OakSessionBinderFactory`.
 pub struct DefaultOakSessionBinderFactory {}
 
@@ -113,61 +106,75 @@ impl OakAttesterFactory for DefaultOakAttesterFactory {
     }
 }
 
-// Default implementation of `OakEndorserFactory`.
-pub struct DefaultOakEndorserFactory {}
+struct DefaultEndorser {
+    endorsements: Endorsements,
+}
 
-impl OakEndorserFactory for DefaultOakEndorserFactory {
-    fn get(&self) -> Result<Box<dyn Endorser>> {
-        Ok(Box::new(InstanceEndorser {}))
+impl Endorser for DefaultEndorser {
+    fn endorse(&self, _evidence: Option<&Evidence>) -> anyhow::Result<Endorsements> {
+        Ok(self.endorsements.clone())
     }
 }
+
 // Default implementation of `OakSessionFactory`.
 pub struct DefaultOakSessionFactory {
     session_binder_factory: Box<dyn OakSessionBinderFactory>,
     attester_factory: Box<dyn OakAttesterFactory>,
-    endorser_factory: Box<dyn OakEndorserFactory>,
+    clock: Option<Arc<dyn Clock>>,
+    reference_values: ReferenceValues,
+    endorsements: Endorsements,
 }
 
 impl DefaultOakSessionFactory {
     pub fn new(
         session_binder_factory: Box<dyn OakSessionBinderFactory>,
         attester_factory: Box<dyn OakAttesterFactory>,
-        endorser_factory: Box<dyn OakEndorserFactory>,
     ) -> Self {
         Self {
             session_binder_factory,
             attester_factory,
-            endorser_factory,
+            clock: None,
+            reference_values: ReferenceValues::default(),
+            endorsements: Endorsements::default(),
         }
     }
 }
 impl OakSessionFactory for DefaultOakSessionFactory {
-    fn get_oak_client_session(
-        &self,
-        reference_values: ReferenceValues,
+    fn init(
+        &mut self,
         clock: Arc<dyn Clock>,
-    ) -> Result<Box<dyn OakClientSession>> {
+        reference_values: ReferenceValues,
+        endorsements: Endorsements,
+    ) {
+        self.clock = Some(clock);
+        self.reference_values = reference_values;
+        self.endorsements = endorsements;
+    }
+
+    fn get_oak_client_session(&self) -> Result<Box<dyn OakClientSession>> {
+        let endorser: Box<dyn Endorser> = Box::new(DefaultEndorser {
+            endorsements: self.endorsements.clone(),
+        });
         let client_session = DefaultOakClientSession::create(
             self.attester_factory.get()?,
-            self.endorser_factory.get()?,
+            endorser,
             self.session_binder_factory.get()?,
-            reference_values,
-            clock,
+            self.reference_values.clone(),
+            Arc::clone(&self.clock.as_ref().unwrap()),
         )?;
         Ok(Box::new(client_session))
     }
 
-    fn get_oak_server_session(
-        &self,
-        reference_values: ReferenceValues,
-        clock: Arc<dyn Clock>,
-    ) -> Result<Box<dyn OakServerSession>> {
+    fn get_oak_server_session(&self) -> Result<Box<dyn OakServerSession>> {
+        let endorser: Box<dyn Endorser> = Box::new(DefaultEndorser {
+            endorsements: self.endorsements.clone(),
+        });
         let server_session = DefaultOakServerSession::create(
             self.attester_factory.get()?,
-            self.endorser_factory.get()?,
+            endorser,
             self.session_binder_factory.get()?,
-            reference_values,
-            clock,
+            self.reference_values.clone(),
+            Arc::clone(&self.clock.as_ref().unwrap()),
         )?;
         Ok(Box::new(server_session))
     }
@@ -203,9 +210,7 @@ impl DefaultOakClientSession {
     ) -> Result<Self> {
         Ok(Self {
             inner: ClientSession::create(
-                // TODO: Switch to `AttestationType::Bidirectional` and add session_binder
-                // when InstanceEndorser is fully implemented on Oak side.
-                SessionConfig::builder(AttestationType::Unattested, HandshakeType::NoiseNN)
+                SessionConfig::builder(AttestationType::Bidirectional, HandshakeType::NoiseNN)
                     .add_self_attester(String::from(TCP_ATTESTER_ID), attester)
                     .add_self_endorser(String::from(TCP_ATTESTER_ID), endorser)
                     .add_peer_verifier(
@@ -213,7 +218,7 @@ impl DefaultOakClientSession {
                         Box::new(DiceAttestationVerifier::create(reference_values, clock)),
                     )
                     .set_encryption_provider(Box::new(DefaultEncryptorProvider))
-                    //.add_session_binder(String::from(TCP_ATTESTER_ID), session_binder)
+                    .add_session_binder(String::from(TCP_ATTESTER_ID), session_binder)
                     .build(),
             )?,
         })
@@ -260,9 +265,7 @@ impl DefaultOakServerSession {
     ) -> Result<Self> {
         Ok(Self {
             inner: ServerSession::create(
-                // TODO: Switch to `AttestationType::Bidirectional` and add session_binder
-                // when InstanceEndorser is fully implemented on Oak side.
-                SessionConfig::builder(AttestationType::Unattested, HandshakeType::NoiseNN)
+                SessionConfig::builder(AttestationType::Bidirectional, HandshakeType::NoiseNN)
                     .add_self_attester(String::from(TCP_ATTESTER_ID), attester)
                     .add_self_endorser(String::from(TCP_ATTESTER_ID), endorser)
                     .add_peer_verifier(
@@ -270,7 +273,7 @@ impl DefaultOakServerSession {
                         Box::new(DiceAttestationVerifier::create(reference_values, clock)),
                     )
                     .set_encryption_provider(Box::new(DefaultEncryptorProvider))
-                    //.add_session_binder(String::from(TCP_ATTESTER_ID), session_binder)
+                    .add_session_binder(String::from(TCP_ATTESTER_ID), session_binder)
                     .build(),
             )?,
         })

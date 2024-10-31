@@ -23,8 +23,7 @@ use crate::handshake::DefaultHandshakeSessionProvider;
 use crate::model::Actor;
 use crate::platform::{Application, Host};
 use crate::session::{
-    DefaultOakAttesterFactory, DefaultOakEndorserFactory, DefaultOakSessionBinderFactory,
-    DefaultOakSessionFactory,
+    DefaultOakAttesterFactory, DefaultOakSessionBinderFactory, DefaultOakSessionFactory,
 };
 use crate::snapshot::{DefaultSnapshotReceiver, DefaultSnapshotSender};
 use crate::{
@@ -89,7 +88,6 @@ impl<A: Actor> ApplicationService<A> {
                     Box::new(DefaultOakSessionFactory::new(
                         Box::new(DefaultOakSessionBinderFactory {}),
                         Box::new(DefaultOakAttesterFactory {}),
-                        Box::new(DefaultOakEndorserFactory {}),
                     )),
                 ))),
             ),

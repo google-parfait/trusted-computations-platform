@@ -34,6 +34,7 @@ use core::{
     cmp, mem,
     sync::atomic::{AtomicI64, Ordering},
 };
+use oak_proto_rust::oak::attestation::v1::{Endorsements, ReferenceValues};
 use oak_session::clock::Clock;
 use prost::{bytes::Bytes, Message};
 use raft::{
@@ -773,18 +774,27 @@ impl<
             )?;
         }
 
-        let communication_config = match &start_replica_request.raft_config {
-            Some(raft_config) => Some(CommunicationConfig {
+        let mut communication_config = match &start_replica_request.raft_config {
+            Some(raft_config) => CommunicationConfig {
                 handshake_retry_tick: raft_config.handshake_retry_tick,
                 handshake_initiated_tick_timeout: raft_config.heartbeat_tick * 3,
-            }),
-            None => None,
+                reference_values: ReferenceValues::default(),
+                endorsements: Endorsements::default(),
+            },
+            None => CommunicationConfig {
+                // System defaults.
+                handshake_retry_tick: 1,
+                handshake_initiated_tick_timeout: 10,
+                reference_values: ReferenceValues::default(),
+                endorsements: Endorsements::default(),
+            },
         };
-
+        communication_config.reference_values = self.actor.get_reference_values();
+        communication_config.endorsements =
+            start_replica_request.endorsements.as_ref().unwrap().clone();
         self.communication.init(
             self.id,
             self.logger.new(o!("type" => "communication")),
-            self.actor.get_reference_values(),
             Arc::clone(&self.clock) as _,
             communication_config,
         );
@@ -1410,6 +1420,8 @@ mod test {
                 raft_config: Some(raft_config),
                 app_config: app_config,
                 is_ephemeral: false,
+                endorsements: Some(Endorsements::default()),
+                ..Default::default()
             })),
         };
         envelope
@@ -1625,6 +1637,15 @@ mod test {
         DeliverSnapshotFailure {
             sender_replica_id: sender_id,
             delivery_id,
+        }
+    }
+
+    fn get_default_comm_config(raft_config: RaftConfig) -> CommunicationConfig {
+        CommunicationConfig {
+            handshake_retry_tick: raft_config.handshake_retry_tick,
+            handshake_initiated_tick_timeout: raft_config.heartbeat_tick * 3,
+            reference_values: ReferenceValues::default(),
+            endorsements: Endorsements::default(),
         }
     }
 
@@ -2028,17 +2049,11 @@ mod test {
         fn expect_init(
             mut self,
             replica_id: u64,
-            reference_values: ReferenceValues,
+            config: CommunicationConfig,
         ) -> CommunicationBuilder {
             self.mock_communication_module
                 .expect_init()
-                .with(
-                    eq(replica_id),
-                    always(),
-                    eq(reference_values),
-                    always(),
-                    always(),
-                )
+                .with(eq(replica_id), always(), always(), eq(config))
                 .once()
                 .return_const(());
 
@@ -2260,7 +2275,7 @@ mod test {
             .expect_receiver_try_complete(None);
 
         let communication_builder = CommunicationBuilder::new()
-            .expect_init(node_id, ReferenceValues::default())
+            .expect_init(node_id, get_default_comm_config(raft_config.clone()))
             .expect_make_tick()
             .expect_take_out_messages(Vec::new());
 
@@ -2311,7 +2326,7 @@ mod test {
             .expect_receiver_try_complete(None);
 
         let communication_builder = CommunicationBuilder::new()
-            .expect_init(node_id, ReferenceValues::default())
+            .expect_init(node_id, get_default_comm_config(raft_config.clone()))
             .expect_make_tick()
             .expect_take_out_messages(Vec::new())
             .expect_take_out_messages(Vec::new());
@@ -2392,7 +2407,7 @@ mod test {
             .expect_receiver_try_complete(None);
 
         let communication_builder = CommunicationBuilder::new()
-            .expect_init(node_id, ReferenceValues::default())
+            .expect_init(node_id, get_default_comm_config(raft_config.clone()))
             .expect_make_tick()
             .expect_make_tick()
             .expect_make_tick()
@@ -2492,13 +2507,12 @@ mod test {
             .expect_receiver_set_instant()
             .expect_receiver_try_complete(None);
 
-        let exp_self_config = self_config.clone();
-
         let communication_builder = CommunicationBuilder::new()
-            .expect_init(node_id, ReferenceValues::default())
+            .expect_init(node_id, get_default_comm_config(raft_config.clone()))
             .expect_make_tick()
             .expect_take_out_messages(Vec::new());
 
+        let exp_self_config = self_config.clone();
         let mut driver = DriverBuilder::new()
             .expect_on_init(move |actor_context| {
                 assert_eq!(node_id, actor_context.id());
@@ -2530,7 +2544,7 @@ mod test {
 
     #[test]
     fn test_driver_ephemeral_replica() {
-        let (node_id, instant, _) = create_default_parameters();
+        let (node_id, instant, raft_config) = create_default_parameters();
         let self_config = vec![1, 2, 3];
         let correlation_id = 1;
         let proposal_contents = Bytes::from(vec![1, 2, 3]);
@@ -2563,7 +2577,7 @@ mod test {
         let raft_builder = RaftBuilder::new().expect_leader(false);
         let snapshot_builder = SnapshotBuilder::new();
         let communication_builder = CommunicationBuilder::new()
-            .expect_init(node_id, ReferenceValues::default())
+            .expect_init(node_id, get_default_comm_config(raft_config.clone()))
             .expect_make_tick()
             .expect_make_tick()
             .expect_take_out_messages(Vec::new())
@@ -2610,9 +2624,11 @@ mod test {
                     msg: Some(in_message::Msg::StartReplica(StartReplicaRequest {
                         is_leader: false,
                         replica_id_hint: node_id,
-                        raft_config: None,
+                        raft_config: Some(raft_config),
                         app_config: self_config.into(),
                         is_ephemeral: true,
+                        endorsements: Some(Endorsements::default()),
+                        ..Default::default()
                     })),
                 }),
             )
@@ -2673,7 +2689,7 @@ mod test {
             .expect_receiver_try_complete(None);
 
         let communication_builder = CommunicationBuilder::new()
-            .expect_init(node_id, ReferenceValues::default())
+            .expect_init(node_id, get_default_comm_config(raft_config.clone()))
             .expect_make_tick()
             .expect_make_tick()
             .expect_take_out_messages(Vec::new())
@@ -2749,7 +2765,7 @@ mod test {
             .expect_sender_next_request(None);
 
         let communication_builder = CommunicationBuilder::new()
-            .expect_init(node_id, ReferenceValues::default())
+            .expect_init(node_id, get_default_comm_config(raft_config.clone()))
             .expect_make_tick()
             .expect_take_out_messages(Vec::new())
             .expect_process_cluster_change(vec![node_id])
@@ -2875,7 +2891,7 @@ mod test {
             .expect_receiver_try_complete(None);
 
         let communication_builder = CommunicationBuilder::new()
-            .expect_init(node_id, ReferenceValues::default())
+            .expect_init(node_id, get_default_comm_config(raft_config.clone()))
             .expect_make_tick()
             .expect_take_out_messages(Vec::new())
             .expect_process_out_message(create_deliver_system_message_response(&message_a), Ok(()))
@@ -2959,7 +2975,7 @@ mod test {
             .expect_receiver_try_complete(None);
 
         let communication_builder = CommunicationBuilder::new()
-            .expect_init(node_id, ReferenceValues::default())
+            .expect_init(node_id, get_default_comm_config(raft_config.clone()))
             .expect_make_tick()
             .expect_make_tick()
             .expect_take_out_messages(Vec::new())
@@ -3029,7 +3045,7 @@ mod test {
             .expect_receiver_try_complete(None);
 
         let communication_builder = CommunicationBuilder::new()
-            .expect_init(node_id, ReferenceValues::default())
+            .expect_init(node_id, get_default_comm_config(raft_config.clone()))
             .expect_make_tick()
             .expect_take_out_messages(Vec::new())
             .expect_process_in_message(
@@ -3169,7 +3185,7 @@ mod test {
             .expect_receiver_try_complete(None);
 
         let communication_builder = CommunicationBuilder::new()
-            .expect_init(node_id, ReferenceValues::default())
+            .expect_init(node_id, get_default_comm_config(raft_config.clone()))
             .expect_make_tick()
             .expect_make_tick()
             .expect_make_tick()
@@ -3285,7 +3301,7 @@ mod test {
             );
 
         let communication_builder = CommunicationBuilder::new()
-            .expect_init(node_id, ReferenceValues::default())
+            .expect_init(node_id, get_default_comm_config(raft_config.clone()))
             .expect_make_tick()
             .expect_take_out_messages(Vec::new())
             .expect_process_in_message(
@@ -3451,7 +3467,7 @@ mod test {
             .expect_sender_try_complete(None);
 
         let communication_builder = CommunicationBuilder::new()
-            .expect_init(node_id, ReferenceValues::default())
+            .expect_init(node_id, get_default_comm_config(raft_config.clone()))
             .expect_process_cluster_change(vec![node_id])
             .expect_process_out_message(
                 wrap_deliver_snapshot_request_out(deliver_snapshot_request.clone()),

@@ -27,11 +27,12 @@ use alloc::vec::Vec;
 use alloc::{boxed::Box, vec};
 use anyhow::anyhow;
 use hashbrown::HashMap;
-use oak_proto_rust::oak::attestation::v1::ReferenceValues;
+use oak_proto_rust::oak::attestation::v1::{Endorsements, ReferenceValues};
 use oak_session::clock::Clock;
 use slog::{info, o, warn, Logger};
 use tcp_proto::runtime::endpoint::*;
 
+#[derive(PartialEq, Debug)]
 // Configuration for the Communication Module.
 pub struct CommunicationConfig {
     // Number of tick events that must pass before retrying handshake with a failed
@@ -39,6 +40,11 @@ pub struct CommunicationConfig {
     pub handshake_retry_tick: u64,
     // Maximum number of ticks to wait for a response once handshake has been initiated.
     pub handshake_initiated_tick_timeout: u32,
+    // The Reference Values for the trusted app that this replica is allowed to communicate
+    // with.
+    pub reference_values: ReferenceValues,
+    // Endorsements for the trusted app that this replica represents.
+    pub endorsements: Endorsements,
 }
 
 /// Responsible for managing communication between raft replicas such as
@@ -53,9 +59,8 @@ pub trait CommunicationModule {
         &mut self,
         replica_id: u64,
         logger: Logger,
-        reference_values: ReferenceValues,
         clock: Arc<dyn Clock>,
-        config: Option<CommunicationConfig>,
+        config: CommunicationConfig,
     );
 
     /// Process an outgoing message to a replica.
@@ -116,8 +121,6 @@ pub struct DefaultCommunicationModule {
     replica_id: u64,
     handshake_session_provider: Box<dyn HandshakeSessionProvider>,
     config: CommunicationConfig,
-    reference_values: Option<ReferenceValues>,
-    clock: Option<Arc<dyn Clock>>,
 }
 
 impl DefaultCommunicationModule {
@@ -131,9 +134,9 @@ impl DefaultCommunicationModule {
                 // System defaults.
                 handshake_retry_tick: 1,
                 handshake_initiated_tick_timeout: 10,
+                reference_values: ReferenceValues::default(),
+                endorsements: Endorsements::default(),
             },
-            reference_values: None,
-            clock: None,
         }
     }
 
@@ -150,17 +153,18 @@ impl CommunicationModule for DefaultCommunicationModule {
         &mut self,
         id: u64,
         logger: Logger,
-        reference_values: ReferenceValues,
         clock: Arc<dyn Clock>,
-        config: Option<CommunicationConfig>,
+        config: CommunicationConfig,
     ) {
         self.replica_id = id;
         self.logger = logger;
-        if config.is_some() {
-            self.config = config.unwrap();
-        }
-        self.reference_values = Some(reference_values);
-        self.clock = Some(clock);
+        self.config = config;
+        self.handshake_session_provider.init(
+            self.logger.new(o!("type" => "handshake")),
+            clock,
+            self.config.reference_values.clone(),
+            self.config.endorsements.clone(),
+        );
     }
 
     fn process_out_message(&mut self, message: out_message::Msg) -> Result<(), PalError> {
@@ -193,14 +197,7 @@ impl CommunicationModule for DefaultCommunicationModule {
         if !replica_state.is_initialized() {
             let handshake_session = self
                 .handshake_session_provider
-                .get(
-                    self.replica_id,
-                    peer_replica_id,
-                    Role::Initiator,
-                    self.reference_values.clone().unwrap(),
-                    Arc::clone(&self.clock.as_ref().unwrap()),
-                    logger.new(o!("type" => "handshake")),
-                )
+                .get(self.replica_id, peer_replica_id, Role::Initiator)
                 .map_err(|err| {
                     warn!(logger, "Failed to get handshake_session {:?}", err);
                     PalError::Internal
@@ -257,14 +254,7 @@ impl CommunicationModule for DefaultCommunicationModule {
         if !replica_state.is_initialized() {
             let handshake_session = self
                 .handshake_session_provider
-                .get(
-                    self.replica_id,
-                    peer_replica_id,
-                    Role::Recipient,
-                    self.reference_values.clone().unwrap(),
-                    Arc::clone(&self.clock.as_ref().unwrap()),
-                    logger.new(o!("type" => "handshake")),
-                )
+                .get(self.replica_id, peer_replica_id, Role::Recipient)
                 .map_err(|err| {
                     warn!(logger, "Failed to get handshake_session {:?}", err);
                     PalError::Internal
@@ -652,7 +642,7 @@ mod test {
     use alloc::vec;
     use alloc::vec::Vec;
     use anyhow::anyhow;
-    use oak_proto_rust::oak::attestation::v1::ReferenceValues;
+    use oak_proto_rust::oak::attestation::v1::{Endorsements, ReferenceValues};
     use prost::bytes::Bytes;
     use tcp_proto::runtime::endpoint::*;
 
@@ -763,6 +753,7 @@ mod test {
             raft_config: None,
             app_config: Bytes::new(),
             is_ephemeral: false,
+            ..Default::default()
         })
     }
 
@@ -777,6 +768,19 @@ mod test {
             }
         }
 
+        fn expect_init(
+            mut self,
+            reference_values: ReferenceValues,
+            endorsements: Endorsements,
+        ) -> HandshakeSessionProviderBuilder {
+            self.mock_handshake_session_provider
+                .expect_init()
+                .with(always(), always(), eq(reference_values), eq(endorsements))
+                .once()
+                .return_const(());
+            self
+        }
+
         fn expect_get(
             mut self,
             self_replica_id: u64,
@@ -786,16 +790,9 @@ mod test {
         ) -> HandshakeSessionProviderBuilder {
             self.mock_handshake_session_provider
                 .expect_get()
-                .with(
-                    eq(self_replica_id),
-                    eq(peer_replica_id),
-                    eq(role),
-                    always(),
-                    always(),
-                    always(),
-                )
+                .with(eq(self_replica_id), eq(peer_replica_id), eq(role))
                 .once()
-                .return_once(move |_, _, _, _, _, _| Ok(Box::new(mock_handshake_session)));
+                .return_once(move |_, _, _| Ok(Box::new(mock_handshake_session)));
             self
         }
 
@@ -922,6 +919,7 @@ mod test {
             .expect_take_out_message(Ok(Some(handshake_message_b.clone())))
             .take();
         let mock_handshake_session_provider = HandshakeSessionProviderBuilder::new()
+            .expect_init(ReferenceValues::default(), Endorsements::default())
             .expect_get(
                 self_replica_id,
                 peer_replica_id_a,
@@ -949,9 +947,13 @@ mod test {
         communication_module.init(
             self_replica_id,
             create_logger(),
-            ReferenceValues::default(),
             Arc::new(clock),
-            None,
+            CommunicationConfig {
+                reference_values: ReferenceValues::default(),
+                endorsements: Endorsements::default(),
+                handshake_retry_tick: 1,
+                handshake_initiated_tick_timeout: 10,
+            },
         );
 
         assert_eq!(
@@ -1104,6 +1106,7 @@ mod test {
             .expect_get_encryptor(MockEncryptor::new())
             .take();
         let mock_handshake_session_provider = HandshakeSessionProviderBuilder::new()
+            .expect_init(ReferenceValues::default(), Endorsements::default())
             .expect_get(
                 self_replica_id,
                 peer_replica_id_a,
@@ -1131,9 +1134,13 @@ mod test {
         communication_module.init(
             self_replica_id,
             create_logger(),
-            ReferenceValues::default(),
             Arc::new(clock),
-            None,
+            CommunicationConfig {
+                reference_values: ReferenceValues::default(),
+                endorsements: Endorsements::default(),
+                handshake_retry_tick: 1,
+                handshake_initiated_tick_timeout: 10,
+            },
         );
 
         assert_eq!(
@@ -1290,6 +1297,7 @@ mod test {
             .expect_get_encryptor(mock_encryptor_b)
             .take();
         let mock_handshake_session_provider_a = HandshakeSessionProviderBuilder::new()
+            .expect_init(ReferenceValues::default(), Endorsements::default())
             .expect_get(
                 peer_replica_id_a,
                 peer_replica_id_b,
@@ -1298,6 +1306,7 @@ mod test {
             )
             .take();
         let mock_handshake_session_provider_b = HandshakeSessionProviderBuilder::new()
+            .expect_init(ReferenceValues::default(), Endorsements::default())
             .expect_get(
                 peer_replica_id_b,
                 peer_replica_id_a,
@@ -1314,16 +1323,24 @@ mod test {
         communication_module_a.init(
             peer_replica_id_a,
             create_logger(),
-            ReferenceValues::default(),
             Arc::new(clock_a),
-            None,
+            CommunicationConfig {
+                reference_values: ReferenceValues::default(),
+                endorsements: Endorsements::default(),
+                handshake_retry_tick: 1,
+                handshake_initiated_tick_timeout: 10,
+            },
         );
         communication_module_b.init(
             peer_replica_id_b,
             create_logger(),
-            ReferenceValues::default(),
             Arc::new(clock_b),
-            None,
+            CommunicationConfig {
+                reference_values: ReferenceValues::default(),
+                endorsements: Endorsements::default(),
+                handshake_retry_tick: 1,
+                handshake_initiated_tick_timeout: 10,
+            },
         );
 
         // Handshake initiated from a to b.
@@ -1506,6 +1523,7 @@ mod test {
             .expect_get_encryptor(mock_encryptor_b)
             .take();
         let mock_handshake_session_provider_a = HandshakeSessionProviderBuilder::new()
+            .expect_init(ReferenceValues::default(), Endorsements::default())
             .expect_get(
                 peer_replica_id_a,
                 peer_replica_id_b,
@@ -1514,6 +1532,7 @@ mod test {
             )
             .take();
         let mock_handshake_session_provider_b = HandshakeSessionProviderBuilder::new()
+            .expect_init(ReferenceValues::default(), Endorsements::default())
             .expect_get(
                 peer_replica_id_b,
                 peer_replica_id_a,
@@ -1530,16 +1549,24 @@ mod test {
         communication_module_a.init(
             peer_replica_id_a,
             create_logger(),
-            ReferenceValues::default(),
             Arc::new(clock_a),
-            None,
+            CommunicationConfig {
+                reference_values: ReferenceValues::default(),
+                endorsements: Endorsements::default(),
+                handshake_retry_tick: 1,
+                handshake_initiated_tick_timeout: 10,
+            },
         );
         communication_module_b.init(
             peer_replica_id_b,
             create_logger(),
-            ReferenceValues::default(),
             Arc::new(clock_b),
-            None,
+            CommunicationConfig {
+                reference_values: ReferenceValues::default(),
+                endorsements: Endorsements::default(),
+                handshake_retry_tick: 1,
+                handshake_initiated_tick_timeout: 10,
+            },
         );
 
         // First round trip of handshake messages.
@@ -1653,6 +1680,7 @@ mod test {
             .take();
         let mock_handshake_session_b = HandshakeSessionBuilder::new().take();
         let mock_handshake_session_provider_a = HandshakeSessionProviderBuilder::new()
+            .expect_init(ReferenceValues::default(), Endorsements::default())
             .expect_get(
                 peer_replica_id_a,
                 peer_replica_id_b,
@@ -1661,6 +1689,7 @@ mod test {
             )
             .take();
         let mock_handshake_session_provider_b = HandshakeSessionProviderBuilder::new()
+            .expect_init(ReferenceValues::default(), Endorsements::default())
             .expect_get(
                 peer_replica_id_b,
                 peer_replica_id_a,
@@ -1682,16 +1711,24 @@ mod test {
         communication_module_a.init(
             peer_replica_id_a,
             create_logger(),
-            ReferenceValues::default(),
             Arc::new(clock_a),
-            None,
+            CommunicationConfig {
+                reference_values: ReferenceValues::default(),
+                endorsements: Endorsements::default(),
+                handshake_retry_tick: 1,
+                handshake_initiated_tick_timeout: 10,
+            },
         );
         communication_module_b.init(
             peer_replica_id_b,
             create_logger(),
-            ReferenceValues::default(),
             Arc::new(clock_b),
-            None,
+            CommunicationConfig {
+                reference_values: ReferenceValues::default(),
+                endorsements: Endorsements::default(),
+                handshake_retry_tick: 1,
+                handshake_initiated_tick_timeout: 10,
+            },
         );
 
         assert_eq!(
@@ -1783,6 +1820,7 @@ mod test {
             .expect_get_encryptor(mock_encryptor)
             .take();
         let mock_handshake_session_provider_a = HandshakeSessionProviderBuilder::new()
+            .expect_init(ReferenceValues::default(), Endorsements::default())
             .expect_get(
                 peer_replica_id_a,
                 peer_replica_id_b,
@@ -1802,9 +1840,13 @@ mod test {
         communication_module_a.init(
             peer_replica_id_a,
             create_logger(),
-            ReferenceValues::default(),
             Arc::new(clock),
-            None,
+            CommunicationConfig {
+                reference_values: ReferenceValues::default(),
+                endorsements: Endorsements::default(),
+                handshake_retry_tick: 1,
+                handshake_initiated_tick_timeout: 10,
+            },
         );
 
         // Handshake initiated from a to b.
@@ -1862,10 +1904,12 @@ mod test {
     fn test_handshake_retry() {
         let peer_replica_id_a = 11111;
         let peer_replica_id_b = 22222;
-        let config = Some(CommunicationConfig {
+        let config = CommunicationConfig {
             handshake_retry_tick: 2,
             handshake_initiated_tick_timeout: 10,
-        });
+            reference_values: ReferenceValues::default(),
+            endorsements: Endorsements::default(),
+        };
         let handshake_message_a_to_b =
             create_secure_channel_handshake(peer_replica_id_a, peer_replica_id_b);
         let handshake_message_b_to_a =
@@ -1954,6 +1998,7 @@ mod test {
         // HandshakeSession is created twice total, once again when enough ticks have
         // passed.
         let mock_handshake_session_provider = HandshakeSessionProviderBuilder::new()
+            .expect_init(ReferenceValues::default(), Endorsements::default())
             .expect_get(
                 peer_replica_id_a,
                 peer_replica_id_b,
@@ -1971,13 +2016,7 @@ mod test {
         let mut communication_module =
             DefaultCommunicationModule::new(Box::new(mock_handshake_session_provider));
         let clock = MockClock::new();
-        communication_module.init(
-            peer_replica_id_a,
-            create_logger(),
-            ReferenceValues::default(),
-            Arc::new(clock),
-            config,
-        );
+        communication_module.init(peer_replica_id_a, create_logger(), Arc::new(clock), config);
 
         // Initiate handshake.
         assert_eq!(
@@ -2063,10 +2102,12 @@ mod test {
     fn test_handshake_initiated_tick_timeout() {
         let peer_replica_id_a = 11111;
         let peer_replica_id_b = 22222;
-        let config = Some(CommunicationConfig {
+        let config = CommunicationConfig {
             handshake_retry_tick: 1,
             handshake_initiated_tick_timeout: 3,
-        });
+            reference_values: ReferenceValues::default(),
+            endorsements: Endorsements::default(),
+        };
         let handshake_message_a_to_b =
             create_secure_channel_handshake(peer_replica_id_a, peer_replica_id_b);
         let handshake_message_b_to_a =
@@ -2153,6 +2194,7 @@ mod test {
 
         // HandshakeSession is created twice total, once again when enough ticks have passed.
         let mock_handshake_session_provider = HandshakeSessionProviderBuilder::new()
+            .expect_init(ReferenceValues::default(), Endorsements::default())
             .expect_get(
                 peer_replica_id_a,
                 peer_replica_id_b,
@@ -2170,13 +2212,7 @@ mod test {
         let mut communication_module =
             DefaultCommunicationModule::new(Box::new(mock_handshake_session_provider));
         let clock = MockClock::new();
-        communication_module.init(
-            peer_replica_id_a,
-            create_logger(),
-            ReferenceValues::default(),
-            Arc::new(clock),
-            config,
-        );
+        communication_module.init(peer_replica_id_a, create_logger(), Arc::new(clock), config);
 
         // Initiate handshake.
         assert_eq!(

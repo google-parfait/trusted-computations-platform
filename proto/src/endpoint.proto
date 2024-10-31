@@ -16,6 +16,7 @@ syntax = "proto3";
 
 package runtime.endpoint;
 
+import "proto/attestation/endorsement.proto";
 import "proto/attestation/reference_value.proto";
 import "proto/session/session.proto";
 
@@ -124,6 +125,9 @@ message StartReplicaRequest {
   // Indicates if this is an ephemeral node i.e. it is not replicated and raft is
   // disabled.
   bool is_ephemeral = 6;
+
+  // Endorsements of the trusted app that this node represents.
+  oak.attestation.v1.Endorsements endorsements = 7;
 
   reserved 5;
 }

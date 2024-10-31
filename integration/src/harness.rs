@@ -35,9 +35,7 @@ use tcp_runtime::handshake::DefaultHandshakeSessionProvider;
 use tcp_runtime::logger::log::create_logger;
 use tcp_runtime::model::Actor;
 use tcp_runtime::platform::{Application, Host};
-use tcp_runtime::session::{
-    DefaultOakSessionFactory, OakAttesterFactory, OakEndorserFactory, OakSessionBinderFactory,
-};
+use tcp_runtime::session::{DefaultOakSessionFactory, OakAttesterFactory, OakSessionBinderFactory};
 use tcp_runtime::snapshot::{
     DefaultSnapshotProcessor, DefaultSnapshotReceiver, DefaultSnapshotSender,
 };
@@ -281,14 +279,6 @@ impl Endorser for FakeEndorser {
     }
 }
 
-pub struct FakeEndorserFactory {}
-
-impl OakEndorserFactory for FakeEndorserFactory {
-    fn get(&self) -> Result<Box<dyn Endorser>> {
-        Ok(Box::new(FakeEndorser {}))
-    }
-}
-
 pub struct FakeOakSessionBinder {
     signature_binder: SignatureBinder,
 }
@@ -352,7 +342,6 @@ impl<A: Actor> FakePlatform<A> {
                     Box::new(DefaultOakSessionFactory::new(
                         Box::new(FakeOakSessionBinderFactory {}),
                         Box::new(FakeOakAttesterFactory {}),
-                        Box::new(FakeEndorserFactory {}),
                     )),
                 ))),
             )),
@@ -361,6 +350,15 @@ impl<A: Actor> FakePlatform<A> {
     }
 
     pub fn send_start_node(&mut self, app_config: Bytes, is_leader: bool) {
+        let endorsements = Endorsements {
+            r#type: Some(endorsements::Type::OakRestrictedKernel(
+                OakRestrictedKernelEndorsements {
+                    root_layer: Some(RootLayerEndorsements::default()),
+                    ..Default::default()
+                },
+            )),
+            ..Default::default()
+        };
         self.append_message_in(InMessage {
             msg: Some(in_message::Msg::StartReplica(StartReplicaRequest {
                 is_leader,
@@ -377,7 +375,8 @@ impl<A: Actor> FakePlatform<A> {
                     }),
                     handshake_retry_tick: 1,
                 }),
-                app_config: app_config,
+                endorsements: Some(endorsements),
+                app_config,
                 is_ephemeral: false,
             })),
         });

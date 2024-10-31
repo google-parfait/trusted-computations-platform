@@ -35,7 +35,7 @@ use crate::snapshot::{
 use alloc::boxed::Box;
 use alloc::sync::Arc;
 use alloc::vec::Vec;
-use oak_proto_rust::oak::attestation::v1::ReferenceValues;
+use oak_proto_rust::oak::attestation::v1::{Endorsements, ReferenceValues};
 use oak_proto_rust::oak::session::v1::{SessionRequest, SessionResponse};
 use oak_session::clock::Clock;
 use prost::bytes::Bytes;
@@ -252,7 +252,12 @@ mock! {
     }
 
     impl CommunicationModule for CommunicationModule {
-        fn init(&mut self, replica_id: u64, logger: Logger, reference_values: ReferenceValues, clock: Arc<dyn Clock>, config: Option<CommunicationConfig>);
+        fn init(
+            &mut self,
+            replica_id: u64,
+            logger: Logger,
+            clock: Arc<dyn Clock>,
+            config: CommunicationConfig);
 
         fn process_out_message(&mut self, message: out_message::Msg) -> Result<(), PalError>;
 
@@ -274,14 +279,19 @@ mock! {
     }
 
     impl HandshakeSessionProvider for HandshakeSessionProvider {
+        fn init(
+            &mut self,
+            logger: Logger,
+            clock: Arc<dyn Clock>,
+            reference_values: ReferenceValues,
+            endorsements: Endorsements,
+        );
+
         fn get(
             &self,
             self_replica_id: u64,
             peer_replica_id: u64,
             role: Role,
-            reference_values: ReferenceValues,
-            clock: Arc<dyn Clock>,
-            logger: Logger,
         ) -> anyhow::Result<Box<dyn HandshakeSession>>;
     }
 }
@@ -317,9 +327,11 @@ mock! {
     }
 
     impl OakSessionFactory for OakSessionFactory {
-        fn get_oak_client_session(&self, reference_values: ReferenceValues, clock: Arc<dyn Clock>,) -> anyhow::Result<Box<dyn OakClientSession>>;
+        fn init(&mut self, clock: Arc<dyn Clock>, reference_values: ReferenceValues, endorsements: Endorsements);
 
-        fn get_oak_server_session(&self, reference_values: ReferenceValues, clock: Arc<dyn Clock>,) -> anyhow::Result<Box<dyn OakServerSession>>;
+        fn get_oak_client_session(&self) -> anyhow::Result<Box<dyn OakClientSession>>;
+
+        fn get_oak_server_session(&self) -> anyhow::Result<Box<dyn OakServerSession>>;
     }
 }
 
