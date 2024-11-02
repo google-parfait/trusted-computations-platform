@@ -777,7 +777,7 @@ impl<
         let mut communication_config = match &start_replica_request.raft_config {
             Some(raft_config) => CommunicationConfig {
                 handshake_retry_tick: raft_config.handshake_retry_tick,
-                handshake_initiated_tick_timeout: raft_config.heartbeat_tick * 3,
+                handshake_initiated_tick_timeout: raft_config.heartbeat_tick * 10,
                 reference_values: ReferenceValues::default(),
                 endorsements: Endorsements::default(),
             },
@@ -1643,7 +1643,7 @@ mod test {
     fn get_default_comm_config(raft_config: RaftConfig) -> CommunicationConfig {
         CommunicationConfig {
             handshake_retry_tick: raft_config.handshake_retry_tick,
-            handshake_initiated_tick_timeout: raft_config.heartbeat_tick * 3,
+            handshake_initiated_tick_timeout: raft_config.heartbeat_tick * 10,
             reference_values: ReferenceValues::default(),
             endorsements: Endorsements::default(),
         }
