@@ -708,6 +708,7 @@ impl TabletResolveResult {
 
 #[cfg(all(test, feature = "std"))]
 mod tests {
+    use googletest::prelude::*;
     use tcp_proto::runtime::endpoint::in_message;
 
     use super::*;
@@ -839,18 +840,7 @@ mod tests {
 
         assert!(resolve_result_1.check_result().is_none());
 
-        assert_eq!(
-            vec![TabletMetadataCacheOutMessage::ListRequest(
-                CORRELATION_ID_1,
-                vec![
-                    create_list_op(TABLE_NAME.to_string(), 0, TABLE_REGION_SIZE - 1),
-                    create_list_op(
-                        TABLE_NAME.to_string(),
-                        TABLE_REGION_SIZE,
-                        TABLE_REGION_SIZE * 2 - 1
-                    )
-                ]
-            )],
+        assert_that!(
             tablet_metadata_cache_loop.execute_step(
                 1,
                 Some(TabletMetadataCacheInMessage::ListResponse(
@@ -872,31 +862,48 @@ mod tests {
                         )
                     ]
                 ))
-            )
+            ),
+            elements_are![matches_pattern!(
+                TabletMetadataCacheOutMessage::ListRequest(
+                    eq(CORRELATION_ID_1),
+                    unordered_elements_are![
+                        eq(create_list_op(
+                            TABLE_NAME.to_string(),
+                            0,
+                            TABLE_REGION_SIZE - 1
+                        )),
+                        eq(create_list_op(
+                            TABLE_NAME.to_string(),
+                            TABLE_REGION_SIZE,
+                            TABLE_REGION_SIZE * 2 - 1
+                        ))
+                    ],
+                )
+            )]
         );
 
         assert!(tablet_metadata_cache_loop.execute_step(2, None).is_empty());
 
-        assert_eq!(
-            Some(Ok(vec![
-                (
+        assert_that!(
+            resolve_result_1.check_result(),
+            some(ok(unordered_elements_are![
+                eq((
                     create_table_query(
                         TABLE_QUERY_1,
                         TABLE_NAME.to_string(),
                         vec![KEY_HASH_1, KEY_HASH_2],
                     ),
                     create_tablet_metadata(TABLET_ID_1, TABLET_VERSION_1)
-                ),
-                (
+                )),
+                eq((
                     create_table_query(
                         TABLE_QUERY_1,
                         TABLE_NAME.to_string(),
                         vec![KEY_HASH_3, KEY_HASH_4],
                     ),
                     create_tablet_metadata(TABLET_ID_2, TABLET_VERSION_2)
-                )
+                ))
             ])),
-            resolve_result_1.check_result()
         );
     }
 }

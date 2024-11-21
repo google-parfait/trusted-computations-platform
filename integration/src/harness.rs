@@ -19,11 +19,11 @@ use anyhow::{Error, Result};
 use core::cell::RefCell;
 use core::mem;
 use hashbrown::HashMap;
+use oak_attestation_types::{attester::Attester, endorser::Endorser};
 use oak_proto_rust::oak::attestation::v1::{
     endorsements, Endorsements, Evidence, OakRestrictedKernelEndorsements, RootLayerEndorsements,
 };
 use oak_restricted_kernel_sdk::testing::{MockAttester, MockSigner};
-use oak_session::attestation::{Attester, Endorser};
 use oak_session::session_binding::{SessionBinder, SignatureBinder, SignatureBinderBuilder};
 use prost::bytes::Bytes;
 use slog::{info, Logger};

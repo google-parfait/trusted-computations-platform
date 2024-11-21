@@ -32,6 +32,7 @@ rust_library(
         "//proto:tcp_proto",
         "//runtime:tcp_runtime",
         "@oak//micro_rpc",
+        "@oak//oak_attestation_types",
         "@oak//oak_proto_rust",
         "@oak//oak_restricted_kernel_sdk",
         "@oak//oak_session",

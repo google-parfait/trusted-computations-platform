@@ -18,8 +18,8 @@ use crate::session::{OakClientSession, OakServerSession, OakSessionFactory};
 use alloc::sync::Arc;
 use alloc::{boxed::Box, format};
 use anyhow::{anyhow, Error, Result};
+use oak_attestation_verification_types::util::Clock;
 use oak_proto_rust::oak::attestation::v1::{Endorsements, ReferenceValues};
-use oak_session::clock::Clock;
 use slog::{info, o, warn, Logger};
 use tcp_proto::runtime::endpoint::{
     secure_channel_handshake::{

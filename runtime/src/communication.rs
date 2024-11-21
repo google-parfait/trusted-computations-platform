@@ -27,8 +27,8 @@ use alloc::vec::Vec;
 use alloc::{boxed::Box, vec};
 use anyhow::anyhow;
 use hashbrown::HashMap;
+use oak_attestation_verification_types::util::Clock;
 use oak_proto_rust::oak::attestation::v1::{Endorsements, ReferenceValues};
-use oak_session::clock::Clock;
 use slog::{info, o, warn, Logger};
 use tcp_proto::runtime::endpoint::*;
 
@@ -642,6 +642,10 @@ mod test {
     use alloc::vec;
     use alloc::vec::Vec;
     use anyhow::anyhow;
+    use googletest::{
+        assert_that,
+        matchers::{eq as gt_eq, unordered_elements_are},
+    };
     use oak_proto_rust::oak::attestation::v1::{Endorsements, ReferenceValues};
     use prost::bytes::Bytes;
     use tcp_proto::runtime::endpoint::*;
@@ -984,20 +988,20 @@ mod test {
             Err(PalError::InvalidOperation),
             communication_module.process_out_message(create_unsupported_out_message())
         );
-        assert_eq!(
-            vec![
-                OutMessage {
+        assert_that!(
+            communication_module.take_out_messages(),
+            unordered_elements_are![
+                gt_eq(OutMessage {
                     msg: Some(out_message::Msg::SecureChannelHandshake(
                         handshake_message_a.clone()
                     ))
-                },
-                OutMessage {
+                }),
+                gt_eq(OutMessage {
                     msg: Some(out_message::Msg::SecureChannelHandshake(
                         handshake_message_b.clone()
                     ))
-                }
+                })
             ],
-            communication_module.take_out_messages()
         );
     }
 
@@ -1183,20 +1187,20 @@ mod test {
             Err(PalError::InvalidOperation),
             communication_module.process_in_message(create_unsupported_in_message())
         );
-        assert_eq!(
-            vec![
-                OutMessage {
+        assert_that!(
+            communication_module.take_out_messages(),
+            unordered_elements_are![
+                gt_eq(OutMessage {
                     msg: Some(out_message::Msg::SecureChannelHandshake(
                         handshake_message_a.clone()
                     ))
-                },
-                OutMessage {
+                }),
+                gt_eq(OutMessage {
                     msg: Some(out_message::Msg::SecureChannelHandshake(
                         handshake_message_b.clone()
                     ))
-                }
+                })
             ],
-            communication_module.take_out_messages()
         );
     }
 
