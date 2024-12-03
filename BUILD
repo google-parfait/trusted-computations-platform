@@ -19,7 +19,6 @@ load("@rules_pkg//pkg:mappings.bzl", "pkg_files")
 # destination directory.
 _ALL_BINARIES = {
     "//apps/atomic_counter/app:tcp_atomic_counter_enclave_app": "tcp_atomic_counter_enclave_app/binary",
-    "//apps/ledger/app:tcp_ledger_enclave_app": "tcp_ledger_enclave_app/binary",
     "//apps/tablet_cache/app:tcp_tablet_cache_enclave_app": "tcp_tablet_cache_enclave_app/binary",
     "//apps/tablet_store/app:tcp_tablet_store_enclave_app": "tcp_tablet_store_enclave_app/binary",
 }
