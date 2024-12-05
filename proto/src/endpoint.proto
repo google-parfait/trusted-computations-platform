@@ -56,6 +56,9 @@ message InMessage {
     SecureChannelHandshake secure_channel_handshake = 11;
     // Requests the Trusted Host to deliver a message to the application.
     DeliverAppMessage deliver_app_message = 12;
+    // Requests the TEE to enter lameduck mode. This should be triggered
+    // right before the replica is about to go down for graceful shutdown.
+    EnterLameduckMode enter_lameduck_mode = 13;
   }
 
   reserved 6;
@@ -182,6 +185,8 @@ message RaftConfig {
 // This must be the last message sent by the untrusted launcher to the trusted
 // application.
 message StopReplicaRequest {}
+
+message EnterLameduckMode {}
 
 message StopReplicaResponse {}
 

@@ -199,6 +199,7 @@ pub struct Driver<R: Raft, S: Store, P: SnapshotProcessor, A: Actor, C: Communic
     communication: C,
     is_ephemeral: bool,
     clock: Arc<DefaultClock>,
+    lameduck_mode: bool,
 }
 
 impl<
@@ -243,6 +244,7 @@ impl<
             clock: Arc::new(DefaultClock {
                 instant: AtomicI64::new(0),
             }),
+            lameduck_mode: false,
         }
     }
 
@@ -597,8 +599,14 @@ impl<
     }
 
     fn advance_raft(&mut self) -> Result<(), PalError> {
-        // Given that instant only set once trigger Raft tick once as well.
-        self.trigger_raft_tick();
+        // Trigger raft ticks only when the replica is NOT in lameduck mode.
+        // If this replica is a leader, in lameduck mode raft ticks are ignored which
+        // would cause the leader to relinquish leadership by not triggering heartbeats.
+        // If this replica is a follower, ignoring ticks will ensure no election is triggered
+        // by this replica in lameduck mode.
+        if !self.lameduck_mode {
+            self.trigger_raft_tick();
+        }
 
         if !self.raft.has_ready() {
             // There is nothing process.
@@ -1276,6 +1284,11 @@ impl<
                         }
                         in_message::Msg::StopReplica(ref stop_node_request) => {
                             self.process_stop_node(stop_node_request)
+                        }
+                        in_message::Msg::EnterLameduckMode(ref _enter_lameduck_mode) => {
+                            info!(self.logger, "Entering lameduck mode");
+                            self.lameduck_mode = true;
+                            Ok(())
                         }
                         in_message::Msg::ChangeCluster(ref change_cluster_request) => {
                             self.process_change_cluster(change_cluster_request)

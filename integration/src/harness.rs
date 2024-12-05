@@ -99,6 +99,13 @@ impl<A: Actor> FakeCluster<A> {
             .send_start_node(self.app_config.clone(), leader);
     }
 
+    pub fn enter_lameduck_mode(&mut self, node_id: u64) {
+        self.platforms
+            .get_mut(&node_id)
+            .unwrap()
+            .enter_lameduck_mode();
+    }
+
     pub fn stop_node(&mut self, node_id: u64) {
         self.platforms.remove(&node_id);
 
@@ -125,7 +132,16 @@ impl<A: Actor> FakeCluster<A> {
         });
     }
 
-    pub fn advance_until_elected_leader(&mut self, excluding_node_id: Option<u64>) {
+    fn in_excluded_ids(excluded_ids: &Vec<u64>, node_id: u64) -> bool {
+        for id in excluded_ids {
+            if *id == node_id {
+                return true;
+            }
+        }
+        false
+    }
+
+    pub fn advance_until_elected_leader(&mut self, excluding_node_ids: Option<Vec<u64>>) {
         let mut leader_id = 0;
 
         self.advance_until(&mut |envelope_out| match &envelope_out.msg {
@@ -133,9 +149,12 @@ impl<A: Actor> FakeCluster<A> {
                 if response.leader_replica_id == 0 {
                     return false;
                 }
-                match excluding_node_id {
-                    Some(exclucding_leader_id)
-                        if exclucding_leader_id == response.leader_replica_id =>
+                match &excluding_node_ids {
+                    Some(excluding_leader_ids)
+                        if Self::in_excluded_ids(
+                            excluding_leader_ids,
+                            response.leader_replica_id,
+                        ) =>
                     {
                         false
                     }
@@ -385,6 +404,12 @@ impl<A: Actor> FakePlatform<A> {
     pub fn send_stop_node(&mut self) {
         self.append_message_in(InMessage {
             msg: Some(in_message::Msg::StopReplica(StopReplicaRequest {})),
+        });
+    }
+
+    pub fn enter_lameduck_mode(&mut self) {
+        self.append_message_in(InMessage {
+            msg: Some(in_message::Msg::EnterLameduckMode(EnterLameduckMode {})),
         });
     }
 

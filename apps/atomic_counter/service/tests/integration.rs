@@ -193,7 +193,7 @@ mod test {
 
         leader_id = cluster.leader_id();
         cluster.stop_node(leader_id);
-        cluster.advance_until_elected_leader(Some(leader_id));
+        cluster.advance_until_elected_leader(Some(vec![leader_id]));
 
         leader_id = cluster.leader_id();
         send_cas_counter_request(
@@ -211,5 +211,53 @@ mod test {
             counter_value_2 + 1,
             counter_value_2 + 2
         ));
+    }
+
+    #[test]
+    fn lameduck_mode() {
+        let counter_name_1 = "counter 1";
+        let counter_value_1: i64 = 10;
+        let config = CounterConfig {
+            initial_values: BTreeMap::from([(counter_name_1.to_string(), counter_value_1)]),
+        };
+        let mut cluster = FakeCluster::new(config.encode_to_vec().into());
+
+        cluster.start_node(1, true, CounterActor::new());
+        cluster.advance_until_elected_leader(None);
+        assert!(cluster.leader_id() == 1);
+
+        cluster.start_node(2, false, CounterActor::new());
+        cluster.start_node(3, false, CounterActor::new());
+        cluster.start_node(4, false, CounterActor::new());
+        cluster.start_node(5, false, CounterActor::new());
+
+        cluster.add_node_to_cluster(2);
+        cluster.add_node_to_cluster(3);
+        cluster.add_node_to_cluster(4);
+        cluster.add_node_to_cluster(5);
+        assert!(cluster.leader_id() == 1);
+        let mut leader_id = cluster.leader_id();
+
+        send_cas_counter_request(
+            &mut cluster,
+            leader_id,
+            1,
+            counter_name_1,
+            counter_value_1,
+            counter_value_1 + 1,
+        );
+        assert!(advance_until_cas_counter_response(
+            &mut cluster,
+            1,
+            CounterStatus::Success,
+            counter_value_1,
+            counter_value_1 + 1
+        ));
+
+        cluster.enter_lameduck_mode(leader_id);
+        cluster.enter_lameduck_mode(2);
+        cluster.enter_lameduck_mode(3);
+        cluster.advance_until_elected_leader(Some(vec![cluster.leader_id(), 2, 3]));
+        assert!(cluster.leader_id() == 4 || cluster.leader_id() == 5);
     }
 }
