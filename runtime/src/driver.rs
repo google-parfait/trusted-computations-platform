@@ -13,7 +13,7 @@
 // limitations under the License.
 
 #![allow(clippy::useless_conversion)]
-use crate::communication::{CommunicationConfig, CommunicationModule};
+use crate::communication::{CommunicationConfig, CommunicationModule, OutgoingMessage};
 use crate::consensus::{Raft, RaftState, Store};
 use crate::logger::log::create_remote_logger;
 use crate::logger::DrainOutput;
@@ -517,7 +517,7 @@ impl<
             }
 
             self.communication
-                .process_out_message(out_message::Msg::DeliverSystemMessage(
+                .process_out_message(OutgoingMessage::DeliverSystemMessage(
                     DeliverSystemMessage {
                         recipient_replica_id: raft_message.to,
                         sender_replica_id: self.id,
@@ -527,6 +527,7 @@ impl<
                         }),
                         ..Default::default()
                     },
+                    raft_message.msg_type(),
                 ))?;
         }
 
@@ -955,7 +956,7 @@ impl<
                     SnapshotProcessorRole::Receiver(receiver) => receiver.process_request(m),
                 };
                 self.communication
-                    .process_out_message(out_message::Msg::DeliverSnapshotResponse(
+                    .process_out_message(OutgoingMessage::DeliverSnapshotResponse(
                         deliver_snapshot_response,
                     ))
             }
@@ -1066,7 +1067,7 @@ impl<
     fn process_snapshot_sending(&mut self) -> Result<(), PalError> {
         let snapshot_messages = mem::take(&mut self.snapshots);
 
-        let mut out_messages: Vec<out_message::Msg> = Vec::new();
+        let mut out_messages: Vec<OutgoingMessage> = Vec::new();
         match self.snapshot.mut_processor(self.instant) {
             SnapshotProcessorRole::Sender(sender) => {
                 for snapshot_message in snapshot_messages {
@@ -1074,7 +1075,7 @@ impl<
                 }
 
                 while let Some(request) = sender.next_request() {
-                    out_messages.push(out_message::Msg::DeliverSnapshotRequest(request));
+                    out_messages.push(OutgoingMessage::DeliverSnapshotRequest(request));
                 }
             }
             SnapshotProcessorRole::Receiver(_) => {
@@ -1556,16 +1557,19 @@ mod test {
         envelope
     }
 
-    fn create_deliver_system_message_response(raft_message: &RaftMessage) -> out_message::Msg {
-        out_message::Msg::DeliverSystemMessage(DeliverSystemMessage {
-            recipient_replica_id: raft_message.to,
-            sender_replica_id: raft_message.from,
-            payload: Some(Payload {
-                contents: serialize_raft_message(raft_message).unwrap(),
+    fn create_deliver_system_message_response(raft_message: &RaftMessage) -> OutgoingMessage {
+        OutgoingMessage::DeliverSystemMessage(
+            DeliverSystemMessage {
+                recipient_replica_id: raft_message.to,
+                sender_replica_id: raft_message.from,
+                payload: Some(Payload {
+                    contents: serialize_raft_message(raft_message).unwrap(),
+                    ..Default::default()
+                }),
                 ..Default::default()
-            }),
-            ..Default::default()
-        })
+            },
+            raft_message.get_msg_type(),
+        )
     }
 
     fn create_send_messages_matcher(
@@ -2083,7 +2087,7 @@ mod test {
 
         fn expect_process_out_message(
             mut self,
-            message: out_message::Msg,
+            message: OutgoingMessage,
             result: Result<(), PalError>,
         ) -> CommunicationBuilder {
             self.mock_communication_module
@@ -3334,7 +3338,7 @@ mod test {
                 ))),
             )
             .expect_process_out_message(
-                wrap_deliver_snapshot_response_out(deliver_snapshot_response.clone()),
+                OutgoingMessage::DeliverSnapshotResponse(deliver_snapshot_response.clone()),
                 Ok(()),
             )
             .expect_make_tick()
@@ -3483,7 +3487,7 @@ mod test {
             .expect_init(node_id, get_default_comm_config(raft_config.clone()))
             .expect_process_cluster_change(vec![node_id])
             .expect_process_out_message(
-                wrap_deliver_snapshot_request_out(deliver_snapshot_request.clone()),
+                OutgoingMessage::DeliverSnapshotRequest(deliver_snapshot_request.clone()),
                 Ok(()),
             )
             .expect_make_tick()

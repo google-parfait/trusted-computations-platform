@@ -18,7 +18,7 @@ extern crate mockall;
 extern crate tcp_proto;
 
 use self::mockall::mock;
-use crate::communication::{CommunicationConfig, CommunicationModule};
+use crate::communication::{CommunicationConfig, CommunicationModule, OutgoingMessage};
 use crate::consensus;
 use crate::consensus::{Raft, RaftLightReady, RaftReady, Store};
 use crate::encryptor::Encryptor;
@@ -48,8 +48,8 @@ use raft::{
 };
 use slog::Logger;
 use tcp_proto::runtime::endpoint::{
-    in_message, out_message, raft_config::SnapshotConfig, DeliverSnapshotRequest,
-    DeliverSnapshotResponse, OutMessage, Payload, SecureChannelHandshake,
+    in_message, raft_config::SnapshotConfig, DeliverSnapshotRequest, DeliverSnapshotResponse,
+    OutMessage, Payload, SecureChannelHandshake,
 };
 
 mock! {
@@ -259,7 +259,7 @@ mock! {
             clock: Arc<dyn Clock>,
             config: CommunicationConfig);
 
-        fn process_out_message(&mut self, message: out_message::Msg) -> Result<(), PalError>;
+        fn process_out_message(&mut self, message: OutgoingMessage) -> Result<(), PalError>;
 
         fn process_in_message(
             &mut self,

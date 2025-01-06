@@ -29,6 +29,7 @@ use anyhow::anyhow;
 use hashbrown::HashMap;
 use oak_attestation_verification_types::util::Clock;
 use oak_proto_rust::oak::attestation::v1::{Endorsements, ReferenceValues};
+use raft::prelude::MessageType;
 use slog::{info, o, warn, Logger};
 use tcp_proto::runtime::endpoint::*;
 
@@ -45,6 +46,14 @@ pub struct CommunicationConfig {
     pub reference_values: ReferenceValues,
     // Endorsements for the trusted app that this replica represents.
     pub endorsements: Endorsements,
+}
+
+#[derive(PartialEq, Debug)]
+/// The type of OutgoingMessage handled by the communication module before being sent out to a replica.
+pub enum OutgoingMessage {
+    DeliverSystemMessage(DeliverSystemMessage, MessageType),
+    DeliverSnapshotRequest(DeliverSnapshotRequest),
+    DeliverSnapshotResponse(DeliverSnapshotResponse),
 }
 
 /// Responsible for managing communication between raft replicas such as
@@ -77,7 +86,7 @@ pub trait CommunicationModule {
     /// are ready to be sent.
     ///
     /// Returns `PalError` for unrecoverable errors which must lead to program termination.
-    fn process_out_message(&mut self, message: out_message::Msg) -> Result<(), PalError>;
+    fn process_out_message(&mut self, message: OutgoingMessage) -> Result<(), PalError>;
 
     /// Process an incoming message from another replica.
     ///
@@ -167,22 +176,18 @@ impl CommunicationModule for DefaultCommunicationModule {
         );
     }
 
-    fn process_out_message(&mut self, message: out_message::Msg) -> Result<(), PalError> {
+    fn process_out_message(&mut self, message: OutgoingMessage) -> Result<(), PalError> {
         self.check_initialized()?;
 
         let peer_replica_id = match &message {
-            out_message::Msg::DeliverSystemMessage(deliver_system_message) => {
+            OutgoingMessage::DeliverSystemMessage(deliver_system_message, _) => {
                 deliver_system_message.recipient_replica_id
             }
-            out_message::Msg::DeliverSnapshotRequest(deliver_snapshot_request) => {
+            OutgoingMessage::DeliverSnapshotRequest(deliver_snapshot_request) => {
                 deliver_snapshot_request.recipient_replica_id
             }
-            out_message::Msg::DeliverSnapshotResponse(deliver_snapshot_response) => {
+            OutgoingMessage::DeliverSnapshotResponse(deliver_snapshot_response) => {
                 deliver_snapshot_response.recipient_replica_id
-            }
-            _ => {
-                warn!(self.logger, "Message type {:?} is not supported.", message);
-                return Err(PalError::InvalidOperation);
             }
         };
 
@@ -323,7 +328,7 @@ pub struct CommunicationState {
     handshake_session: Option<Box<dyn HandshakeSession>>,
     // Unencrypted stashed messages that will be encrypted and sent out once
     // handshake completes.
-    unencrypted_messages: Vec<out_message::Msg>,
+    unencrypted_messages: Vec<OutgoingMessage>,
     encryptor: Option<Box<dyn Encryptor>>,
     handshake_initiated_tick_timeout: u32,
 }
@@ -407,7 +412,23 @@ impl CommunicationState {
         self.handshake_state = HandshakeState::Failed(0);
     }
 
-    fn process_out_message(&mut self, message: out_message::Msg) -> anyhow::Result<()> {
+    // Pushes a message to be sent. Deduplicating heartbeat messages by replacing the
+    // previous version if it is still present.
+    fn push_or_replace_unencrypted_message(&mut self, message: OutgoingMessage) {
+        if let OutgoingMessage::DeliverSystemMessage(_, MessageType::MsgHeartbeat) = message {
+            for message_in_place in &mut self.unencrypted_messages {
+                if let OutgoingMessage::DeliverSystemMessage(_, MessageType::MsgHeartbeat) =
+                    message_in_place
+                {
+                    *message_in_place = message;
+                    return;
+                }
+            }
+        }
+        self.unencrypted_messages.push(message);
+    }
+
+    fn process_out_message(&mut self, message: OutgoingMessage) -> anyhow::Result<()> {
         match &self.handshake_state {
             HandshakeState::Unknown => {
                 let err =
@@ -430,18 +451,18 @@ impl CommunicationState {
                     self.transition_to_failed(&err);
                     return Err(err);
                 }
-                self.unencrypted_messages.push(message);
+                self.push_or_replace_unencrypted_message(message);
                 self.handshake_state = HandshakeState::Initiated(0);
                 Ok(())
             }
             HandshakeState::Initiated(_) | HandshakeState::Completed => {
-                self.unencrypted_messages.push(message);
+                self.push_or_replace_unencrypted_message(message);
                 Ok(())
             }
             HandshakeState::Failed(_) => {
                 // Keep buffering messages even in Failed state so that they can be
                 // retried later.
-                self.unencrypted_messages.push(message);
+                self.push_or_replace_unencrypted_message(message);
                 warn!(self.logger, "HandshakeState Failed.");
                 Ok(())
             }
@@ -567,7 +588,7 @@ impl CommunicationState {
 
         for unencrypted_message in unencrypted_msgs {
             let result = match unencrypted_message {
-                out_message::Msg::DeliverSystemMessage(mut message) => encryptor
+                OutgoingMessage::DeliverSystemMessage(mut message, _) => encryptor
                     .encrypt(&message.payload.as_ref().unwrap().contents)
                     .and_then(|encrypted_message| {
                         message.payload = Some(encrypted_message);
@@ -576,7 +597,7 @@ impl CommunicationState {
                         });
                         Ok(())
                     }),
-                out_message::Msg::DeliverSnapshotRequest(mut message) => encryptor
+                OutgoingMessage::DeliverSnapshotRequest(mut message) => encryptor
                     .encrypt(&message.payload.as_ref().unwrap().contents)
                     .and_then(|encrypted_message| {
                         message.payload = Some(encrypted_message);
@@ -585,7 +606,7 @@ impl CommunicationState {
                         });
                         Ok(())
                     }),
-                out_message::Msg::DeliverSnapshotResponse(mut message) => encryptor
+                OutgoingMessage::DeliverSnapshotResponse(mut message) => encryptor
                     .encrypt(&message.payload.as_ref().unwrap().contents)
                     .and_then(|encrypted_message| {
                         message.payload = Some(encrypted_message.into());
@@ -594,10 +615,6 @@ impl CommunicationState {
                         });
                         Ok(())
                     }),
-                _ => Err(anyhow!(format!(
-                    "Unexpected message encountered for encryption {:?}",
-                    unencrypted_message
-                ))),
             };
 
             if result.is_err() {
@@ -628,7 +645,7 @@ mod test {
     extern crate mockall;
 
     use self::mockall::predicate::{always, eq};
-    use crate::communication::mem;
+    use crate::communication::{mem, OutgoingMessage};
     use crate::handshake::Role;
     use crate::logger::log::create_logger;
     use crate::mock::{
@@ -648,6 +665,7 @@ mod test {
     };
     use oak_proto_rust::oak::attestation::v1::{Endorsements, ReferenceValues};
     use prost::bytes::Bytes;
+    use raft::prelude::MessageType;
     use tcp_proto::runtime::endpoint::*;
 
     fn create_deliver_system_message(
@@ -744,10 +762,6 @@ mod test {
             sender_replica_id,
             encryption: None,
         }
-    }
-
-    fn create_unsupported_out_message() -> out_message::Msg {
-        out_message::Msg::StartReplica(StartReplicaResponse { replica_id: 0 })
     }
 
     fn create_unsupported_in_message() -> in_message::Msg {
@@ -943,8 +957,9 @@ mod test {
         // Invoking `process_out_message` before `init` should fail.
         assert_eq!(
             Err(PalError::InvalidOperation),
-            communication_module.process_out_message(out_message::Msg::DeliverSystemMessage(
-                create_deliver_system_message(self_replica_id, peer_replica_id_a)
+            communication_module.process_out_message(OutgoingMessage::DeliverSystemMessage(
+                create_deliver_system_message(self_replica_id, peer_replica_id_a),
+                MessageType::MsgHeartbeat,
             ))
         );
         let clock = MockClock::new();
@@ -962,31 +977,29 @@ mod test {
 
         assert_eq!(
             Ok(()),
-            communication_module.process_out_message(out_message::Msg::DeliverSystemMessage(
-                create_deliver_system_message(self_replica_id, peer_replica_id_a)
+            communication_module.process_out_message(OutgoingMessage::DeliverSystemMessage(
+                create_deliver_system_message(self_replica_id, peer_replica_id_a),
+                MessageType::MsgHeartbeat,
             ))
         );
         assert_eq!(
             Ok(()),
-            communication_module.process_out_message(out_message::Msg::DeliverSnapshotRequest(
+            communication_module.process_out_message(OutgoingMessage::DeliverSnapshotRequest(
                 create_deliver_snapshot_request(self_replica_id, peer_replica_id_a)
             ))
         );
         assert_eq!(
             Ok(()),
-            communication_module.process_out_message(out_message::Msg::DeliverSnapshotResponse(
+            communication_module.process_out_message(OutgoingMessage::DeliverSnapshotResponse(
                 create_deliver_snapshot_response(self_replica_id, peer_replica_id_a)
             ))
         );
         assert_eq!(
             Ok(()),
-            communication_module.process_out_message(out_message::Msg::DeliverSystemMessage(
-                create_deliver_system_message(self_replica_id, peer_replica_id_b)
+            communication_module.process_out_message(OutgoingMessage::DeliverSystemMessage(
+                create_deliver_system_message(self_replica_id, peer_replica_id_b),
+                MessageType::MsgHeartbeat
             ))
-        );
-        assert_eq!(
-            Err(PalError::InvalidOperation),
-            communication_module.process_out_message(create_unsupported_out_message())
         );
         assert_that!(
             communication_module.take_out_messages(),
@@ -1350,8 +1363,9 @@ mod test {
         // Handshake initiated from a to b.
         assert_eq!(
             Ok(()),
-            communication_module_a.process_out_message(out_message::Msg::DeliverSystemMessage(
-                deliver_sys_msg_unencrypted.clone()
+            communication_module_a.process_out_message(OutgoingMessage::DeliverSystemMessage(
+                deliver_sys_msg_unencrypted.clone(),
+                MessageType::MsgHeartbeat,
             ))
         );
         assert_eq!(
@@ -1394,7 +1408,7 @@ mod test {
         );
         assert_eq!(
             Ok(()),
-            communication_module_a.process_out_message(out_message::Msg::DeliverSnapshotRequest(
+            communication_module_a.process_out_message(OutgoingMessage::DeliverSnapshotRequest(
                 deliver_snapshot_req_unencrypted.clone()
             ))
         );
@@ -1576,8 +1590,9 @@ mod test {
         // First round trip of handshake messages.
         assert_eq!(
             Ok(()),
-            communication_module_a.process_out_message(out_message::Msg::DeliverSystemMessage(
-                deliver_sys_msg_unencrypted.clone()
+            communication_module_a.process_out_message(OutgoingMessage::DeliverSystemMessage(
+                deliver_sys_msg_unencrypted.clone(),
+                MessageType::MsgHeartbeat,
             ))
         );
         assert_eq!(
@@ -1642,7 +1657,7 @@ mod test {
         // Handshake complete so previously stashed messages can be sent out.
         assert_eq!(
             Ok(()),
-            communication_module_a.process_out_message(out_message::Msg::DeliverSnapshotRequest(
+            communication_module_a.process_out_message(OutgoingMessage::DeliverSnapshotRequest(
                 deliver_snapshot_req_unencrypted.clone()
             ))
         );
@@ -1737,8 +1752,9 @@ mod test {
 
         assert_eq!(
             Ok(()),
-            communication_module_a.process_out_message(out_message::Msg::DeliverSystemMessage(
-                deliver_system_message_a_to_b.clone()
+            communication_module_a.process_out_message(OutgoingMessage::DeliverSystemMessage(
+                deliver_system_message_a_to_b.clone(),
+                MessageType::MsgHeartbeat,
             ))
         );
         assert_eq!(
@@ -1769,14 +1785,16 @@ mod test {
         );
         assert_eq!(
             Ok(()),
-            communication_module_a.process_out_message(out_message::Msg::DeliverSystemMessage(
-                deliver_system_message_a_to_b.clone()
+            communication_module_a.process_out_message(OutgoingMessage::DeliverSystemMessage(
+                deliver_system_message_a_to_b.clone(),
+                MessageType::MsgHeartbeat,
             ))
         );
         assert_eq!(
             Ok(()),
-            communication_module_b.process_out_message(out_message::Msg::DeliverSystemMessage(
-                deliver_system_message_b_to_a.clone()
+            communication_module_b.process_out_message(OutgoingMessage::DeliverSystemMessage(
+                deliver_system_message_b_to_a.clone(),
+                MessageType::MsgHeartbeat,
             ))
         );
     }
@@ -1856,8 +1874,9 @@ mod test {
         // Handshake initiated from a to b.
         assert_eq!(
             Ok(()),
-            communication_module_a.process_out_message(out_message::Msg::DeliverSystemMessage(
-                deliver_system_message.clone()
+            communication_module_a.process_out_message(OutgoingMessage::DeliverSystemMessage(
+                deliver_system_message.clone(),
+                MessageType::MsgHeartbeat,
             ))
         );
         assert_eq!(
@@ -1876,8 +1895,9 @@ mod test {
         // Handshake is re-initiated when talking to `peer_replica_id_b` again later.
         assert_eq!(
             Ok(()),
-            communication_module_a.process_out_message(out_message::Msg::DeliverSystemMessage(
-                deliver_system_message.clone()
+            communication_module_a.process_out_message(OutgoingMessage::DeliverSystemMessage(
+                deliver_system_message.clone(),
+                MessageType::MsgHeartbeat,
             ))
         );
         assert_eq!(
@@ -2025,8 +2045,9 @@ mod test {
         // Initiate handshake.
         assert_eq!(
             Ok(()),
-            communication_module.process_out_message(out_message::Msg::DeliverSystemMessage(
-                deliver_system_message_1.clone()
+            communication_module.process_out_message(OutgoingMessage::DeliverSystemMessage(
+                deliver_system_message_1.clone(),
+                MessageType::MsgHeartbeat,
             ))
         );
         assert_eq!(
@@ -2047,8 +2068,9 @@ mod test {
         // Try sending messages in FAILED state which will be buffered.
         assert_eq!(
             Ok(()),
-            communication_module.process_out_message(out_message::Msg::DeliverSystemMessage(
-                deliver_system_message_2.clone()
+            communication_module.process_out_message(OutgoingMessage::DeliverSystemMessage(
+                deliver_system_message_2.clone(),
+                MessageType::MsgHeartbeatResponse,
             ))
         );
         // Taking out messages again should return empty since handshake has not completed.
@@ -2062,8 +2084,9 @@ mod test {
         // Initiate handshake again and succeed.
         assert_eq!(
             Ok(()),
-            communication_module.process_out_message(out_message::Msg::DeliverSystemMessage(
-                deliver_system_message_3.clone()
+            communication_module.process_out_message(OutgoingMessage::DeliverSystemMessage(
+                deliver_system_message_3.clone(),
+                MessageType::MsgHup,
             ))
         );
         assert_eq!(
@@ -2221,8 +2244,9 @@ mod test {
         // Initiate handshake.
         assert_eq!(
             Ok(()),
-            communication_module.process_out_message(out_message::Msg::DeliverSystemMessage(
-                deliver_system_message_1.clone()
+            communication_module.process_out_message(OutgoingMessage::DeliverSystemMessage(
+                deliver_system_message_1.clone(),
+                MessageType::MsgHeartbeat,
             ))
         );
         assert_eq!(
@@ -2241,8 +2265,9 @@ mod test {
         // Try sending messages in FAILED state which will be buffered.
         assert_eq!(
             Ok(()),
-            communication_module.process_out_message(out_message::Msg::DeliverSystemMessage(
-                deliver_system_message_2.clone()
+            communication_module.process_out_message(OutgoingMessage::DeliverSystemMessage(
+                deliver_system_message_2.clone(),
+                MessageType::MsgHeartbeatResponse,
             ))
         );
         // Taking out messages should return empty since handshake has not completed.
@@ -2255,8 +2280,9 @@ mod test {
         // Initiate handshake again and succeed.
         assert_eq!(
             Ok(()),
-            communication_module.process_out_message(out_message::Msg::DeliverSystemMessage(
-                deliver_system_message_3.clone()
+            communication_module.process_out_message(OutgoingMessage::DeliverSystemMessage(
+                deliver_system_message_3.clone(),
+                MessageType::MsgHup,
             ))
         );
         assert_eq!(
@@ -2292,6 +2318,173 @@ mod test {
                 }
             ],
             communication_module.take_out_messages()
+        );
+    }
+
+    #[test]
+    fn test_heartbeat_messages_are_deduplicated() {
+        let peer_replica_id_a = 11111;
+        let peer_replica_id_b = 22222;
+        let handshake_message_a_to_b =
+            create_secure_channel_handshake(peer_replica_id_a, peer_replica_id_b);
+        let handshake_message_b_to_a =
+            create_secure_channel_handshake(peer_replica_id_b, peer_replica_id_a);
+        let deliver_sys_msg_1_encrypted = create_deliver_system_message_with_contents(
+            peer_replica_id_a,
+            peer_replica_id_b,
+            "sys_msg_1_ciphertext".into(),
+        );
+        let deliver_sys_msg_1_unencrypted = create_deliver_system_message_with_contents(
+            peer_replica_id_a,
+            peer_replica_id_b,
+            "sys_msg_1_plaintext".into(),
+        );
+        let deliver_sys_msg_2_encrypted = create_deliver_system_message_with_contents(
+            peer_replica_id_a,
+            peer_replica_id_b,
+            "sys_msg_2_ciphertext".into(),
+        );
+        let deliver_sys_msg_2_unencrypted = create_deliver_system_message_with_contents(
+            peer_replica_id_a,
+            peer_replica_id_b,
+            "sys_msg_2_plaintext".into(),
+        );
+        let deliver_snapshot_req_encrypted = create_deliver_snapshot_request_with_contents(
+            peer_replica_id_a,
+            peer_replica_id_b,
+            "snapshot_req_ciphertext".into(),
+        );
+        let deliver_snapshot_req_unencrypted = create_deliver_snapshot_request_with_contents(
+            peer_replica_id_a,
+            peer_replica_id_b,
+            "snapshot_req_plaintext".into(),
+        );
+        let mock_encryptor_a = EncryptorBuilder::new()
+            .expect_encrypt(
+                deliver_snapshot_req_unencrypted
+                    .payload
+                    .as_ref()
+                    .unwrap()
+                    .contents
+                    .clone(),
+                Ok(Payload {
+                    contents: deliver_snapshot_req_encrypted
+                        .payload
+                        .as_ref()
+                        .unwrap()
+                        .contents
+                        .clone(),
+                    ..Default::default()
+                }),
+            )
+            .expect_encrypt(
+                deliver_sys_msg_2_unencrypted
+                    .payload
+                    .as_ref()
+                    .unwrap()
+                    .contents
+                    .clone(),
+                Ok(Payload {
+                    contents: deliver_sys_msg_2_encrypted
+                        .payload
+                        .as_ref()
+                        .unwrap()
+                        .contents
+                        .clone(),
+                    ..Default::default()
+                }),
+            )
+            .take();
+        let mock_handshake_session_a = HandshakeSessionBuilder::new()
+            .expect_take_out_message(Ok(Some(handshake_message_a_to_b.clone())))
+            .expect_process_message(handshake_message_b_to_a.clone(), Ok(()))
+            .expect_take_out_message(Ok(None))
+            .expect_is_completed(true)
+            .expect_get_encryptor(mock_encryptor_a)
+            .take();
+        let mock_handshake_session_provider_a = HandshakeSessionProviderBuilder::new()
+            .expect_init(ReferenceValues::default(), Endorsements::default())
+            .expect_get(
+                peer_replica_id_a,
+                peer_replica_id_b,
+                Role::Initiator,
+                mock_handshake_session_a,
+            )
+            .take();
+        let mut communication_module_a =
+            DefaultCommunicationModule::new(Box::new(mock_handshake_session_provider_a));
+        let clock_a = MockClock::new();
+        communication_module_a.init(
+            peer_replica_id_a,
+            create_logger(),
+            Arc::new(clock_a),
+            CommunicationConfig {
+                reference_values: ReferenceValues::default(),
+                endorsements: Endorsements::default(),
+                handshake_retry_tick: 1,
+                handshake_initiated_tick_timeout: 10,
+            },
+        );
+
+        // Handshake initiated from a to b.
+        assert_eq!(
+            Ok(()),
+            communication_module_a.process_out_message(OutgoingMessage::DeliverSystemMessage(
+                deliver_sys_msg_1_unencrypted.clone(),
+                MessageType::MsgHeartbeat,
+            ))
+        );
+        assert_eq!(
+            vec![OutMessage {
+                msg: Some(out_message::Msg::SecureChannelHandshake(
+                    handshake_message_a_to_b.clone()
+                ))
+            }],
+            communication_module_a.take_out_messages()
+        );
+        // Taking out messages again should return empty since handshake has not completed.
+        assert_eq!(
+            Vec::<OutMessage>::new(),
+            communication_module_a.take_out_messages()
+        );
+
+        // Handshake response received by a. It should now be ok to return previously
+        // stashed messages.
+        assert_eq!(
+            Ok(None),
+            communication_module_a.process_in_message(in_message::Msg::SecureChannelHandshake(
+                handshake_message_b_to_a.clone()
+            ))
+        );
+        assert_eq!(
+            Ok(()),
+            communication_module_a.process_out_message(OutgoingMessage::DeliverSnapshotRequest(
+                deliver_snapshot_req_unencrypted.clone()
+            ))
+        );
+
+        // This second heartbeat message should overwrite the first.
+        assert_eq!(
+            Ok(()),
+            communication_module_a.process_out_message(OutgoingMessage::DeliverSystemMessage(
+                deliver_sys_msg_2_unencrypted.clone(),
+                MessageType::MsgHeartbeat,
+            ))
+        );
+        assert_eq!(
+            vec![
+                OutMessage {
+                    msg: Some(out_message::Msg::DeliverSystemMessage(
+                        deliver_sys_msg_2_encrypted.clone()
+                    ))
+                },
+                OutMessage {
+                    msg: Some(out_message::Msg::DeliverSnapshotRequest(
+                        deliver_snapshot_req_encrypted.clone()
+                    ))
+                }
+            ],
+            communication_module_a.take_out_messages()
         );
     }
 }
