@@ -184,7 +184,7 @@ impl ClientHandshakeSession {
     }
 
     fn transition_to_failed(&mut self, err: &Error) {
-        warn!(self.logger, "{}", err);
+        warn!(self.logger, "{:?}", err);
         self.state = State::Failed;
     }
 
