@@ -22,11 +22,13 @@ cargo_build_script(
         "PROTOC": "$(execpath @com_google_protobuf//:protoc)",
         "DESCRIPTOR_PROTO": "$(location @com_google_protobuf//:descriptor_proto_srcs)",
         "DIGEST_PROTO": "$(location @oak//proto:digest.proto)",
+        "VARIANT_PROTO": "$(location @oak//proto:variant.proto)",
     },
     data = glob(["src/*.proto"]) + [
         "@com_google_protobuf//:descriptor_proto_srcs",
         "@com_google_protobuf//:well_known_type_protos",
         "@oak//proto:digest.proto",
+        "@oak//proto:variant.proto",
         "@oak//proto/attestation:endorsement.proto",
         "@oak//proto/attestation:eventlog.proto",
         "@oak//proto/attestation:evidence.proto",

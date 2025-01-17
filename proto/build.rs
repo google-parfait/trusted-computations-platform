@@ -27,6 +27,10 @@ fn main() -> Result<()> {
                 .unwrap()
                 .strip_suffix("/proto/digest.proto")
                 .unwrap(),
+            std::env::var("VARIANT_PROTO")
+                .unwrap()
+                .strip_suffix("/proto/variant.proto")
+                .unwrap(),
         ],
         micro_rpc_build::CompileOptions {
             bytes: vec![
