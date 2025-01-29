@@ -14,7 +14,7 @@
 
 syntax = "proto3";
 
-package runtime.endpoint;
+package trustedcompute.runtime.endpoint;
 
 import "proto/attestation/endorsement.proto";
 import "proto/attestation/reference_value.proto";

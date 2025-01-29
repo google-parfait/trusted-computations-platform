@@ -20,7 +20,13 @@ extern crate prost;
 pub mod runtime {
     pub mod endpoint {
         use prost::Message;
-        include!(concat!(env!("OUT_DIR"), "/runtime.endpoint.rs"));
-        include!(concat!(env!("OUT_DIR"), "/tonic/runtime.endpoint.rs"));
+        include!(concat!(
+            env!("OUT_DIR"),
+            "/trustedcompute.runtime.endpoint.rs"
+        ));
+        include!(concat!(
+            env!("OUT_DIR"),
+            "/tonic/trustedcompute.runtime.endpoint.rs"
+        ));
     }
 }

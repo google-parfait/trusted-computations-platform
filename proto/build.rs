@@ -33,27 +33,20 @@ fn main() -> anyhow::Result<()> {
         &includes,
         micro_rpc_build::CompileOptions {
             bytes: vec![
-                ".runtime.endpoint.StartReplicaRequest".to_string(),
-                ".runtime.endpoint.DeliverSystemMessage".to_string(),
-                ".runtime.endpoint.DeliverSnapshotRequest".to_string(),
-                ".runtime.endpoint.DeliverSnapshotResponse".to_string(),
-                ".runtime.endpoint.ExecuteProposalRequest".to_string(),
-                ".runtime.endpoint.ExecuteProposalResponse".to_string(),
-                ".runtime.endpoint.DeliverAppMessage".to_string(),
-                ".runtime.endpoint.Entry".to_string(),
-                ".runtime.endpoint.Payload".to_string(),
+                ".trustedcompute.runtime.endpoint.StartReplicaRequest".to_string(),
+                ".trustedcompute.runtime.endpoint.DeliverSystemMessage".to_string(),
+                ".trustedcompute.runtime.endpoint.DeliverSnapshotRequest".to_string(),
+                ".trustedcompute.runtime.endpoint.DeliverSnapshotResponse".to_string(),
+                ".trustedcompute.runtime.endpoint.ExecuteProposalRequest".to_string(),
+                ".trustedcompute.runtime.endpoint.ExecuteProposalResponse".to_string(),
+                ".trustedcompute.runtime.endpoint.DeliverAppMessage".to_string(),
+                ".trustedcompute.runtime.endpoint.Entry".to_string(),
+                ".trustedcompute.runtime.endpoint.Payload".to_string(),
             ],
-            extern_paths: vec![
-                micro_rpc_build::ExternPath::new(
-                    ".oak.attestation.v1",
-                    "::oak_proto_rust::oak::attestation::v1",
-                ),
-                micro_rpc_build::ExternPath::new(
-                    ".oak.session.v1",
-                    "::oak_proto_rust::oak::session::v1",
-                ),
-                micro_rpc_build::ExternPath::new(".oak", "::oak_proto_rust::oak"),
-            ],
+            extern_paths: vec![micro_rpc_build::ExternPath::new(
+                ".oak",
+                "::oak_proto_rust::oak",
+            )],
             ..Default::default()
         },
     );
@@ -67,7 +60,7 @@ fn main() -> anyhow::Result<()> {
         .out_dir(tonic_dir)
         .extern_path(".oak", "::oak_proto_rust::oak")
         // Reuse the protos produced by `micro_rpc_build::compile`.
-        .extern_path(".runtime", "crate::runtime")
+        .extern_path(".trustedcompute", "crate")
         .compile(&protos, &includes)?;
 
     Ok(())
