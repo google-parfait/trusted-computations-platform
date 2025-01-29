@@ -53,6 +53,12 @@ TCP_PACKAGES = _COMMON_PACKAGES | {
     "slog-term": crate.spec(
         version = "2.9.0",
     ),
+    "tonic": crate.spec(
+        # Remove TLS features added by Oak to avoid depending on the ring crate,
+        # which doesn't compile with our toolchain.
+        features = ["gzip"],
+        version = "0.11.0",
+    ),
 }
 
 # Crates used for no_std builds.

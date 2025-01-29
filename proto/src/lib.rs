@@ -12,7 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-#![no_std]
+#![cfg_attr(not(feature = "std"), no_std)]
 #![feature(never_type)]
 
 extern crate prost;
@@ -21,5 +21,6 @@ pub mod runtime {
     pub mod endpoint {
         use prost::Message;
         include!(concat!(env!("OUT_DIR"), "/runtime.endpoint.rs"));
+        include!(concat!(env!("OUT_DIR"), "/tonic/runtime.endpoint.rs"));
     }
 }

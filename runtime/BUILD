@@ -19,8 +19,9 @@ rust_library(
     srcs = glob(["src/**"]),
     crate_features = select({
         "@platforms//os:linux": [
-            "testing",
             "std",
+            "testing",
+            "tonic",
         ],
         "//conditions:default": [],
     }),
@@ -44,8 +45,11 @@ rust_library(
         "@raft_rs//:raft",
     ] + select({
         "@platforms//os:linux": [
+            "@oak//oak_containers_sdk",
             "@oak_crates_index//:mockall",
             "@oak_crates_index//:slog-term",
+            "@oak_crates_index//:tokio",
+            "@oak_crates_index//:tonic",
         ],
         "//conditions:default": [],
     }),

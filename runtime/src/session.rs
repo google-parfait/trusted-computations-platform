@@ -89,7 +89,7 @@ pub trait OakAttesterFactory {
     fn get(&self) -> Result<Box<dyn Attester>>;
 }
 
-// Default implementation of `OakSessionBinderFactory`.
+// Default implementation of `OakSessionBinderFactory` for the Restricted Kernel.
 pub struct DefaultOakSessionBinderFactory {}
 
 impl OakSessionBinderFactory for DefaultOakSessionBinderFactory {
@@ -98,12 +98,60 @@ impl OakSessionBinderFactory for DefaultOakSessionBinderFactory {
     }
 }
 
-// Default implementation of `OakAttesterFactory`.
+// Default implementation of `OakSessionBinderFactory` for Oak Containers.
+#[cfg(feature = "std")]
+pub struct OakContainersSessionBinderFactory {
+    signer: oak_containers_sdk::crypto::InstanceSigner,
+}
+
+#[cfg(feature = "std")]
+impl OakContainersSessionBinderFactory {
+    pub async fn create() -> anyhow::Result<Self> {
+        Ok(Self {
+            signer: oak_containers_sdk::crypto::InstanceSigner::create().await?,
+        })
+    }
+}
+
+#[cfg(feature = "std")]
+impl OakSessionBinderFactory for OakContainersSessionBinderFactory {
+    fn get(&self) -> Result<Box<dyn SessionBinder>> {
+        let binder = oak_session::session_binding::SignatureBinderBuilder::default()
+            .signer(Box::new(self.signer.clone()))
+            .build()
+            .map_err(anyhow::Error::msg)?;
+        Ok(Box::new(binder))
+    }
+}
+
+// Default implementation of `OakAttesterFactory` for the Restricted Kernel.
 pub struct DefaultOakAttesterFactory {}
 
 impl OakAttesterFactory for DefaultOakAttesterFactory {
     fn get(&self) -> Result<Box<dyn Attester>> {
         Ok(Box::new(InstanceAttester::create()?))
+    }
+}
+
+// Default implementation of `OakAttesterFactory` for Oak Containers.
+#[cfg(feature = "std")]
+pub struct OakContainersAttesterFactory {
+    attester: oak_containers_sdk::InstanceAttester,
+}
+
+#[cfg(feature = "std")]
+impl OakContainersAttesterFactory {
+    pub async fn create() -> Result<Self> {
+        Ok(Self {
+            attester: oak_containers_sdk::InstanceAttester::create().await?,
+        })
+    }
+}
+
+#[cfg(feature = "std")]
+impl OakAttesterFactory for OakContainersAttesterFactory {
+    fn get(&self) -> Result<Box<dyn Attester>> {
+        Ok(Box::new(self.attester.clone()))
     }
 }
 

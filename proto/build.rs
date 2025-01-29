@@ -12,22 +12,25 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-use std::io::Result;
+fn main() -> anyhow::Result<()> {
+    let protos = ["src/endpoint.proto"];
+    let includes = [
+        "src".to_string(),
+        std::env::var("DESCRIPTOR_PROTO")
+            .unwrap()
+            .strip_suffix("/google/protobuf/descriptor.proto")
+            .unwrap()
+            .to_string(),
+        std::env::var("DIGEST_PROTO")
+            .unwrap()
+            .strip_suffix("/proto/digest.proto")
+            .unwrap()
+            .to_string(),
+    ];
 
-fn main() -> Result<()> {
     micro_rpc_build::compile(
-        &["src/endpoint.proto"],
-        &[
-            "src",
-            std::env::var("DESCRIPTOR_PROTO")
-                .unwrap()
-                .strip_suffix("/google/protobuf/descriptor.proto")
-                .unwrap(),
-            std::env::var("DIGEST_PROTO")
-                .unwrap()
-                .strip_suffix("/proto/digest.proto")
-                .unwrap(),
-        ],
+        &protos,
+        &includes,
         micro_rpc_build::CompileOptions {
             bytes: vec![
                 ".runtime.endpoint.StartReplicaRequest".to_string(),
@@ -49,10 +52,23 @@ fn main() -> Result<()> {
                     ".oak.session.v1",
                     "::oak_proto_rust::oak::session::v1",
                 ),
+                micro_rpc_build::ExternPath::new(".oak", "::oak_proto_rust::oak"),
             ],
             ..Default::default()
         },
     );
     oak_proto_build_utils::fix_prost_derives().unwrap();
+
+    let tonic_dir = std::path::Path::new(&std::env::var("OUT_DIR")?).join("tonic");
+    std::fs::create_dir(&tonic_dir)?;
+    tonic_build::configure()
+        .build_client(false)
+        .server_mod_attribute(".", "#[cfg(feature = \"tonic\")]")
+        .out_dir(tonic_dir)
+        .extern_path(".oak", "::oak_proto_rust::oak")
+        // Reuse the protos produced by `micro_rpc_build::compile`.
+        .extern_path(".runtime", "crate::runtime")
+        .compile(&protos, &includes)?;
+
     Ok(())
 }

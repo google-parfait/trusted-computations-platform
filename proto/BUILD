@@ -41,12 +41,21 @@ cargo_build_script(
     deps = [
         "@oak//micro_rpc_build",
         "@oak//oak_proto_build_utils",
+        "@oak_crates_index//:anyhow",
+        "@oak_crates_index//:tonic-build",
     ],
 )
 
 rust_library(
     name = "tcp_proto",
     srcs = glob(["src/*.rs"]),
+    crate_features = select({
+        "@platforms//os:linux": [
+            "std",
+            "tonic",
+        ],
+        "//conditions:default": [],
+    }),
     proc_macro_deps = ["@oak_crates_index//:prost-derive"],
     visibility = ["//visibility:public"],
     deps = [
@@ -54,5 +63,8 @@ rust_library(
         "@oak//micro_rpc",
         "@oak//oak_proto_rust",
         "@oak_crates_index//:prost",
-    ],
+    ] + select({
+        "@platforms//os:linux": ["@oak_crates_index//:tonic"],
+        "//conditions:default": [],
+    }),
 )

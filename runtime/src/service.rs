@@ -33,9 +33,15 @@ use crate::{
 use alloc::boxed::Box;
 use alloc::vec::Vec;
 use core::mem;
+#[cfg(feature = "tonic")]
+use tcp_proto::runtime::endpoint::endpoint_service_server;
 use tcp_proto::runtime::endpoint::{
     EndpointService, OutMessage, ReceiveMessageRequest, ReceiveMessageResponse,
 };
+#[cfg(feature = "tonic")]
+use tokio::sync::{mpsc, oneshot};
+#[cfg(feature = "tonic")]
+use tonic::{Request, Response};
 
 struct ApplicationHost {
     messages: Vec<OutMessage>,
@@ -63,6 +69,8 @@ impl Host for ApplicationHost {
     }
 }
 
+// A micro_rpc EndpointService implementation that delivers messages to an
+// Actor. This class should be used with the Restricted Kernel.
 pub struct ApplicationService<A: Actor> {
     driver: Driver<
         RaftSimple<MemoryStorage>,
@@ -115,5 +123,135 @@ impl<A: Actor> EndpointService for ApplicationService<A> {
         };
 
         Ok(response)
+    }
+}
+
+// A gRPC (Tonic) EndpointService implementation that delivers messages to an
+// Actor. This class should be used with Oak Containers.
+#[cfg(feature = "tonic")]
+pub struct TonicApplicationService {
+    // A channel for sending requests to the Driver. Each request is paired with a sender to receive
+    // the response.
+    sender: Option<
+        mpsc::Sender<(
+            ReceiveMessageRequest,
+            oneshot::Sender<Result<ReceiveMessageResponse, Status>>,
+        )>,
+    >,
+
+    /// The handle to a thread that handles all interactions with the Driver.
+    join_handle: Option<tokio::task::JoinHandle<()>>,
+}
+
+#[cfg(feature = "tonic")]
+impl TonicApplicationService {
+    /// Creates a new `TonicApplicationService` with the `Actor` created by the factory. The factory
+    /// ensures that the Actor can be placed on another thread even if it is not `Send`.
+    pub fn new<A, F>(factory: F) -> Self
+    where
+        A: Actor,
+        F: FnOnce() -> A + Send + 'static,
+    {
+        // Create a new thread to serialize all interactions with the Driver, which isn't
+        // thread-safe.
+        let (tx, rx) = mpsc::channel::<(
+            ReceiveMessageRequest,
+            oneshot::Sender<Result<ReceiveMessageResponse, Status>>,
+        )>(1);
+        let join_handle = tokio::task::spawn_blocking(move || Self::run_driver_loop(factory(), rx));
+        Self {
+            sender: Some(tx),
+            join_handle: Some(join_handle),
+        }
+    }
+
+    fn run_driver_loop<A: Actor>(
+        actor: A,
+        mut rx: mpsc::Receiver<(
+            ReceiveMessageRequest,
+            oneshot::Sender<Result<ReceiveMessageResponse, Status>>,
+        )>,
+    ) {
+        let mut driver = tokio::runtime::Handle::current()
+            .block_on(Self::new_driver(actor))
+            .expect("failed to create Driver");
+        while let Some((request, tx)) = rx.blocking_recv() {
+            let mut host = ApplicationHost::new();
+            driver
+                .receive_message(&mut host, request.instant, request.message)
+                .expect("application has encountered an unrecoverable error");
+            tx.send(Ok(ReceiveMessageResponse {
+                messages: host.take_messages(),
+            }))
+            .expect("failed to send receive_message response");
+        }
+    }
+
+    async fn new_driver<A: Actor>(
+        actor: A,
+    ) -> anyhow::Result<
+        Driver<
+            RaftSimple<MemoryStorage>,
+            MemoryStorage,
+            DefaultSnapshotProcessor,
+            A,
+            DefaultCommunicationModule,
+        >,
+    > {
+        let (session_binder_factory, attester_factory) = tokio::try_join!(
+            crate::session::OakContainersSessionBinderFactory::create(),
+            crate::session::OakContainersAttesterFactory::create(),
+        )?;
+
+        Ok(Driver::new(
+            RaftSimple::new(),
+            Box::new(MemoryStorage::new),
+            DefaultSnapshotProcessor::new(
+                Box::new(DefaultSnapshotSender::new()),
+                Box::new(DefaultSnapshotReceiver::new()),
+            ),
+            actor,
+            DefaultCommunicationModule::new(Box::new(DefaultHandshakeSessionProvider::new(
+                Box::new(DefaultOakSessionFactory::new(
+                    Box::new(session_binder_factory),
+                    Box::new(attester_factory),
+                )),
+            ))),
+        ))
+    }
+}
+
+#[cfg(feature = "tonic")]
+impl Drop for TonicApplicationService {
+    fn drop(&mut self) {
+        // Close the channel to signal the thread to exit.
+        drop(self.sender.take());
+        if let Err(err) =
+            tokio::runtime::Handle::current().block_on(self.join_handle.take().unwrap())
+        {
+            std::panic::resume_unwind(Box::new(err));
+        }
+    }
+}
+
+#[cfg(feature = "tonic")]
+#[tonic::async_trait]
+impl endpoint_service_server::EndpointService for TonicApplicationService {
+    async fn receive_message(
+        &self,
+        request: Request<ReceiveMessageRequest>,
+    ) -> Result<Response<ReceiveMessageResponse>, tonic::Status> {
+        let (tx, rx) = oneshot::channel();
+        self.sender
+            .as_ref()
+            .unwrap()
+            .send((request.into_inner(), tx))
+            .await
+            .map_err(|err| tonic::Status::internal(format!("failed to send: {}", err)))?;
+        let response = rx
+            .await
+            .map_err(|err| tonic::Status::internal(format!("failed to receive response: {}", err)))?
+            .map_err(|err| tonic::Status::new((err.code as i32).into(), err.message))?;
+        Ok(Response::new(response))
     }
 }
