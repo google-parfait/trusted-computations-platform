@@ -44,7 +44,7 @@ rust_library(
     }),
     proc_macro_deps = ["@oak_crates_index//:prost-derive"],
     visibility = [
-        "//apps/atomic_counter/app:__pkg__",
+        "//apps/atomic_counter:__subpackages__",
     ],
     deps = [
         ":build",
