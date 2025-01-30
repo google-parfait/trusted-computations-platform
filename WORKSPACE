@@ -46,11 +46,25 @@ load("@com_google_protobuf//:protobuf_deps.bzl", "protobuf_deps")
 protobuf_deps()
 
 http_archive(
+    name = "rules_pkg",
+    patches = ["//third_party/rules_pkg:tar.patch"],
+    sha256 = "d20c951960ed77cb7b341c2a59488534e494d5ad1d30c4818c736d57772a9fef",
+    urls = [
+        "https://mirror.bazel.build/github.com/bazelbuild/rules_pkg/releases/download/1.0.1/rules_pkg-1.0.1.tar.gz",
+        "https://github.com/bazelbuild/rules_pkg/releases/download/1.0.1/rules_pkg-1.0.1.tar.gz",
+    ],
+)
+
+http_archive(
     name = "aspect_bazel_lib",
     sha256 = "b59781939f40c8bf148f4a71bd06e3027e15e40e98143ea5688b83531ec8528f",
     strip_prefix = "bazel-lib-2.7.6",
     url = "https://github.com/aspect-build/bazel-lib/releases/download/v2.7.6/bazel-lib-v2.7.6.tar.gz",
 )
+
+load("@aspect_bazel_lib//lib:repositories.bzl", "register_yq_toolchains")
+
+register_yq_toolchains()
 
 http_archive(
     name = "rules_proto",
@@ -150,6 +164,31 @@ http_archive(
     sha256 = "e755de7613e7105c3bf90fb7742887cce7c7276723f16a9d1fe7c6053bd91973",
     strip_prefix = "raft-rs-10968a112dcc4143ad19a1b35b6dca6e30d2e439",
     url = "https://github.com/google-parfait/raft-rs/archive/10968a112dcc4143ad19a1b35b6dca6e30d2e439.tar.gz",
+)
+
+# Bazel rules for building OCI images and runtime bundles.
+http_archive(
+    name = "rules_oci",
+    sha256 = "1bd16e455278d523f01326e0c3964cd64d7840a7e99cdd6e2617e59f698f3504",
+    strip_prefix = "rules_oci-2.2.0",
+    url = "https://github.com/bazel-contrib/rules_oci/releases/download/v2.2.0/rules_oci-v2.2.0.tar.gz",
+)
+
+load("@rules_oci//oci:dependencies.bzl", "rules_oci_dependencies")
+
+rules_oci_dependencies()
+
+load("@rules_oci//oci:repositories.bzl", "oci_register_toolchains")
+
+oci_register_toolchains(name = "oci")
+
+load("@rules_oci//oci:pull.bzl", "oci_pull")
+
+oci_pull(
+    name = "distroless_cc_debian12",
+    digest = "sha256:6714977f9f02632c31377650c15d89a7efaebf43bab0f37c712c30fc01edb973",
+    image = "gcr.io/distroless/cc-debian12",
+    platforms = ["linux/amd64"],
 )
 
 # Hacks

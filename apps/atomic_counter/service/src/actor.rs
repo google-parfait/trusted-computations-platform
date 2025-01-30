@@ -43,13 +43,53 @@ pub struct CounterValue {
 }
 
 pub struct CounterActor {
+    reference_values: ReferenceValues,
     context: Option<Box<dyn ActorContext>>,
     values: HashMap<String, CounterValue>,
 }
 
 impl CounterActor {
     pub fn new() -> Self {
+        let skip = BinaryReferenceValue {
+            r#type: Some(binary_reference_value::Type::Skip(
+                SkipVerification::default(),
+            )),
+        };
+        Self::new_with_reference_values(ReferenceValues {
+            r#type: Some(reference_values::Type::OakRestrictedKernel(
+                OakRestrictedKernelReferenceValues {
+                    root_layer: Some(RootLayerReferenceValues {
+                        insecure: Some(InsecureReferenceValues::default()),
+                        ..Default::default()
+                    }),
+                    kernel_layer: Some(KernelLayerReferenceValues {
+                        kernel: Some(KernelBinaryReferenceValue {
+                            r#type: Some(kernel_binary_reference_value::Type::Skip(
+                                SkipVerification::default(),
+                            )),
+                        }),
+                        kernel_cmd_line_text: Some(TextReferenceValue {
+                            r#type: Some(text_reference_value::Type::Skip(
+                                SkipVerification::default(),
+                            )),
+                        }),
+                        init_ram_fs: Some(skip.clone()),
+                        memory_map: Some(skip.clone()),
+                        acpi: Some(skip.clone()),
+                        ..Default::default()
+                    }),
+                    application_layer: Some(ApplicationLayerReferenceValues {
+                        binary: Some(skip.clone()),
+                        configuration: Some(skip.clone()),
+                    }),
+                },
+            )),
+        })
+    }
+
+    pub fn new_with_reference_values(reference_values: ReferenceValues) -> Self {
         CounterActor {
+            reference_values,
             context: None,
             values: HashMap::new(),
         }
@@ -271,40 +311,6 @@ impl Actor for CounterActor {
     }
 
     fn get_reference_values(&self) -> ReferenceValues {
-        let skip = BinaryReferenceValue {
-            r#type: Some(binary_reference_value::Type::Skip(
-                SkipVerification::default(),
-            )),
-        };
-        ReferenceValues {
-            r#type: Some(reference_values::Type::OakRestrictedKernel(
-                OakRestrictedKernelReferenceValues {
-                    root_layer: Some(RootLayerReferenceValues {
-                        insecure: Some(InsecureReferenceValues::default()),
-                        ..Default::default()
-                    }),
-                    kernel_layer: Some(KernelLayerReferenceValues {
-                        kernel: Some(KernelBinaryReferenceValue {
-                            r#type: Some(kernel_binary_reference_value::Type::Skip(
-                                SkipVerification::default(),
-                            )),
-                        }),
-                        kernel_cmd_line_text: Some(TextReferenceValue {
-                            r#type: Some(text_reference_value::Type::Skip(
-                                SkipVerification::default(),
-                            )),
-                        }),
-                        init_ram_fs: Some(skip.clone()),
-                        memory_map: Some(skip.clone()),
-                        acpi: Some(skip.clone()),
-                        ..Default::default()
-                    }),
-                    application_layer: Some(ApplicationLayerReferenceValues {
-                        binary: Some(skip.clone()),
-                        configuration: Some(skip.clone()),
-                    }),
-                },
-            )),
-        }
+        self.reference_values.clone()
     }
 }
