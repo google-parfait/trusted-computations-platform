@@ -46,6 +46,7 @@ rust_library(
     ] + select({
         "@platforms//os:linux": [
             "@oak//oak_containers_sdk",
+            "@oak//oak_sdk/common:oak_sdk_common",
             "@oak_crates_index//:mockall",
             "@oak_crates_index//:slog-term",
             "@oak_crates_index//:tokio",

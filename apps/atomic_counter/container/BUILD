@@ -26,6 +26,7 @@ rust_binary(
         "//runtime:tcp_runtime",
         "@oak//oak_containers_sdk",
         "@oak//oak_proto_rust",
+        "@oak//oak_sdk/containers:oak_sdk_containers",
         "@oak_crates_index//:anyhow",
         "@oak_crates_index//:log",
         "@oak_crates_index//:tokio",

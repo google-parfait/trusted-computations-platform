@@ -147,7 +147,11 @@ pub struct TonicApplicationService {
 impl TonicApplicationService {
     /// Creates a new `TonicApplicationService` with the `Actor` created by the factory. The factory
     /// ensures that the Actor can be placed on another thread even if it is not `Send`.
-    pub fn new<A, F>(factory: F) -> Self
+    pub fn new<A, F>(
+        channel: tonic::transport::channel::Channel,
+        evidence: oak_proto_rust::oak::attestation::v1::Evidence,
+        factory: F,
+    ) -> Self
     where
         A: Actor,
         F: FnOnce() -> A + Send + 'static,
@@ -158,7 +162,9 @@ impl TonicApplicationService {
             ReceiveMessageRequest,
             oneshot::Sender<Result<ReceiveMessageResponse, Status>>,
         )>(1);
-        let join_handle = tokio::task::spawn_blocking(move || Self::run_driver_loop(factory(), rx));
+        let join_handle = tokio::task::spawn_blocking(move || {
+            Self::run_driver_loop(factory(), &channel, evidence, rx)
+        });
         Self {
             sender: Some(tx),
             join_handle: Some(join_handle),
@@ -167,14 +173,14 @@ impl TonicApplicationService {
 
     fn run_driver_loop<A: Actor>(
         actor: A,
+        channel: &tonic::transport::channel::Channel,
+        evidence: oak_proto_rust::oak::attestation::v1::Evidence,
         mut rx: mpsc::Receiver<(
             ReceiveMessageRequest,
             oneshot::Sender<Result<ReceiveMessageResponse, Status>>,
         )>,
     ) {
-        let mut driver = tokio::runtime::Handle::current()
-            .block_on(Self::new_driver(actor))
-            .expect("failed to create Driver");
+        let mut driver = Self::new_driver(actor, channel, evidence);
         while let Some((request, tx)) = rx.blocking_recv() {
             let mut host = ApplicationHost::new();
             driver
@@ -187,23 +193,18 @@ impl TonicApplicationService {
         }
     }
 
-    async fn new_driver<A: Actor>(
+    fn new_driver<A: Actor>(
         actor: A,
-    ) -> anyhow::Result<
-        Driver<
-            RaftSimple<MemoryStorage>,
-            MemoryStorage,
-            DefaultSnapshotProcessor,
-            A,
-            DefaultCommunicationModule,
-        >,
+        channel: &tonic::transport::channel::Channel,
+        evidence: oak_proto_rust::oak::attestation::v1::Evidence,
+    ) -> Driver<
+        RaftSimple<MemoryStorage>,
+        MemoryStorage,
+        DefaultSnapshotProcessor,
+        A,
+        DefaultCommunicationModule,
     > {
-        let (session_binder_factory, attester_factory) = tokio::try_join!(
-            crate::session::OakContainersSessionBinderFactory::create(),
-            crate::session::OakContainersAttesterFactory::create(),
-        )?;
-
-        Ok(Driver::new(
+        Driver::new(
             RaftSimple::new(),
             Box::new(MemoryStorage::new),
             DefaultSnapshotProcessor::new(
@@ -213,11 +214,13 @@ impl TonicApplicationService {
             actor,
             DefaultCommunicationModule::new(Box::new(DefaultHandshakeSessionProvider::new(
                 Box::new(DefaultOakSessionFactory::new(
-                    Box::new(session_binder_factory),
-                    Box::new(attester_factory),
+                    Box::new(crate::session::OakContainersSessionBinderFactory::new(
+                        channel,
+                    )),
+                    Box::new(crate::session::OakContainersAttesterFactory::new(evidence)),
                 )),
             ))),
-        ))
+        )
     }
 }
 

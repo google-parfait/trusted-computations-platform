@@ -12,7 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-use anyhow::Context;
+use anyhow::{anyhow, Context};
 use oak_containers_sdk::OrchestratorClient;
 use oak_proto_rust::oak::attestation::v1::{
     binary_reference_value, kernel_binary_reference_value, reference_values, text_reference_value,
@@ -70,16 +70,24 @@ async fn main() -> anyhow::Result<()> {
     // information through debug logs.
     log::set_max_level(log::LevelFilter::Warn);
 
-    OrchestratorClient::create()
+    let channel = oak_sdk_containers::default_orchestrator_channel()
         .await
-        .context("couldn't create OrchestratorClient")?
+        .context("failed to create orchestrator channel")?;
+    let mut orchestrator_client = OrchestratorClient::create(&channel);
+    let evidence = orchestrator_client
+        .get_endorsed_evidence()
+        .await
+        .context("failed to get endorsed evidence")?
+        .evidence
+        .ok_or_else(|| anyhow!("EndorsedEvidence.evidence not set"))?;
+    let service = TonicApplicationService::new(channel, evidence, || {
+        CounterActor::new_with_reference_values(get_reference_values())
+    });
+
+    orchestrator_client
         .notify_app_ready()
         .await
         .context("failed to notify that app is ready")?;
-
-    let service = TonicApplicationService::new(|| {
-        CounterActor::new_with_reference_values(get_reference_values())
-    });
     tonic::transport::Server::builder()
         .add_service(EndpointServiceServer::new(service))
         .serve("[::]:8080".parse()?)

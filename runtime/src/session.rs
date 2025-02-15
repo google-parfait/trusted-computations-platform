@@ -106,10 +106,10 @@ pub struct OakContainersSessionBinderFactory {
 
 #[cfg(feature = "std")]
 impl OakContainersSessionBinderFactory {
-    pub async fn create() -> anyhow::Result<Self> {
-        Ok(Self {
-            signer: oak_containers_sdk::crypto::InstanceSigner::create().await?,
-        })
+    pub fn new(channel: &tonic::transport::channel::Channel) -> Self {
+        Self {
+            signer: oak_containers_sdk::crypto::InstanceSigner::create(channel),
+        }
     }
 }
 
@@ -136,22 +136,22 @@ impl OakAttesterFactory for DefaultOakAttesterFactory {
 // Default implementation of `OakAttesterFactory` for Oak Containers.
 #[cfg(feature = "std")]
 pub struct OakContainersAttesterFactory {
-    attester: oak_containers_sdk::InstanceAttester,
+    evidence: Evidence,
 }
 
 #[cfg(feature = "std")]
 impl OakContainersAttesterFactory {
-    pub async fn create() -> Result<Self> {
-        Ok(Self {
-            attester: oak_containers_sdk::InstanceAttester::create().await?,
-        })
+    pub fn new(evidence: Evidence) -> Self {
+        Self { evidence }
     }
 }
 
 #[cfg(feature = "std")]
 impl OakAttesterFactory for OakContainersAttesterFactory {
     fn get(&self) -> Result<Box<dyn Attester>> {
-        Ok(Box::new(self.attester.clone()))
+        Ok(Box::new(oak_sdk_common::StaticAttester::new(
+            self.evidence.clone(),
+        )))
     }
 }
 
