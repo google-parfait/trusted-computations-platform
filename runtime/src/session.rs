@@ -101,14 +101,14 @@ impl OakSessionBinderFactory for DefaultOakSessionBinderFactory {
 // Default implementation of `OakSessionBinderFactory` for Oak Containers.
 #[cfg(feature = "std")]
 pub struct OakContainersSessionBinderFactory {
-    signer: oak_containers_sdk::crypto::InstanceSigner,
+    binder: oak_sdk_containers::InstanceSessionBinder,
 }
 
 #[cfg(feature = "std")]
 impl OakContainersSessionBinderFactory {
     pub fn new(channel: &tonic::transport::channel::Channel) -> Self {
         Self {
-            signer: oak_containers_sdk::crypto::InstanceSigner::create(channel),
+            binder: oak_sdk_containers::InstanceSessionBinder::create(channel),
         }
     }
 }
@@ -116,11 +116,7 @@ impl OakContainersSessionBinderFactory {
 #[cfg(feature = "std")]
 impl OakSessionBinderFactory for OakContainersSessionBinderFactory {
     fn get(&self) -> Result<Box<dyn SessionBinder>> {
-        let binder = oak_session::session_binding::SignatureBinderBuilder::default()
-            .signer(Box::new(self.signer.clone()))
-            .build()
-            .map_err(anyhow::Error::msg)?;
-        Ok(Box::new(binder))
+        Ok(Box::new(self.binder.clone()))
     }
 }
 
@@ -288,7 +284,7 @@ impl OakSession<SessionResponse, SessionRequest> for DefaultOakClientSession {
     }
 
     fn write(&mut self, plaintext: &[u8]) -> Result<()> {
-        self.inner.write(&PlaintextMessage {
+        self.inner.write(PlaintextMessage {
             plaintext: plaintext.to_vec(),
         })
     }
@@ -343,7 +339,7 @@ impl OakSession<SessionRequest, SessionResponse> for DefaultOakServerSession {
     }
 
     fn write(&mut self, plaintext: &[u8]) -> Result<()> {
-        self.inner.write(&PlaintextMessage {
+        self.inner.write(PlaintextMessage {
             plaintext: plaintext.to_vec(),
         })
     }
@@ -395,8 +391,8 @@ mod test {
                 nonce: None,
                 aad: None,
             };
-            let encrypted_payload = replica_1.encrypt(&payload).unwrap();
-            let plaintext = replica_2.decrypt(&encrypted_payload).unwrap().message;
+            let encrypted_payload = replica_1.encrypt(payload).unwrap();
+            let plaintext = replica_2.decrypt(encrypted_payload).unwrap().message;
             assert_eq!(message, &plaintext);
         }
     }
@@ -430,7 +426,7 @@ mod test {
         for i in 0..test_messages.len() {
             encrypted_payloads.push(
                 replica_1
-                    .encrypt(&Payload {
+                    .encrypt(Payload {
                         message: test_messages[i].to_vec(),
                         nonce: None,
                         aad: None,
@@ -443,7 +439,7 @@ mod test {
         assert_eq!(
             test_messages[3],
             replica_2
-                .decrypt(&clone_payload(&encrypted_payloads[3]))
+                .decrypt(clone_payload(&encrypted_payloads[3]))
                 .unwrap()
                 .message
         );
@@ -451,14 +447,14 @@ mod test {
         assert_eq!(
             test_messages[1],
             replica_2
-                .decrypt(&clone_payload(&encrypted_payloads[1]))
+                .decrypt(clone_payload(&encrypted_payloads[1]))
                 .unwrap()
                 .message
         );
         assert_eq!(
             test_messages[2],
             replica_2
-                .decrypt(&clone_payload(&encrypted_payloads[2]))
+                .decrypt(clone_payload(&encrypted_payloads[2]))
                 .unwrap()
                 .message
         );
@@ -466,26 +462,26 @@ mod test {
         assert_eq!(
             true,
             replica_2
-                .decrypt(&clone_payload(&encrypted_payloads[3]))
+                .decrypt(clone_payload(&encrypted_payloads[3]))
                 .is_err()
         );
         assert_eq!(
             true,
             replica_2
-                .decrypt(&clone_payload(&encrypted_payloads[2]))
+                .decrypt(clone_payload(&encrypted_payloads[2]))
                 .is_err()
         );
         assert_eq!(
             true,
             replica_2
-                .decrypt(&clone_payload(&encrypted_payloads[1]))
+                .decrypt(clone_payload(&encrypted_payloads[1]))
                 .is_err()
         );
         // Decrypting messages outside the window should fail.
         assert_eq!(
             true,
             replica_2
-                .decrypt(&clone_payload(&encrypted_payloads[0]))
+                .decrypt(clone_payload(&encrypted_payloads[0]))
                 .is_err()
         );
 
@@ -493,14 +489,14 @@ mod test {
         assert_eq!(
             test_messages[4],
             replica_2
-                .decrypt(&clone_payload(&encrypted_payloads[4]))
+                .decrypt(clone_payload(&encrypted_payloads[4]))
                 .unwrap()
                 .message
         );
         assert_eq!(
             test_messages[5],
             replica_2
-                .decrypt(&clone_payload(&encrypted_payloads[5]))
+                .decrypt(clone_payload(&encrypted_payloads[5]))
                 .unwrap()
                 .message
         );

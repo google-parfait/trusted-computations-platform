@@ -13,7 +13,6 @@
 // limitations under the License.
 
 use anyhow::{anyhow, Context};
-use oak_containers_sdk::OrchestratorClient;
 use oak_proto_rust::oak::attestation::v1::{
     binary_reference_value, kernel_binary_reference_value, reference_values, text_reference_value,
     BinaryReferenceValue, ContainerLayerReferenceValues, InsecureReferenceValues,
@@ -21,6 +20,7 @@ use oak_proto_rust::oak::attestation::v1::{
     ReferenceValues, RootLayerReferenceValues, SkipVerification, SystemLayerReferenceValues,
     TextReferenceValue,
 };
+use oak_sdk_containers::OrchestratorClient;
 use tcp_atomic_counter_service::actor::CounterActor;
 use tcp_proto::runtime::endpoint::endpoint_service_server::EndpointServiceServer;
 use tcp_runtime::service::TonicApplicationService;
