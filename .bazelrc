@@ -4,6 +4,8 @@ build --action_env=BAZEL_DO_NOT_DETECT_CPP_TOOLCHAIN=1 --incompatible_strict_act
 build --show_timestamps
 build --@rules_rust//rust/toolchain/channel=nightly
 build --incompatible_merge_fixed_and_default_shell_env  # https://github.com/bazelbuild/rules_rust/issues/2665
+build --@rules_python//python/config_settings:bootstrap_impl=script  # https://github.com/bazelbuild/rules_python/issues/691
+common --noenable_bzlmod
 
 # Settings for remote build execution.
 build:tcp-remote --experimental_allow_tags_propagation

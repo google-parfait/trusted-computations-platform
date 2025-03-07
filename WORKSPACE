@@ -35,6 +35,13 @@ http_archive(
 )
 
 http_archive(
+    name = "rules_python",
+    sha256 = "dc6e2756130fafb90273587003659cadd1a2dfef3f6464c227794cdc01ebf70e",
+    strip_prefix = "rules_python-0.33.0",
+    url = "https://github.com/bazelbuild/rules_python/releases/download/0.33.0/rules_python-0.33.0.tar.gz",
+)
+
+http_archive(
     name = "com_google_protobuf",
     sha256 = "1535151efbc7893f38b0578e83cac584f2819974f065698976989ec71c1af84a",
     strip_prefix = "protobuf-27.3",
@@ -47,7 +54,6 @@ protobuf_deps()
 
 http_archive(
     name = "rules_pkg",
-    patches = ["//third_party/rules_pkg:tar.patch"],
     sha256 = "d20c951960ed77cb7b341c2a59488534e494d5ad1d30c4818c736d57772a9fef",
     urls = [
         "https://mirror.bazel.build/github.com/bazelbuild/rules_pkg/releases/download/1.0.1/rules_pkg-1.0.1.tar.gz",
@@ -139,13 +145,6 @@ gcc_register_toolchain(
         "@platforms//cpu:x86_64",
         "@platforms//os:none",
     ],
-)
-
-http_archive(
-    name = "rules_python",
-    sha256 = "d71d2c67e0bce986e1c5a7731b4693226867c45bfe0b7c5e0067228a536fc580",
-    strip_prefix = "rules_python-0.29.0",
-    url = "https://github.com/bazelbuild/rules_python/releases/download/0.29.0/rules_python-0.29.0.tar.gz",
 )
 
 load("@rules_python//python:repositories.bzl", "py_repositories", "python_register_toolchains")
