@@ -31,6 +31,7 @@ use crate::{
     storage::MemoryStorage,
 };
 use alloc::boxed::Box;
+use alloc::sync::Arc;
 use alloc::vec::Vec;
 use core::mem;
 #[cfg(feature = "tonic")]
@@ -96,6 +97,7 @@ impl<A: Actor> ApplicationService<A> {
                     Box::new(DefaultOakSessionFactory::new(
                         Box::new(DefaultOakSessionBinderFactory {}),
                         Box::new(DefaultOakAttesterFactory {}),
+                        Arc::new(oak_session::key_extractor::DefaultSigningKeyExtractor {}),
                     )),
                 ))),
             ),
@@ -218,6 +220,7 @@ impl TonicApplicationService {
                         channel,
                     )),
                     Box::new(crate::session::OakContainersAttesterFactory::new(evidence)),
+                    Arc::new(oak_session::key_extractor::DefaultBindingKeyExtractor {}),
                 )),
             ))),
         )

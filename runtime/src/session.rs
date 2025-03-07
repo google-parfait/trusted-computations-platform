@@ -18,7 +18,7 @@ use alloc::sync::Arc;
 use alloc::vec::Vec;
 use anyhow::Result;
 use oak_attestation_types::{attester::Attester, endorser::Endorser};
-use oak_attestation_verification_types::util::Clock;
+use oak_attestation_verification_types::{util::Clock, verifier::AttestationVerifier};
 use oak_crypto::encryptor::Encryptor;
 use oak_proto_rust::oak::attestation::v1::{Endorsements, Evidence, ReferenceValues};
 use oak_proto_rust::oak::crypto::v1::SessionKeys;
@@ -29,6 +29,7 @@ use oak_session::config::{EncryptorProvider, SessionConfig};
 use oak_session::dice_attestation::DiceAttestationVerifier;
 use oak_session::encryptors::UnorderedChannelEncryptor;
 use oak_session::handshake::HandshakeType;
+use oak_session::key_extractor::KeyExtractor;
 use oak_session::session::{ClientSession, ServerSession, Session};
 use oak_session::session_binding::SessionBinder;
 use oak_session::ProtocolEngine;
@@ -165,6 +166,7 @@ impl Endorser for DefaultEndorser {
 pub struct DefaultOakSessionFactory {
     session_binder_factory: Box<dyn OakSessionBinderFactory>,
     attester_factory: Box<dyn OakAttesterFactory>,
+    key_extractor: Arc<dyn KeyExtractor>,
     clock: Option<Arc<dyn Clock>>,
     reference_values: ReferenceValues,
     endorsements: Endorsements,
@@ -174,10 +176,12 @@ impl DefaultOakSessionFactory {
     pub fn new(
         session_binder_factory: Box<dyn OakSessionBinderFactory>,
         attester_factory: Box<dyn OakAttesterFactory>,
+        key_extractor: Arc<dyn KeyExtractor>,
     ) -> Self {
         Self {
             session_binder_factory,
             attester_factory,
+            key_extractor,
             clock: None,
             reference_values: ReferenceValues::default(),
             endorsements: Endorsements::default(),
@@ -204,6 +208,7 @@ impl OakSessionFactory for DefaultOakSessionFactory {
             self.attester_factory.get()?,
             endorser,
             self.session_binder_factory.get()?,
+            &self.key_extractor,
             self.reference_values.clone(),
             Arc::clone(&self.clock.as_ref().unwrap()),
         )?;
@@ -218,6 +223,7 @@ impl OakSessionFactory for DefaultOakSessionFactory {
             self.attester_factory.get()?,
             endorser,
             self.session_binder_factory.get()?,
+            &self.key_extractor,
             self.reference_values.clone(),
             Arc::clone(&self.clock.as_ref().unwrap()),
         )?;
@@ -250,6 +256,7 @@ impl DefaultOakClientSession {
         attester: Box<dyn Attester>,
         endorser: Box<dyn Endorser>,
         session_binder: Box<dyn SessionBinder>,
+        key_extractor: &Arc<dyn KeyExtractor>,
         reference_values: ReferenceValues,
         clock: Arc<dyn Clock>,
     ) -> Result<Self> {
@@ -258,9 +265,11 @@ impl DefaultOakClientSession {
                 SessionConfig::builder(AttestationType::Bidirectional, HandshakeType::NoiseNN)
                     .add_self_attester(String::from(TCP_ATTESTER_ID), attester)
                     .add_self_endorser(String::from(TCP_ATTESTER_ID), endorser)
-                    .add_peer_verifier(
+                    .add_peer_verifier_with_key_extractor_ref(
                         String::from(TCP_ATTESTER_ID),
-                        Box::new(DiceAttestationVerifier::create(reference_values, clock)),
+                        &(Arc::new(DiceAttestationVerifier::create(reference_values, clock))
+                            as Arc<dyn AttestationVerifier>),
+                        &key_extractor,
                     )
                     .set_encryption_provider(Box::new(DefaultEncryptorProvider))
                     .add_session_binder(String::from(TCP_ATTESTER_ID), session_binder)
@@ -305,6 +314,7 @@ impl DefaultOakServerSession {
         attester: Box<dyn Attester>,
         endorser: Box<dyn Endorser>,
         session_binder: Box<dyn SessionBinder>,
+        key_extractor: &Arc<dyn KeyExtractor>,
         reference_values: ReferenceValues,
         clock: Arc<dyn Clock>,
     ) -> Result<Self> {
@@ -313,9 +323,11 @@ impl DefaultOakServerSession {
                 SessionConfig::builder(AttestationType::Bidirectional, HandshakeType::NoiseNN)
                     .add_self_attester(String::from(TCP_ATTESTER_ID), attester)
                     .add_self_endorser(String::from(TCP_ATTESTER_ID), endorser)
-                    .add_peer_verifier(
+                    .add_peer_verifier_with_key_extractor_ref(
                         String::from(TCP_ATTESTER_ID),
-                        Box::new(DiceAttestationVerifier::create(reference_values, clock)),
+                        &(Arc::new(DiceAttestationVerifier::create(reference_values, clock))
+                            as Arc<dyn AttestationVerifier>),
+                        key_extractor,
                     )
                     .set_encryption_provider(Box::new(DefaultEncryptorProvider))
                     .add_session_binder(String::from(TCP_ATTESTER_ID), session_binder)
