@@ -1,0 +1,10 @@
+# Revert the Oak Containers SDK to use the signing key for encrypted sessions.
+--- oak_sdk/containers/orchestrator_crypto_client.rs
++++ oak_sdk/containers/orchestrator_crypto_client.rs
+@@ -137,5 +137,5 @@
+     async fn bind_session(&self, transcript: &[u8]) -> anyhow::Result<Signature> {
+         self.orchestrator_crypto_client
+-            .bind_session(transcript, SESSION_BINDER_INFO_STRING.as_bytes())
++            .sign(KeyOrigin::Instance, transcript.to_vec())
+             .await
+     }

@@ -220,7 +220,7 @@ impl TonicApplicationService {
                         channel,
                     )),
                     Box::new(crate::session::OakContainersAttesterFactory::new(evidence)),
-                    Arc::new(oak_session::key_extractor::DefaultBindingKeyExtractor {}),
+                    Arc::new(oak_session::key_extractor::DefaultSigningKeyExtractor {}),
                 )),
             ))),
         )
