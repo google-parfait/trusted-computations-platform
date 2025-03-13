@@ -102,14 +102,14 @@ impl OakSessionBinderFactory for DefaultOakSessionBinderFactory {
 // Default implementation of `OakSessionBinderFactory` for Oak Containers.
 #[cfg(feature = "std")]
 pub struct OakContainersSessionBinderFactory {
-    binder: oak_sdk_containers::InstanceSessionBinder,
+    signer: oak_sdk_containers::InstanceSigner,
 }
 
 #[cfg(feature = "std")]
 impl OakContainersSessionBinderFactory {
     pub fn new(channel: &tonic::transport::channel::Channel) -> Self {
         Self {
-            binder: oak_sdk_containers::InstanceSessionBinder::create(channel),
+            signer: oak_sdk_containers::InstanceSigner::create(channel),
         }
     }
 }
@@ -117,7 +117,12 @@ impl OakContainersSessionBinderFactory {
 #[cfg(feature = "std")]
 impl OakSessionBinderFactory for OakContainersSessionBinderFactory {
     fn get(&self) -> Result<Box<dyn SessionBinder>> {
-        Ok(Box::new(self.binder.clone()))
+        Ok(Box::new(
+            oak_session::session_binding::SignatureBinderBuilder::default()
+                .signer(Box::new(self.signer.clone()))
+                .build()
+                .map_err(anyhow::Error::msg)?,
+        ))
     }
 }
 

@@ -90,10 +90,9 @@ rules_proto_toolchains()
 
 http_archive(
     name = "oak",
-    patches = ["//third_party/oak:oak_sdk_containers.patch"],
-    sha256 = "5bb692898705ae3dcdb2e7a385e7afc681e3f18866120aee6b06d1615f5a4cf9",
-    strip_prefix = "oak-d889956d9503c0459b96579e75ba34583d0809ae",
-    url = "https://github.com/project-oak/oak/archive/d889956d9503c0459b96579e75ba34583d0809ae.tar.gz",
+    integrity = "sha256-kARmPybmsuo+IVDa78GQPpFS8k4WUs+xZLB2D/MURnU=",
+    strip_prefix = "oak-e1a7df380564e85fdc38a29e53b127eeeddd0f22",
+    url = "https://github.com/project-oak/oak/archive/e1a7df380564e85fdc38a29e53b127eeeddd0f22.tar.gz",
 )
 
 load("@oak//bazel:repositories.bzl", "oak_toolchain_repositories")
