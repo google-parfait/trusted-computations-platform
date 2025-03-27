@@ -301,7 +301,7 @@ mock! {
     }
 
     impl HandshakeSession for HandshakeSession {
-        fn process_message(&mut self, message: &SecureChannelHandshake) -> anyhow::Result<()>;
+        fn process_message(&mut self, message: SecureChannelHandshake) -> anyhow::Result<()>;
 
         fn take_out_message(&mut self) -> anyhow::Result<Option<SecureChannelHandshake>>;
 
@@ -340,7 +340,7 @@ mock! {
     }
 
     impl OakSession<SessionResponse, SessionRequest> for OakClientSession {
-    fn put_incoming_message(&mut self, incoming_message: &SessionResponse) -> anyhow::Result<Option<()>>;
+    fn put_incoming_message(&mut self, incoming_message: SessionResponse) -> anyhow::Result<Option<()>>;
 
     fn get_outgoing_message(&mut self) -> anyhow::Result<Option<SessionRequest>>;
 
@@ -357,7 +357,7 @@ mock! {
     }
 
     impl OakSession<SessionRequest, SessionResponse> for OakServerSession {
-    fn put_incoming_message(&mut self, incoming_message: &SessionRequest) -> anyhow::Result<Option<()>>;
+    fn put_incoming_message(&mut self, incoming_message: SessionRequest) -> anyhow::Result<Option<()>>;
 
     fn get_outgoing_message(&mut self) -> anyhow::Result<Option<SessionResponse>>;
 

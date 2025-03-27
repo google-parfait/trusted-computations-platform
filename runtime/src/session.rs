@@ -61,7 +61,7 @@ pub trait OakSessionFactory {
 pub trait OakSession<I, O> {
     /// Puts a message received from the peer into the state-machine changing
     /// its state.
-    fn put_incoming_message(&mut self, incoming_message: &I) -> Result<Option<()>>;
+    fn put_incoming_message(&mut self, incoming_message: I) -> Result<Option<()>>;
 
     /// Gets the next message that needs to be sent to the peer.
     fn get_outgoing_message(&mut self) -> Result<Option<O>>;
@@ -289,7 +289,7 @@ impl OakSession<SessionResponse, SessionRequest> for DefaultOakClientSession {
         self.inner.get_outgoing_message()
     }
 
-    fn put_incoming_message(&mut self, incoming_message: &SessionResponse) -> Result<Option<()>> {
+    fn put_incoming_message(&mut self, incoming_message: SessionResponse) -> Result<Option<()>> {
         self.inner.put_incoming_message(incoming_message)
     }
 
@@ -347,7 +347,7 @@ impl OakSession<SessionRequest, SessionResponse> for DefaultOakServerSession {
         self.inner.get_outgoing_message()
     }
 
-    fn put_incoming_message(&mut self, incoming_message: &SessionRequest) -> Result<Option<()>> {
+    fn put_incoming_message(&mut self, incoming_message: SessionRequest) -> Result<Option<()>> {
         self.inner.put_incoming_message(incoming_message)
     }
 

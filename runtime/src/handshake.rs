@@ -66,7 +66,7 @@ pub trait HandshakeSessionProvider {
 /// payloads.
 pub trait HandshakeSession {
     // Process an incoming SecureChanneHandshake message.
-    fn process_message(&mut self, message: &SecureChannelHandshake) -> Result<()>;
+    fn process_message(&mut self, message: SecureChannelHandshake) -> Result<()>;
 
     // Take out any pending handshake messages that need to be sent out for this session.
     // Returns None if no such message exists.
@@ -206,7 +206,7 @@ impl ClientHandshakeSession {
 }
 
 impl HandshakeSession for ClientHandshakeSession {
-    fn process_message(&mut self, message: &SecureChannelHandshake) -> Result<()> {
+    fn process_message(&mut self, message: SecureChannelHandshake) -> Result<()> {
         return match self.state {
             State::Unknown => {
                 let err = anyhow!(format!(
@@ -217,9 +217,18 @@ impl HandshakeSession for ClientHandshakeSession {
                 Err(err)
             }
             State::Initiated => {
-                if let Some(Encryption::NoiseProtocol(ref noise_protocol)) = &message.encryption
-                    && let Some(RecipientResponse(ref recipient_response)) = noise_protocol.message
-                    && let Some(SessionResponse(ref session_response)) = recipient_response.message
+                if let SecureChannelHandshake {
+                    encryption:
+                        Some(Encryption::NoiseProtocol(NoiseProtocol {
+                            message:
+                                Some(RecipientResponse(noise_protocol::RecipientResponse {
+                                    message: Some(SessionResponse(session_response)),
+                                    ..
+                                })),
+                            ..
+                        })),
+                    ..
+                } = message
                 {
                     info!(
                         self.logger,
@@ -382,12 +391,21 @@ impl ServerHandshakeSession {
 }
 
 impl HandshakeSession for ServerHandshakeSession {
-    fn process_message(&mut self, message: &SecureChannelHandshake) -> Result<()> {
+    fn process_message(&mut self, message: SecureChannelHandshake) -> Result<()> {
         return match self.state {
             State::Unknown | State::Initiated => {
-                if let Some(Encryption::NoiseProtocol(ref noise_protocol)) = &message.encryption
-                    && let Some(InitiatorRequest(ref initiator_request)) = noise_protocol.message
-                    && let Some(SessionRequest(ref session_request)) = initiator_request.message
+                if let SecureChannelHandshake {
+                    encryption:
+                        Some(Encryption::NoiseProtocol(NoiseProtocol {
+                            message:
+                                Some(InitiatorRequest(noise_protocol::InitiatorRequest {
+                                    message: Some(SessionRequest(session_request)),
+                                    ..
+                                })),
+                            ..
+                        })),
+                    ..
+                } = message
                 {
                     info!(
                         self.logger,
@@ -722,7 +740,7 @@ mod test {
         assert_eq!(
             true,
             client_handshake_session
-                .process_message(&session_response)
+                .process_message(session_response.clone())
                 .is_ok()
         );
         assert_eq!(None, client_handshake_session.take_out_message().unwrap());
@@ -732,7 +750,7 @@ mod test {
         assert_eq!(
             true,
             client_handshake_session
-                .process_message(&session_response)
+                .process_message(session_response)
                 .is_ok()
         );
         assert_eq!(None, client_handshake_session.take_out_message().unwrap());
@@ -781,7 +799,7 @@ mod test {
         assert_eq!(
             true,
             client_handshake_session
-                .process_message(&session_response)
+                .process_message(session_response)
                 .is_err()
         );
     }
@@ -801,7 +819,7 @@ mod test {
         assert_eq!(
             true,
             client_handshake_session
-                .process_message(&session_response)
+                .process_message(session_response)
                 .is_err()
         );
     }
@@ -828,7 +846,7 @@ mod test {
         assert_eq!(
             true,
             client_handshake_session
-                .process_message(&session_request)
+                .process_message(session_request)
                 .is_err()
         );
     }
@@ -865,7 +883,7 @@ mod test {
         assert_eq!(
             true,
             server_handshake_session
-                .process_message(&session_request)
+                .process_message(session_request.clone())
                 .is_ok()
         );
         assert_eq!(
@@ -878,7 +896,7 @@ mod test {
         assert_eq!(
             true,
             server_handshake_session
-                .process_message(&session_request)
+                .process_message(session_request)
                 .is_ok()
         );
         assert_eq!(None, server_handshake_session.take_out_message().unwrap());
@@ -904,7 +922,7 @@ mod test {
         assert_eq!(
             true,
             server_handshake_session
-                .process_message(&session_request)
+                .process_message(session_request)
                 .is_err()
         );
     }
@@ -928,7 +946,7 @@ mod test {
         assert_eq!(
             true,
             server_handshake_session
-                .process_message(&session_request)
+                .process_message(session_request)
                 .is_ok()
         );
         assert_eq!(true, server_handshake_session.take_out_message().is_err());
@@ -949,7 +967,7 @@ mod test {
         assert_eq!(
             true,
             server_handshake_session
-                .process_message(&session_response)
+                .process_message(session_response)
                 .is_err()
         );
     }
@@ -975,7 +993,7 @@ mod test {
         assert_eq!(
             true,
             server_handshake_session
-                .process_message(&session_request)
+                .process_message(session_request)
                 .is_ok()
         );
         assert_eq!(
@@ -985,7 +1003,7 @@ mod test {
         assert_eq!(
             true,
             server_handshake_session
-                .process_message(&session_response)
+                .process_message(session_response)
                 .is_err()
         );
     }

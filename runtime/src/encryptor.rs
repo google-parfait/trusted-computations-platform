@@ -65,7 +65,7 @@ impl Encryptor for DefaultClientEncryptor {
                 ..Default::default()
             })),
         };
-        self.session.put_incoming_message(&response)?;
+        self.session.put_incoming_message(response)?;
         let plaintext = self.session.read()?;
         if plaintext.is_none() {
             return Err(anyhow!("No decrypted text found for the ciphertext."));
@@ -108,7 +108,7 @@ impl Encryptor for DefaultServerEncryptor {
                 ..Default::default()
             })),
         };
-        self.session.put_incoming_message(&request)?;
+        self.session.put_incoming_message(request)?;
         let plaintext = self.session.read()?;
         if plaintext.is_none() {
             return Err(anyhow!("No decrypted text found for the ciphertext."));

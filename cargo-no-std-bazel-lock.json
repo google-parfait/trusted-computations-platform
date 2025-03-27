@@ -1,5 +1,5 @@
 {
-  "checksum": "7d7d995081dc7ca5aa48036bb00e926fb357464aacaaab48d1d89ef04f33593c",
+  "checksum": "59f5dbf9bf40293a65e5fbf6512c77eea92ba848b43b5bbf4eb75fd9d75e6667",
   "crates": {
     "acpi 5.0.0": {
       "name": "acpi",
@@ -9250,6 +9250,7 @@
         ],
         "crate_features": {
           "common": [
+            "macros",
             "parsing",
             "serde"
           ],
@@ -9281,6 +9282,15 @@
           "selects": {}
         },
         "edition": "2021",
+        "proc_macro_deps": {
+          "common": [
+            {
+              "id": "time-macros 0.2.18",
+              "target": "time_macros"
+            }
+          ],
+          "selects": {}
+        },
         "version": "0.3.36"
       },
       "license": "MIT OR Apache-2.0",
@@ -9358,6 +9368,13 @@
         "compile_data_glob": [
           "**"
         ],
+        "crate_features": {
+          "common": [
+            "parsing",
+            "serde"
+          ],
+          "selects": {}
+        },
         "deps": {
           "common": [
             {

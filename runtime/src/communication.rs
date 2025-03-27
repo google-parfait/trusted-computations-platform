@@ -487,7 +487,7 @@ impl CommunicationState {
                         self.handshake_session
                             .as_mut()
                             .unwrap()
-                            .process_message(&handshake_message)
+                            .process_message(handshake_message)
                             .inspect_err(|err| {
                                 self.transition_to_failed(&err);
                             })?;
