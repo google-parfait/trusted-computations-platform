@@ -80,7 +80,7 @@ async fn main() -> anyhow::Result<()> {
         .context("failed to get endorsed evidence")?
         .evidence
         .ok_or_else(|| anyhow!("EndorsedEvidence.evidence not set"))?;
-    let service = TonicApplicationService::new(channel, evidence, || {
+    let service = TonicApplicationService::new(channel, evidence, /*logger=*/ None, || {
         CounterActor::new_with_reference_values(get_reference_values())
     });
 

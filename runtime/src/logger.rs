@@ -24,6 +24,13 @@ pub trait DrainOutput {
     fn take_entries(&mut self) -> Vec<LogMessage>;
 }
 
+pub struct EmptyDrainOutput {}
+impl DrainOutput for EmptyDrainOutput {
+    fn take_entries(&mut self) -> Vec<LogMessage> {
+        Vec::with_capacity(0)
+    }
+}
+
 struct ValueSerializer {
     output: String,
 }

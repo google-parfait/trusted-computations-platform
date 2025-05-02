@@ -16,7 +16,7 @@
 use crate::communication::{CommunicationConfig, CommunicationModule, OutgoingMessage};
 use crate::consensus::{Raft, RaftState, Store};
 use crate::logger::log::create_remote_logger;
-use crate::logger::DrainOutput;
+use crate::logger::{DrainOutput, EmptyDrainOutput};
 use crate::model::{Actor, ActorCommand, ActorContext, ActorEvent, ActorEventContext};
 use crate::platform::{Application, Host, PalError};
 use crate::snapshot::{SnapshotError, SnapshotProcessor, SnapshotProcessorRole};
@@ -216,8 +216,15 @@ impl<
         snapshot: P,
         actor: A,
         communication: C,
+        logger: Option<Logger>,
     ) -> Self {
-        let (logger, logger_output) = create_remote_logger();
+        let (logger, logger_output) = match logger {
+            Some(logger) => (
+                logger,
+                Box::new(EmptyDrainOutput {}) as Box<dyn DrainOutput>,
+            ),
+            None => create_remote_logger(),
+        };
         Driver {
             core: Rc::new(RefCell::new(DriverContextCore::new())),
             driver_config: DriverConfig {
@@ -2251,6 +2258,7 @@ mod test {
                 ),
                 mock_actor,
                 mock_communication_module,
+                /*logger=*/ None,
             )
         }
     }

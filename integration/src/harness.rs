@@ -364,6 +364,7 @@ impl<A: Actor> FakePlatform<A> {
                         Arc::new(oak_session::key_extractor::DefaultSigningKeyExtractor {}),
                     )),
                 ))),
+                /*logger=*/ None,
             )),
             host: RefCell::new(FakeHost::new(app_config)),
         }

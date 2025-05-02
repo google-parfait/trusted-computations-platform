@@ -35,6 +35,8 @@ use alloc::sync::Arc;
 use alloc::vec::Vec;
 use core::mem;
 #[cfg(feature = "tonic")]
+use slog::Logger;
+#[cfg(feature = "tonic")]
 use tcp_proto::runtime::endpoint::endpoint_service_server;
 use tcp_proto::runtime::endpoint::{
     EndpointService, OutMessage, ReceiveMessageRequest, ReceiveMessageResponse,
@@ -100,6 +102,7 @@ impl<A: Actor> ApplicationService<A> {
                         Arc::new(oak_session::key_extractor::DefaultSigningKeyExtractor {}),
                     )),
                 ))),
+                /*logger=*/ None,
             ),
         }
     }
@@ -152,6 +155,7 @@ impl TonicApplicationService {
     pub fn new<A, F>(
         channel: tonic::transport::channel::Channel,
         evidence: oak_proto_rust::oak::attestation::v1::Evidence,
+        logger: Option<Logger>,
         factory: F,
     ) -> Self
     where
@@ -165,7 +169,7 @@ impl TonicApplicationService {
             oneshot::Sender<Result<ReceiveMessageResponse, Status>>,
         )>(1);
         let join_handle = tokio::task::spawn_blocking(move || {
-            Self::run_driver_loop(factory(), &channel, evidence, rx)
+            Self::run_driver_loop(factory(), &channel, evidence, logger, rx)
         });
         Self {
             sender: Some(tx),
@@ -177,12 +181,13 @@ impl TonicApplicationService {
         actor: A,
         channel: &tonic::transport::channel::Channel,
         evidence: oak_proto_rust::oak::attestation::v1::Evidence,
+        logger: Option<Logger>,
         mut rx: mpsc::Receiver<(
             ReceiveMessageRequest,
             oneshot::Sender<Result<ReceiveMessageResponse, Status>>,
         )>,
     ) {
-        let mut driver = Self::new_driver(actor, channel, evidence);
+        let mut driver = Self::new_driver(actor, channel, evidence, logger);
         while let Some((request, tx)) = rx.blocking_recv() {
             let mut host = ApplicationHost::new();
             driver
@@ -199,6 +204,7 @@ impl TonicApplicationService {
         actor: A,
         channel: &tonic::transport::channel::Channel,
         evidence: oak_proto_rust::oak::attestation::v1::Evidence,
+        logger: Option<Logger>,
     ) -> Driver<
         RaftSimple<MemoryStorage>,
         MemoryStorage,
@@ -223,6 +229,7 @@ impl TonicApplicationService {
                     Arc::new(oak_session::key_extractor::DefaultSigningKeyExtractor {}),
                 )),
             ))),
+            logger,
         )
     }
 }
