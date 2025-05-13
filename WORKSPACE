@@ -90,9 +90,9 @@ rules_proto_toolchains()
 
 http_archive(
     name = "oak",
-    integrity = "sha256-CjdQteNqEPhXTKrQIZun9XINEkpvO5ofEOCQP+J71io=",
-    strip_prefix = "oak-0568da108dc751efb0c79d992cf231e245ee2526",
-    url = "https://github.com/project-oak/oak/archive/0568da108dc751efb0c79d992cf231e245ee2526.tar.gz",
+    integrity = "sha256-0IgL2etptmbLQ22HY73KG1Z0U53+e9MqBbzy40qDFkw=",
+    strip_prefix = "oak-205aec221ca6a7c5d223641076470b1fb2db75a1",
+    url = "https://github.com/project-oak/oak/archive/205aec221ca6a7c5d223641076470b1fb2db75a1.tar.gz",
 )
 
 load("@oak//bazel:repositories.bzl", "oak_toolchain_repositories")

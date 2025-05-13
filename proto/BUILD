@@ -33,6 +33,7 @@ cargo_build_script(
         "@oak//proto/attestation:evidence.proto",
         "@oak//proto/attestation:reference_value.proto",
         "@oak//proto/attestation:tcb_version.proto",
+        "@oak//proto/crypto:certificate.proto",
         "@oak//proto/crypto:crypto.proto",
         "@oak//proto/session:messages.proto",
         "@oak//proto/session:session.proto",
