@@ -198,7 +198,7 @@ pub struct Driver<R: Raft, S: Store, P: SnapshotProcessor, A: Actor, C: Communic
     raft_progress: RaftProgress,
     communication: C,
     is_ephemeral: bool,
-    clock: Arc<DefaultClock>,
+    default_clock: Arc<DefaultClock>,
     lameduck_mode: bool,
 }
 
@@ -248,7 +248,7 @@ impl<
             raft_progress: RaftProgress::new(),
             communication,
             is_ephemeral: false,
-            clock: Arc::new(DefaultClock {
+            default_clock: Arc::new(DefaultClock {
                 instant: AtomicI64::new(0),
             }),
             lameduck_mode: false,
@@ -710,7 +710,7 @@ impl<
         let instant = self.instant;
         let leader = self.check_raft_leadership();
         self.mut_core().set_state(instant, leader);
-        self.clock.set_instant(instant as i64);
+        self.default_clock.set_instant(instant as i64);
     }
 
     fn check_driver_state(&self, state: DriverState) -> Result<(), PalError> {
@@ -811,7 +811,9 @@ impl<
         self.communication.init(
             self.id,
             self.logger.new(o!("type" => "communication")),
-            Arc::clone(&self.clock) as _,
+            self.actor
+                .get_clock_override()
+                .unwrap_or_else(|| self.default_clock.clone()),
             communication_config,
         );
 

@@ -14,11 +14,13 @@
 
 use crate::StdError;
 use alloc::boxed::Box;
+use alloc::sync::Arc;
 use alloc::vec;
 use alloc::vec::Vec;
 use core::fmt;
 use core::option::Option;
 use core::result::Result;
+use oak_attestation_verification_types::util::Clock;
 use oak_proto_rust::oak::attestation::v1::ReferenceValues;
 use prost::bytes::Bytes;
 use prost::Message;
@@ -273,4 +275,10 @@ pub trait Actor {
     /// the DICE attestation. These are used for verifying claims from other
     /// raft peers.
     fn get_reference_values(&self) -> ReferenceValues;
+
+    /// Optionally returns a Clock that should be used instead of the default
+    /// clock based on the ActorContext instant.
+    fn get_clock_override(&self) -> Option<Arc<dyn Clock>> {
+        None
+    }
 }
