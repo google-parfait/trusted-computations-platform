@@ -12,11 +12,9 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-#![feature(trait_upcasting)]
 #![feature(trait_alias)]
 #![feature(let_chains)]
 #![cfg_attr(not(feature = "std"), no_std)]
-#![cfg_attr(not(feature = "std"), feature(error_in_core))]
 
 extern crate alloc;
 extern crate anyhow;

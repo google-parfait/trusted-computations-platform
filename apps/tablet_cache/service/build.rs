@@ -30,6 +30,5 @@ fn main() -> Result<()> {
             ..Default::default()
         },
     );
-    oak_proto_build_utils::fix_prost_derives().unwrap();
     Ok(())
 }

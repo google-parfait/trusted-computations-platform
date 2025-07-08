@@ -26,10 +26,7 @@ cargo_build_script(
         "@com_google_protobuf//:well_known_type_protos",
     ],
     tools = ["@com_google_protobuf//:protoc"],
-    deps = [
-        "@oak//micro_rpc_build",
-        "@oak//oak_proto_build_utils",
-    ],
+    deps = ["@oak//micro_rpc_build"],
 )
 
 rust_library(

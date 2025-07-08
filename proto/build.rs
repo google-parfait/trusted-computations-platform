@@ -50,7 +50,6 @@ fn main() -> anyhow::Result<()> {
             ..Default::default()
         },
     );
-    oak_proto_build_utils::fix_prost_derives().unwrap();
 
     let tonic_dir = std::path::Path::new(&std::env::var("OUT_DIR")?).join("tonic");
     std::fs::create_dir(&tonic_dir)?;
@@ -61,7 +60,7 @@ fn main() -> anyhow::Result<()> {
         .extern_path(".oak", "::oak_proto_rust::oak")
         // Reuse the protos produced by `micro_rpc_build::compile`.
         .extern_path(".trustedcompute", "crate")
-        .compile(&protos, &includes)?;
+        .compile_protos(&protos, &includes)?;
 
     Ok(())
 }

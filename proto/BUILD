@@ -41,7 +41,6 @@ cargo_build_script(
     tools = ["@com_google_protobuf//:protoc"],
     deps = [
         "@oak//micro_rpc_build",
-        "@oak//oak_proto_build_utils",
         "@oak_crates_index//:anyhow",
         "@oak_crates_index//:tonic-build",
     ],

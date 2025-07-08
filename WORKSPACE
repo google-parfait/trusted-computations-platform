@@ -42,6 +42,16 @@ http_archive(
 )
 
 http_archive(
+    name = "rules_rust",
+    integrity = "sha256-U8G6x+xI985IxMHGqgBvJ1Fa3SrrBXJZNyJObgDsfOo=",
+    urls = ["https://github.com/bazelbuild/rules_rust/releases/download/0.61.0/rules_rust-0.61.0.tar.gz"],
+)
+
+load("@rules_rust//rust:repositories.bzl", "rules_rust_dependencies")
+
+rules_rust_dependencies()
+
+http_archive(
     name = "com_google_protobuf",
     sha256 = "1535151efbc7893f38b0578e83cac584f2819974f065698976989ec71c1af84a",
     strip_prefix = "protobuf-27.3",
@@ -90,18 +100,18 @@ rules_proto_toolchains()
 
 http_archive(
     name = "oak",
-    integrity = "sha256-0IgL2etptmbLQ22HY73KG1Z0U53+e9MqBbzy40qDFkw=",
-    strip_prefix = "oak-205aec221ca6a7c5d223641076470b1fb2db75a1",
-    url = "https://github.com/project-oak/oak/archive/205aec221ca6a7c5d223641076470b1fb2db75a1.tar.gz",
+    integrity = "sha256-/qfxXbhDGoitrllQ2vQdrYszGrGVVMHIJj1AelkbGn4=",
+    strip_prefix = "oak-706193333936def5aace176e12e1f1225bf8db29",
+    url = "https://github.com/project-oak/oak/archive/706193333936def5aace176e12e1f1225bf8db29.tar.gz",
 )
 
 load("@oak//bazel:repositories.bzl", "oak_toolchain_repositories")
 
 oak_toolchain_repositories()
 
-load("@oak//bazel/rust:deps.bzl", "load_rust_repositories")
+load("@oak//bazel/crates:patched_crates.bzl", "load_patched_crates")
 
-load_rust_repositories()
+load_patched_crates()
 
 load("@oak//bazel/rust:defs.bzl", "setup_rust_dependencies")
 

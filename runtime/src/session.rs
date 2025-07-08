@@ -19,14 +19,13 @@ use alloc::vec::Vec;
 use anyhow::Result;
 use oak_attestation_types::{attester::Attester, endorser::Endorser};
 use oak_attestation_verification_types::{util::Clock, verifier::AttestationVerifier};
-use oak_crypto::encryptor::Encryptor;
+use oak_crypto::{encryptor::Encryptor, noise_handshake::OrderedCrypter};
+use oak_dice_attestation_verifier::DiceAttestationVerifier;
 use oak_proto_rust::oak::attestation::v1::{Endorsements, Evidence, ReferenceValues};
-use oak_proto_rust::oak::crypto::v1::SessionKeys;
 use oak_proto_rust::oak::session::v1::{PlaintextMessage, SessionRequest, SessionResponse};
 use oak_restricted_kernel_sdk::{attestation::InstanceAttester, crypto::InstanceSessionBinder};
 use oak_session::attestation::AttestationType;
 use oak_session::config::{EncryptorProvider, SessionConfig};
-use oak_session::dice_attestation::DiceAttestationVerifier;
 use oak_session::encryptors::UnorderedChannelEncryptor;
 use oak_session::handshake::HandshakeType;
 use oak_session::key_extractor::KeyExtractor;
@@ -241,10 +240,10 @@ struct DefaultEncryptorProvider;
 impl EncryptorProvider for DefaultEncryptorProvider {
     fn provide_encryptor(
         &self,
-        session_keys: SessionKeys,
+        crypter: OrderedCrypter,
     ) -> Result<Box<dyn Encryptor>, anyhow::Error> {
         TryInto::<UnorderedChannelEncryptor>::try_into((
-            session_keys,
+            crypter,
             UNORDERED_CHANNEL_ENCRYPTOR_WINDOW_SIZE,
         ))
         .map(|v| Box::new(v) as Box<dyn Encryptor>)
@@ -369,8 +368,10 @@ impl OakSession<SessionRequest, SessionResponse> for DefaultOakServerSession {
 
 #[cfg(all(test, feature = "std"))]
 mod test {
-    use oak_crypto::{encryptor::Payload, noise_handshake::SYMMETRIC_KEY_LEN};
-    use oak_proto_rust::oak::crypto::v1::SessionKeys;
+    use oak_crypto::{
+        encryptor::Payload,
+        noise_handshake::{OrderedCrypter, SYMMETRIC_KEY_LEN},
+    };
     use oak_session::config::EncryptorProvider;
 
     use super::DefaultEncryptorProvider;
@@ -390,16 +391,10 @@ mod test {
         let test_messages = vec![vec![1u8, 2u8, 3u8, 4u8], vec![4u8, 3u8, 2u8, 1u8], vec![]];
         let default_encryption_provider = DefaultEncryptorProvider {};
         let mut replica_1 = default_encryption_provider
-            .provide_encryptor(SessionKeys {
-                request_key: key_1.to_vec(),
-                response_key: key_2.to_vec(),
-            })
+            .provide_encryptor(OrderedCrypter::new(key_1, key_2))
             .unwrap();
         let mut replica_2 = default_encryption_provider
-            .provide_encryptor(SessionKeys {
-                request_key: key_2.to_vec(),
-                response_key: key_1.to_vec(),
-            })
+            .provide_encryptor(OrderedCrypter::new(key_2, key_1))
             .unwrap();
 
         for message in &test_messages {
@@ -428,16 +423,10 @@ mod test {
         ];
         let default_encryption_provider = DefaultEncryptorProvider {};
         let mut replica_1 = default_encryption_provider
-            .provide_encryptor(SessionKeys {
-                request_key: key_1.to_vec(),
-                response_key: key_2.to_vec(),
-            })
+            .provide_encryptor(OrderedCrypter::new(key_1, key_2))
             .unwrap();
         let mut replica_2 = default_encryption_provider
-            .provide_encryptor(SessionKeys {
-                request_key: key_2.to_vec(),
-                response_key: key_1.to_vec(),
-            })
+            .provide_encryptor(OrderedCrypter::new(key_2, key_1))
             .unwrap();
         let mut encrypted_payloads = vec![];
         for i in 0..test_messages.len() {

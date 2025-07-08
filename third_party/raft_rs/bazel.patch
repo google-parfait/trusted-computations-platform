@@ -23,7 +23,7 @@
 
 --- /dev/null
 +++ proto/BUILD
-@@ -0,0 +1,30 @@
+@@ -0,0 +1,27 @@
 +load("@rules_rust//cargo:defs.bzl", "cargo_build_script")
 +load("@rules_rust//rust:defs.bzl", "rust_library")
 +
@@ -49,20 +49,16 @@
 +    },
 +    data = glob(["proto/**/*.proto"]),
 +    tools = ["@com_google_protobuf//:protoc"],
-+    deps = [
-+        "@oak_crates_index//:prost-build",
-+        "@oak//oak_proto_build_utils",
-+    ],
++    deps = ["@oak_crates_index//:prost-build"],
 +)
 
 --- /dev/null
 +++ proto/build-bazel.rs
-@@ -0,0 +1,6 @@
+@@ -0,0 +1,5 @@
 +fn main() {
 +  prost_build::Config::new()
 +      .compile_protos(&["proto/eraftpb.proto"], &["proto"])
 +      .unwrap();
-+  oak_proto_build_utils::fix_prost_derives().unwrap();
 +}
 
 --- proto/proto/eraftpb.proto

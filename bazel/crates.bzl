@@ -49,7 +49,7 @@ TCP_PACKAGES = _COMMON_PACKAGES | {
         # Remove TLS features added by Oak to avoid depending on the ring crate,
         # which doesn't compile with our toolchain.
         features = ["gzip"],
-        version = "0.11.0",
+        version = "0.12.0",
     ),
 }
 
