@@ -15,13 +15,21 @@
 use alloc::boxed::Box;
 use alloc::string::String;
 use alloc::sync::Arc;
-use alloc::vec::Vec;
+use alloc::{vec, vec::Vec};
 use anyhow::Result;
 use oak_attestation_types::{attester::Attester, endorser::Endorser};
+use oak_attestation_verification::policy::{
+    container::ContainerPolicy, firmware::FirmwarePolicy, kernel::KernelPolicy,
+    platform::AmdSevSnpPolicy, system::SystemPolicy,
+};
+use oak_attestation_verification::verifier::{AmdSevSnpDiceAttestationVerifier, EventLogVerifier};
 use oak_attestation_verification_types::{util::Clock, verifier::AttestationVerifier};
 use oak_crypto::{encryptor::Encryptor, noise_handshake::OrderedCrypter};
 use oak_dice_attestation_verifier::DiceAttestationVerifier;
-use oak_proto_rust::oak::attestation::v1::{Endorsements, Evidence, ReferenceValues};
+use oak_proto_rust::oak::attestation::v1::{
+    reference_values, AmdSevReferenceValues, Endorsements, Evidence, OakContainersReferenceValues,
+    ReferenceValues, RootLayerReferenceValues,
+};
 use oak_proto_rust::oak::session::v1::{PlaintextMessage, SessionRequest, SessionResponse};
 use oak_restricted_kernel_sdk::{attestation::InstanceAttester, crypto::InstanceSessionBinder};
 use oak_session::attestation::AttestationType;
@@ -101,27 +109,22 @@ impl OakSessionBinderFactory for DefaultOakSessionBinderFactory {
 // Default implementation of `OakSessionBinderFactory` for Oak Containers.
 #[cfg(feature = "std")]
 pub struct OakContainersSessionBinderFactory {
-    signer: oak_sdk_containers::InstanceSigner,
+    channel: tonic::transport::channel::Channel,
 }
 
 #[cfg(feature = "std")]
 impl OakContainersSessionBinderFactory {
-    pub fn new(channel: &tonic::transport::channel::Channel) -> Self {
-        Self {
-            signer: oak_sdk_containers::InstanceSigner::create(channel),
-        }
+    pub fn new(channel: tonic::transport::channel::Channel) -> Self {
+        Self { channel }
     }
 }
 
 #[cfg(feature = "std")]
 impl OakSessionBinderFactory for OakContainersSessionBinderFactory {
     fn get(&self) -> Result<Box<dyn SessionBinder>> {
-        Ok(Box::new(
-            oak_session::session_binding::SignatureBinderBuilder::default()
-                .signer(Box::new(self.signer.clone()))
-                .build()
-                .map_err(anyhow::Error::msg)?,
-        ))
+        Ok(Box::new(oak_sdk_containers::InstanceSessionBinder::create(
+            &self.channel,
+        )))
     }
 }
 
@@ -170,9 +173,8 @@ impl Endorser for DefaultEndorser {
 pub struct DefaultOakSessionFactory {
     session_binder_factory: Box<dyn OakSessionBinderFactory>,
     attester_factory: Box<dyn OakAttesterFactory>,
-    key_extractor: Arc<dyn KeyExtractor>,
-    clock: Option<Arc<dyn Clock>>,
-    reference_values: ReferenceValues,
+    peer_verifier: Option<Arc<dyn AttestationVerifier>>,
+    key_extractor: Option<Arc<dyn KeyExtractor>>,
     endorsements: Endorsements,
 }
 
@@ -180,14 +182,12 @@ impl DefaultOakSessionFactory {
     pub fn new(
         session_binder_factory: Box<dyn OakSessionBinderFactory>,
         attester_factory: Box<dyn OakAttesterFactory>,
-        key_extractor: Arc<dyn KeyExtractor>,
     ) -> Self {
         Self {
             session_binder_factory,
             attester_factory,
-            key_extractor,
-            clock: None,
-            reference_values: ReferenceValues::default(),
+            peer_verifier: None,
+            key_extractor: None,
             endorsements: Endorsements::default(),
         }
     }
@@ -199,8 +199,70 @@ impl OakSessionFactory for DefaultOakSessionFactory {
         reference_values: ReferenceValues,
         endorsements: Endorsements,
     ) {
-        self.clock = Some(clock);
-        self.reference_values = reference_values;
+        let (peer_verifier, key_extractor): (Arc<dyn AttestationVerifier>, Arc<dyn KeyExtractor>) =
+            match &reference_values.r#type {
+                // Oak Containers (insecure)
+                Some(reference_values::Type::OakContainers(OakContainersReferenceValues {
+                    root_layer:
+                        Some(RootLayerReferenceValues {
+                            insecure: Some(_), ..
+                        }),
+                    kernel_layer: Some(kernel_ref_vals),
+                    system_layer: Some(system_ref_vals),
+                    container_layer: Some(container_ref_vals),
+                })) => (
+                    // TODO: b/432726860 - use InsecureDiceAttestationVerifier once it's available.
+                    Arc::new(EventLogVerifier::new(
+                        vec![
+                            Box::new(KernelPolicy::new(kernel_ref_vals)),
+                            Box::new(SystemPolicy::new(system_ref_vals)),
+                            Box::new(ContainerPolicy::new(container_ref_vals)),
+                        ],
+                        clock,
+                    )),
+                    Arc::new(oak_session::key_extractor::DefaultBindingKeyExtractor {}),
+                ),
+
+                // Oak Containers (SEV-SNP)
+                Some(reference_values::Type::OakContainers(OakContainersReferenceValues {
+                    root_layer:
+                        Some(RootLayerReferenceValues {
+                            amd_sev:
+                                Some(
+                                    amd_sev_ref_vals @ AmdSevReferenceValues {
+                                        stage0: Some(stage0_ref_vals),
+                                        ..
+                                    },
+                                ),
+                            insecure: None,
+                            ..
+                        }),
+                    kernel_layer: Some(kernel_ref_vals),
+                    system_layer: Some(system_ref_vals),
+                    container_layer: Some(container_ref_vals),
+                })) => (
+                    Arc::new(AmdSevSnpDiceAttestationVerifier::new(
+                        AmdSevSnpPolicy::new(amd_sev_ref_vals),
+                        Box::new(FirmwarePolicy::new(stage0_ref_vals)),
+                        vec![
+                            Box::new(KernelPolicy::new(kernel_ref_vals)),
+                            Box::new(SystemPolicy::new(system_ref_vals)),
+                            Box::new(ContainerPolicy::new(container_ref_vals)),
+                        ],
+                        clock,
+                    )),
+                    Arc::new(oak_session::key_extractor::DefaultBindingKeyExtractor {}),
+                ),
+
+                // Restricted Kernel
+                _ => (
+                    Arc::new(DiceAttestationVerifier::create(reference_values, clock)),
+                    Arc::new(oak_session::key_extractor::DefaultSigningKeyExtractor {}),
+                ),
+            };
+
+        self.peer_verifier = Some(peer_verifier);
+        self.key_extractor = Some(key_extractor);
         self.endorsements = endorsements;
     }
 
@@ -212,9 +274,8 @@ impl OakSessionFactory for DefaultOakSessionFactory {
             self.attester_factory.get()?,
             endorser,
             self.session_binder_factory.get()?,
-            &self.key_extractor,
-            self.reference_values.clone(),
-            Arc::clone(&self.clock.as_ref().unwrap()),
+            self.peer_verifier.as_ref().unwrap(),
+            self.key_extractor.as_ref().unwrap(),
         )?;
         Ok(Box::new(client_session))
     }
@@ -227,9 +288,8 @@ impl OakSessionFactory for DefaultOakSessionFactory {
             self.attester_factory.get()?,
             endorser,
             self.session_binder_factory.get()?,
-            &self.key_extractor,
-            self.reference_values.clone(),
-            Arc::clone(&self.clock.as_ref().unwrap()),
+            self.peer_verifier.as_ref().unwrap(),
+            self.key_extractor.as_ref().unwrap(),
         )?;
         Ok(Box::new(server_session))
     }
@@ -260,9 +320,8 @@ impl DefaultOakClientSession {
         attester: Box<dyn Attester>,
         endorser: Box<dyn Endorser>,
         session_binder: Box<dyn SessionBinder>,
+        peer_verifier: &Arc<dyn AttestationVerifier>,
         key_extractor: &Arc<dyn KeyExtractor>,
-        reference_values: ReferenceValues,
-        clock: Arc<dyn Clock>,
     ) -> Result<Self> {
         Ok(Self {
             inner: ClientSession::create(
@@ -271,9 +330,8 @@ impl DefaultOakClientSession {
                     .add_self_endorser(String::from(TCP_ATTESTER_ID), endorser)
                     .add_peer_verifier_with_key_extractor_ref(
                         String::from(TCP_ATTESTER_ID),
-                        &(Arc::new(DiceAttestationVerifier::create(reference_values, clock))
-                            as Arc<dyn AttestationVerifier>),
-                        &key_extractor,
+                        peer_verifier,
+                        key_extractor,
                     )
                     .set_encryption_provider(Box::new(DefaultEncryptorProvider))
                     .add_session_binder(String::from(TCP_ATTESTER_ID), session_binder)
@@ -318,9 +376,8 @@ impl DefaultOakServerSession {
         attester: Box<dyn Attester>,
         endorser: Box<dyn Endorser>,
         session_binder: Box<dyn SessionBinder>,
+        peer_verifier: &Arc<dyn AttestationVerifier>,
         key_extractor: &Arc<dyn KeyExtractor>,
-        reference_values: ReferenceValues,
-        clock: Arc<dyn Clock>,
     ) -> Result<Self> {
         Ok(Self {
             inner: ServerSession::create(
@@ -329,8 +386,7 @@ impl DefaultOakServerSession {
                     .add_self_endorser(String::from(TCP_ATTESTER_ID), endorser)
                     .add_peer_verifier_with_key_extractor_ref(
                         String::from(TCP_ATTESTER_ID),
-                        &(Arc::new(DiceAttestationVerifier::create(reference_values, clock))
-                            as Arc<dyn AttestationVerifier>),
+                        peer_verifier,
                         key_extractor,
                     )
                     .set_encryption_provider(Box::new(DefaultEncryptorProvider))

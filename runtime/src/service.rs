@@ -31,7 +31,6 @@ use crate::{
     storage::MemoryStorage,
 };
 use alloc::boxed::Box;
-use alloc::sync::Arc;
 use alloc::vec::Vec;
 use core::mem;
 #[cfg(feature = "tonic")]
@@ -99,7 +98,6 @@ impl<A: Actor> ApplicationService<A> {
                     Box::new(DefaultOakSessionFactory::new(
                         Box::new(DefaultOakSessionBinderFactory {}),
                         Box::new(DefaultOakAttesterFactory {}),
-                        Arc::new(oak_session::key_extractor::DefaultSigningKeyExtractor {}),
                     )),
                 ))),
                 /*logger=*/ None,
@@ -169,7 +167,7 @@ impl TonicApplicationService {
             oneshot::Sender<Result<ReceiveMessageResponse, Status>>,
         )>(1);
         let join_handle = tokio::task::spawn_blocking(move || {
-            Self::run_driver_loop(factory(), &channel, evidence, logger, rx)
+            Self::run_driver_loop(factory(), channel, evidence, logger, rx)
         });
         Self {
             sender: Some(tx),
@@ -179,7 +177,7 @@ impl TonicApplicationService {
 
     fn run_driver_loop<A: Actor>(
         actor: A,
-        channel: &tonic::transport::channel::Channel,
+        channel: tonic::transport::channel::Channel,
         evidence: oak_proto_rust::oak::attestation::v1::Evidence,
         logger: Option<Logger>,
         mut rx: mpsc::Receiver<(
@@ -202,7 +200,7 @@ impl TonicApplicationService {
 
     fn new_driver<A: Actor>(
         actor: A,
-        channel: &tonic::transport::channel::Channel,
+        channel: tonic::transport::channel::Channel,
         evidence: oak_proto_rust::oak::attestation::v1::Evidence,
         logger: Option<Logger>,
     ) -> Driver<
@@ -226,7 +224,6 @@ impl TonicApplicationService {
                         channel,
                     )),
                     Box::new(crate::session::OakContainersAttesterFactory::new(evidence)),
-                    Arc::new(oak_session::key_extractor::DefaultSigningKeyExtractor {}),
                 )),
             ))),
             logger,

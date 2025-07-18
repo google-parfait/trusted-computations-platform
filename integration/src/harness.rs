@@ -361,7 +361,6 @@ impl<A: Actor> FakePlatform<A> {
                     Box::new(DefaultOakSessionFactory::new(
                         Box::new(FakeOakSessionBinderFactory {}),
                         Box::new(FakeOakAttesterFactory {}),
-                        Arc::new(oak_session::key_extractor::DefaultSigningKeyExtractor {}),
                     )),
                 ))),
                 /*logger=*/ None,
