@@ -35,9 +35,9 @@ use crate::snapshot::{
 use alloc::boxed::Box;
 use alloc::sync::Arc;
 use alloc::vec::Vec;
-use oak_attestation_verification_types::util::Clock;
 use oak_proto_rust::oak::attestation::v1::{Endorsements, ReferenceValues};
 use oak_proto_rust::oak::session::v1::{SessionRequest, SessionResponse};
+use oak_time::Clock;
 use prost::bytes::Bytes;
 use raft::{
     eraftpb::ConfChange as RaftConfigChange, eraftpb::ConfState as RaftConfigState,
@@ -366,14 +366,5 @@ mock! {
     fn write(&mut self, plaintext: &[u8]) -> anyhow::Result<()>;
 
     fn read(&mut self) -> anyhow::Result<Option<Vec<u8>>>;
-    }
-}
-
-mock! {
-    pub Clock {
-    }
-
-    impl Clock for Clock {
-        fn get_milliseconds_since_epoch(&self) -> i64;
     }
 }
