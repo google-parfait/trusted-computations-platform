@@ -18,8 +18,8 @@ use crate::session::{OakClientSession, OakServerSession, OakSessionFactory};
 use alloc::sync::Arc;
 use alloc::{boxed::Box, format};
 use anyhow::{anyhow, Error, Result};
-use oak_attestation_verification_types::util::Clock;
 use oak_proto_rust::oak::attestation::v1::{Endorsements, ReferenceValues};
+use oak_time::Clock;
 use slog::{info, o, warn, Logger};
 use tcp_proto::runtime::endpoint::{
     secure_channel_handshake::{
@@ -507,9 +507,7 @@ mod test {
         HandshakeSessionProvider, Role, ServerHandshakeSession,
     };
     use crate::logger::log::create_logger;
-    use crate::mock::{
-        MockClock, MockOakClientSession, MockOakServerSession, MockOakSessionFactory,
-    };
+    use crate::mock::{MockOakClientSession, MockOakServerSession, MockOakSessionFactory};
     use alloc::sync::Arc;
     use anyhow::{anyhow, Result};
     use core::mem;
@@ -517,6 +515,7 @@ mod test {
     use oak_proto_rust::oak::session::v1::{
         SessionRequest as OakSessionRequest, SessionResponse as OakSessionResponse,
     };
+    use oak_time::{clock::FixedClock, UNIX_EPOCH};
     use tcp_proto::runtime::endpoint::{
         secure_channel_handshake::{
             noise_protocol, noise_protocol::initiator_request::Message::SessionRequest,
@@ -724,7 +723,7 @@ mod test {
             DefaultHandshakeSessionProvider::new(Box::new(mock_oak_session_factory));
         handshake_session_provider.init(
             create_logger(),
-            Arc::new(MockClock::new()),
+            Arc::new(FixedClock::at_instant(UNIX_EPOCH)),
             ReferenceValues::default(),
             Endorsements::default(),
         );
@@ -870,11 +869,10 @@ mod test {
             DefaultHandshakeSessionProvider::new(Box::new(mock_oak_session_factory));
         handshake_session_provider.init(
             create_logger(),
-            Arc::new(MockClock::new()),
+            Arc::new(FixedClock::at_instant(UNIX_EPOCH)),
             ReferenceValues::default(),
             Endorsements::default(),
         );
-        let clock = MockClock::new();
         let mut server_handshake_session = handshake_session_provider
             .get(self_replica_id, peer_replica_id, Role::Recipient)
             .unwrap();

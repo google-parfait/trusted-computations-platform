@@ -27,8 +27,8 @@ use alloc::vec::Vec;
 use alloc::{boxed::Box, vec};
 use anyhow::anyhow;
 use hashbrown::HashMap;
-use oak_attestation_verification_types::util::Clock;
 use oak_proto_rust::oak::attestation::v1::{Endorsements, ReferenceValues};
+use oak_time::Clock;
 use raft::prelude::MessageType;
 use slog::{info, o, warn, Logger};
 use tcp_proto::runtime::endpoint::*;
@@ -648,9 +648,7 @@ mod test {
     use crate::communication::{mem, OutgoingMessage};
     use crate::handshake::Role;
     use crate::logger::log::create_logger;
-    use crate::mock::{
-        MockClock, MockEncryptor, MockHandshakeSession, MockHandshakeSessionProvider,
-    };
+    use crate::mock::{MockEncryptor, MockHandshakeSession, MockHandshakeSessionProvider};
     use crate::{
         communication::{CommunicationConfig, CommunicationModule, DefaultCommunicationModule},
         platform::PalError,
@@ -664,6 +662,7 @@ mod test {
         matchers::{eq as gt_eq, unordered_elements_are},
     };
     use oak_proto_rust::oak::attestation::v1::{Endorsements, ReferenceValues};
+    use oak_time::{clock::FixedClock, UNIX_EPOCH};
     use prost::bytes::Bytes;
     use raft::prelude::MessageType;
     use tcp_proto::runtime::endpoint::*;
@@ -962,7 +961,7 @@ mod test {
                 MessageType::MsgHeartbeat,
             ))
         );
-        let clock = MockClock::new();
+        let clock = FixedClock::at_instant(UNIX_EPOCH);
         communication_module.init(
             self_replica_id,
             create_logger(),
@@ -1147,7 +1146,7 @@ mod test {
                 create_deliver_system_message(peer_replica_id_a, self_replica_id)
             ))
         );
-        let clock = MockClock::new();
+        let clock = FixedClock::at_instant(UNIX_EPOCH);
         communication_module.init(
             self_replica_id,
             create_logger(),
@@ -1335,8 +1334,8 @@ mod test {
             DefaultCommunicationModule::new(Box::new(mock_handshake_session_provider_a));
         let mut communication_module_b =
             DefaultCommunicationModule::new(Box::new(mock_handshake_session_provider_b));
-        let clock_a = MockClock::new();
-        let clock_b = MockClock::new();
+        let clock_a = FixedClock::at_instant(UNIX_EPOCH);
+        let clock_b = FixedClock::at_instant(UNIX_EPOCH);
         communication_module_a.init(
             peer_replica_id_a,
             create_logger(),
@@ -1562,8 +1561,8 @@ mod test {
             DefaultCommunicationModule::new(Box::new(mock_handshake_session_provider_a));
         let mut communication_module_b =
             DefaultCommunicationModule::new(Box::new(mock_handshake_session_provider_b));
-        let clock_a = MockClock::new();
-        let clock_b = MockClock::new();
+        let clock_a = FixedClock::at_instant(UNIX_EPOCH);
+        let clock_b = FixedClock::at_instant(UNIX_EPOCH);
         communication_module_a.init(
             peer_replica_id_a,
             create_logger(),
@@ -1725,8 +1724,8 @@ mod test {
             create_deliver_system_message(peer_replica_id_a, peer_replica_id_b);
         let deliver_system_message_b_to_a =
             create_deliver_system_message(peer_replica_id_b, peer_replica_id_a);
-        let clock_a = MockClock::new();
-        let clock_b = MockClock::new();
+        let clock_a = FixedClock::at_instant(UNIX_EPOCH);
+        let clock_b = FixedClock::at_instant(UNIX_EPOCH);
         communication_module_a.init(
             peer_replica_id_a,
             create_logger(),
@@ -1858,7 +1857,7 @@ mod test {
             .take();
         let mut communication_module_a =
             DefaultCommunicationModule::new(Box::new(mock_handshake_session_provider_a));
-        let clock = MockClock::new();
+        let clock = FixedClock::at_instant(UNIX_EPOCH);
         communication_module_a.init(
             peer_replica_id_a,
             create_logger(),
@@ -2039,7 +2038,7 @@ mod test {
 
         let mut communication_module =
             DefaultCommunicationModule::new(Box::new(mock_handshake_session_provider));
-        let clock = MockClock::new();
+        let clock = FixedClock::at_instant(UNIX_EPOCH);
         communication_module.init(peer_replica_id_a, create_logger(), Arc::new(clock), config);
 
         // Initiate handshake.
@@ -2238,7 +2237,7 @@ mod test {
 
         let mut communication_module =
             DefaultCommunicationModule::new(Box::new(mock_handshake_session_provider));
-        let clock = MockClock::new();
+        let clock = FixedClock::at_instant(UNIX_EPOCH);
         communication_module.init(peer_replica_id_a, create_logger(), Arc::new(clock), config);
 
         // Initiate handshake.
@@ -2413,7 +2412,7 @@ mod test {
             .take();
         let mut communication_module_a =
             DefaultCommunicationModule::new(Box::new(mock_handshake_session_provider_a));
-        let clock_a = MockClock::new();
+        let clock_a = FixedClock::at_instant(UNIX_EPOCH);
         communication_module_a.init(
             peer_replica_id_a,
             create_logger(),

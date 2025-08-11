@@ -34,8 +34,8 @@ use core::{
     cmp, mem,
     sync::atomic::{AtomicI64, Ordering},
 };
-use oak_attestation_verification_types::util::Clock;
 use oak_proto_rust::oak::attestation::v1::{Endorsements, ReferenceValues};
+use oak_time::{Clock, Instant};
 use prost::{bytes::Bytes, Message};
 use raft::{
     eraftpb::ConfChangeType as RaftConfigChangeType, eraftpb::ConfState as RaftConfigState,
@@ -145,8 +145,8 @@ impl DefaultClock {
 }
 
 impl Clock for DefaultClock {
-    fn get_milliseconds_since_epoch(&self) -> i64 {
-        self.instant.load(Ordering::Relaxed)
+    fn get_time(&self) -> Instant {
+        Instant::from_unix_millis(self.instant.load(Ordering::Relaxed))
     }
 }
 
