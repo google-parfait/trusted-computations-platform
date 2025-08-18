@@ -22,6 +22,7 @@ _ALL_BINARIES = {
     "//apps/atomic_counter/container:bundle": "tcp_atomic_counter_container_app/container.tar",
     "//apps/tablet_cache/app:tcp_tablet_cache_enclave_app": "tcp_tablet_cache_enclave_app/binary",
     "//apps/tablet_store/app:tcp_tablet_store_enclave_app": "tcp_tablet_store_enclave_app/binary",
+    "//apps/willow/decryptor/container:bundle": "willow_decryptor/container.tar",
 }
 
 pkg_files(
