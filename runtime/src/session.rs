@@ -19,8 +19,8 @@ use alloc::{vec, vec::Vec};
 use anyhow::Result;
 use oak_attestation_types::{attester::Attester, endorser::Endorser};
 use oak_attestation_verification::{
-    AmdSevSnpDiceAttestationVerifier, AmdSevSnpPolicy, ContainerPolicy, EventLogVerifier,
-    FirmwarePolicy, KernelPolicy, SystemPolicy,
+    AmdSevSnpDiceAttestationVerifier, AmdSevSnpPolicy, ContainerPolicy, FirmwarePolicy,
+    InsecureAttestationVerifier, KernelPolicy, SystemPolicy,
 };
 use oak_attestation_verification_types::verifier::AttestationVerifier;
 use oak_crypto::{encryptor::Encryptor, noise_handshake::OrderedCrypter};
@@ -211,14 +211,13 @@ impl OakSessionFactory for DefaultOakSessionFactory {
                     system_layer: Some(system_ref_vals),
                     container_layer: Some(container_ref_vals),
                 })) => (
-                    // TODO: b/432726860 - use InsecureDiceAttestationVerifier once it's available.
-                    Arc::new(EventLogVerifier::new(
+                    Arc::new(InsecureAttestationVerifier::new(
+                        clock,
                         vec![
                             Box::new(KernelPolicy::new(kernel_ref_vals)),
                             Box::new(SystemPolicy::new(system_ref_vals)),
                             Box::new(ContainerPolicy::new(container_ref_vals)),
                         ],
-                        clock,
                     )),
                     Arc::new(oak_session::key_extractor::DefaultBindingKeyExtractor {}),
                 ),
