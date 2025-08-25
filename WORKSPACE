@@ -101,6 +101,7 @@ rules_proto_toolchains()
 http_archive(
     name = "oak",
     integrity = "sha256-3CzlN6XG3D3/sjJQIeK6XrMcjIU4TaYLfjamy3IC9Ew=",
+    patches = ["//third_party/oak:session_binder.patch"],
     strip_prefix = "oak-4d5246a4786e3be0dd80590edbfdfb807f658f21",
     url = "https://github.com/project-oak/oak/archive/4d5246a4786e3be0dd80590edbfdfb807f658f21.tar.gz",
 )
