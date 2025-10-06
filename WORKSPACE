@@ -100,10 +100,10 @@ rules_proto_toolchains()
 
 http_archive(
     name = "oak",
-    integrity = "sha256-3CzlN6XG3D3/sjJQIeK6XrMcjIU4TaYLfjamy3IC9Ew=",
+    integrity = "sha256-ZEZ+qDfHWNivUm3z9LkWG5q2F6udbjij8GTgUFmIl/k=",
     patches = ["//third_party/oak:session_binder.patch"],
-    strip_prefix = "oak-4d5246a4786e3be0dd80590edbfdfb807f658f21",
-    url = "https://github.com/project-oak/oak/archive/4d5246a4786e3be0dd80590edbfdfb807f658f21.tar.gz",
+    strip_prefix = "oak-0beb0de86a546df46365cf4caef3ac8065e304e9",
+    url = "https://github.com/project-oak/oak/archive/0beb0de86a546df46365cf4caef3ac8065e304e9.tar.gz",
 )
 
 load("@oak//bazel:repositories.bzl", "oak_toolchain_repositories")
