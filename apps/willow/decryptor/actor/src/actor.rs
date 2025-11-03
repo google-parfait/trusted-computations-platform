@@ -35,10 +35,16 @@ use tcp_runtime::model::{
     EventOutcome,
 };
 
+#[derive(PartialEq)]
+struct KeyPair {
+    public_key: Bytes,
+    private_key: Bytes,
+}
+
 pub struct DecryptorActor {
     reference_values: ReferenceValues,
     context: Option<Box<dyn ActorContext>>,
-    key_pairs: BTreeMap<Bytes, Bytes>,
+    key_pairs: BTreeMap<Bytes, KeyPair>,
 }
 
 impl DecryptorActor {
@@ -96,17 +102,20 @@ impl DecryptorActor {
     }
 
     // TODO: Replace with the actual Willow library once open-sourced.
-    fn create_public_key_share(&mut self) -> Bytes {
+    fn create_public_key_share(&self) -> Bytes {
         return "symmetric key".into();
     }
 
-    fn get_private_key(&mut self, public_key: &Bytes) -> Option<Bytes> {
-        return self.key_pairs.get(public_key).map(|key| key.clone());
+    fn get_key_pair(&self, key_id: &Bytes) -> Option<&KeyPair> {
+        return self.key_pairs.get(key_id).map(|key| key);
     }
 
     // TODO: Replace with the actual Willow library once open-sourced.
-    fn decrypt(&mut self, request: Bytes) -> Bytes {
-        return request;
+    fn decrypt(&self, request: Bytes, _private_key: Bytes) -> DecryptResponse {
+        return DecryptResponse {
+            decryption_response: request.to_vec(),
+        };
+        // TODO: Clear the key pair before returning if decryption is successful.
     }
 
     fn command_err(
@@ -158,10 +167,11 @@ impl Actor for DecryptorActor {
             key_pairs: Vec::<SnapshotKeyPair>::new(),
         };
 
-        for (public_key, private_key) in &self.key_pairs {
+        for (key_id, keys) in &self.key_pairs {
             snapshot.key_pairs.push(SnapshotKeyPair {
-                public_key_share: public_key.clone(),
-                private_key_share: private_key.clone(),
+                public_key_share: keys.public_key.clone(),
+                private_key_share: keys.private_key.clone(),
+                key_id: key_id.clone(),
             });
         }
 
@@ -176,8 +186,13 @@ impl Actor for DecryptorActor {
 
         self.key_pairs.clear();
         for key_pair in snapshot.key_pairs {
-            self.key_pairs
-                .insert(key_pair.public_key_share, key_pair.private_key_share);
+            self.key_pairs.insert(
+                key_pair.key_id,
+                KeyPair {
+                    public_key: key_pair.public_key_share,
+                    private_key: key_pair.private_key_share,
+                },
+            );
         }
 
         Ok(())
@@ -222,7 +237,25 @@ impl Actor for DecryptorActor {
         }
 
         match decryptor_request.msg {
-            Some(decryptor_request::Msg::GenerateKey(_)) => {
+            Some(decryptor_request::Msg::GenerateKey(generate_key_request)) => {
+                let key_id = generate_key_request.key_id;
+                if self.key_pairs.contains_key::<Bytes>(&key_id.clone().into()) {
+                    let key = self
+                        .key_pairs
+                        .get::<Bytes>(&key_id.clone().into())
+                        .unwrap()
+                        .public_key
+                        .clone();
+                    return Ok(CommandOutcome::with_command(ActorCommand::with_header(
+                        command.correlation_id,
+                        &DecryptorResponse {
+                            msg: Some(decryptor_response::Msg::GenerateKey(GenerateKeyResponse {
+                                public_key: key.to_vec(),
+                            })),
+                        },
+                    )));
+                }
+
                 let key = self.create_public_key_share();
 
                 return Ok(CommandOutcome::with_event(ActorEvent::with_proto(
@@ -231,32 +264,35 @@ impl Actor for DecryptorActor {
                         event: Some(decryptor_event::Event::GenerateKeyEvent(GenerateKeyEvent {
                             public_key_share: key.to_vec(),
                             private_key_share: key.to_vec(),
+                            key_id: key_id.into(),
                         })),
                     },
                 )));
             }
             Some(decryptor_request::Msg::Decrypt(decrypt_request)) => {
                 let request = decrypt_request.decryption_request;
-                let public_key: Bytes = decrypt_request.public_key.into();
-                let private_key = self.get_private_key(&public_key);
+                let key_id: Bytes = decrypt_request.key_id.into();
+                let keys = self.get_key_pair(&key_id);
 
-                if private_key == None {
+                if keys == None {
                     return self.command_err(
                         command.correlation_id,
                         StatusCode::FailedPrecondition as i32,
                         format!(
-                            "Key pair not found for given {} public key",
-                            String::from_utf8(public_key.to_vec()).expect("Invalid UTF-8")
+                            "Key pair not found for given {} key id",
+                            String::from_utf8(key_id.to_vec()).expect("Invalid UTF-8")
                         ),
                     );
                 }
 
+                let private_key = &keys.unwrap().private_key;
+
                 return Ok(CommandOutcome::with_command(ActorCommand::with_header(
                     command.correlation_id,
                     &DecryptorResponse {
-                        msg: Some(decryptor_response::Msg::Decrypt(DecryptResponse {
-                            decryption_response: self.decrypt(request.into()).to_vec(),
-                        })),
+                        msg: Some(decryptor_response::Msg::Decrypt(
+                            self.decrypt(request.into(), private_key.clone()),
+                        )),
                     },
                 )));
             }
@@ -299,8 +335,11 @@ impl Actor for DecryptorActor {
                 public_key = generate_key_event.public_key_share.clone().into();
                 // TODO: Add garbage collection for key pairs.
                 self.key_pairs.insert(
-                    generate_key_event.public_key_share.into(),
-                    generate_key_event.private_key_share.into(),
+                    generate_key_event.key_id.into(),
+                    KeyPair {
+                        public_key: generate_key_event.public_key_share.into(),
+                        private_key: generate_key_event.private_key_share.into(),
+                    },
                 );
             }
             _ => {

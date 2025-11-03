@@ -51,8 +51,11 @@ mod test {
         cluster.advance_until_elected_leader(None);
         assert!(cluster.leader_id() == 1);
 
+        let key_id = "key_id";
         let decryptor_generate_key_request = DecryptorRequest {
-            msg: Some(decryptor_request::Msg::GenerateKey(GenerateKeyRequest {})),
+            msg: Some(decryptor_request::Msg::GenerateKey(GenerateKeyRequest {
+                key_id: key_id.into(),
+            })),
         };
 
         cluster.send_app_message(
@@ -77,7 +80,8 @@ mod test {
         let decryptor_decrypt_request = DecryptorRequest {
             msg: Some(decryptor_request::Msg::Decrypt(DecryptRequest {
                 decryption_request: request.into(),
-                public_key: public_key.to_vec(),
+                public_key: "".into(),
+                key_id: key_id.into(),
             })),
         };
 
@@ -101,7 +105,7 @@ mod test {
     }
 
     #[test]
-    fn test_decrypt_invalid_key() {
+    fn test_decrypt_invalid_key_id() {
         let mut cluster = FakeCluster::new(Bytes::new());
 
         cluster.start_node(1, true, DecryptorActor::new());
@@ -109,11 +113,12 @@ mod test {
         assert!(cluster.leader_id() == 1);
 
         let request = "message";
-        let public_key = "unknown key";
+        let key_id = "unknown key id";
         let decryptor_decrypt_request = DecryptorRequest {
             msg: Some(decryptor_request::Msg::Decrypt(DecryptRequest {
                 decryption_request: request.into(),
-                public_key: public_key.into(),
+                public_key: "".into(),
+                key_id: key_id.into(),
             })),
         };
 
@@ -134,7 +139,7 @@ mod test {
         assert_eq!(error_code, 9);
         assert_eq!(
             error_message,
-            format!("Key pair not found for given {} public key", public_key)
+            format!("Key pair not found for given {} key id", key_id)
         );
     }
 }

@@ -25,6 +25,7 @@ message DecryptorEvent {
 message GenerateKeyEvent {
   bytes public_key_share = 1;
   bytes private_key_share = 2;
+  bytes key_id = 3;
 }
 
 message DecryptorSnapshot {
@@ -34,11 +35,27 @@ message DecryptorSnapshot {
 message SnapshotKeyPair {
   bytes public_key_share = 1;
   bytes private_key_share = 2;
+  bytes key_id = 3;
 }
 
 // TODO: Remove and replace with //third_party protos once these are
 // open-sourced
-message GenerateKeyRequest {}
+
+// A simple container for a Willow public cryptographic key that embeds the key
+// ID and the "raw" key material.
+message Key {
+  // A short identifier for the key to allow decryption or verification to find
+  // the corresponding key from a list.
+  bytes key_id = 1;
+
+  // The raw key material. This is the serialized bytes of the key material
+  // returned by the key generation service.
+  bytes key_material = 2;
+}
+
+message GenerateKeyRequest {
+    bytes key_id = 1;
+}
 
 message GenerateKeyResponse {
   // The serialized bytes of the public key.
@@ -49,7 +66,9 @@ message DecryptRequest {
   // The serialized bytes of the message to decrypt.
   bytes decryption_request = 1;
   // The serialized bytes of the public key as returned by GenerateAheKeyPair
-  bytes public_key = 2;
+  bytes public_key = 2 [deprecated = true];
+  // The key ID of the public key that was used in the GenerateKey call.
+  bytes key_id = 4;
 }
 
 message DecryptResponse {
