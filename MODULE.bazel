@@ -1,0 +1,22 @@
+"Trusted Computations Platform"
+
+module(
+    name = "trusted_computations_platform",
+    version = "0.0.0",
+    compatibility_level = 1,
+)
+
+bazel_dep(name = "rules_python", version = "1.7.0-rc4")
+bazel_dep(name = "rules_rust", version = "0.61.0")
+bazel_dep(name = "protobuf", version = "33.0", repo_name = "com_google_protobuf")
+bazel_dep(name = "rules_pkg", version = "1.1.0")
+bazel_dep(name = "aspect_bazel_lib", version = "2.21.2")
+bazel_dep(name = "rules_proto", version = "7.1.0")
+bazel_dep(name = "bazel_skylib", version = "1.8.2")
+bazel_dep(name = "rules_oci", version = "2.2.6")
+bazel_dep(name = "platforms", version = "1.0.0")
+
+python = use_extension("@rules_python//python/extensions:python.bzl", "python")
+python.defaults(python_version = "3.10")
+python.toolchain(python_version = "3.10")
+use_repo(python, "python_3_10")
