@@ -1,0 +1,40 @@
+"Trusted Computations Platform"
+
+module(
+    name = "trusted_computations_platform",
+    version = "0.0.0",
+    compatibility_level = 1,
+)
+
+bazel_dep(name = "rules_python", version = "1.7.0-rc4")
+bazel_dep(name = "rules_rust", version = "0.61.0")
+bazel_dep(name = "protobuf", version = "33.0", repo_name = "com_google_protobuf")
+bazel_dep(name = "rules_pkg", version = "1.1.0")
+bazel_dep(name = "aspect_bazel_lib", version = "2.21.2")
+bazel_dep(name = "rules_proto", version = "7.1.0")
+bazel_dep(name = "bazel_skylib", version = "1.8.2")
+bazel_dep(name = "rules_oci", version = "2.2.6")
+bazel_dep(name = "platforms", version = "1.0.0")
+
+python = use_extension("@rules_python//python/extensions:python.bzl", "python")
+python.defaults(python_version = "3.10")
+python.toolchain(python_version = "3.10")
+use_repo(python, "python_3_10")
+
+# Willow and dependencies.
+bazel_dep(name = "secure_aggregation", version = "8e1db6b2")
+archive_override(
+    module_name = "secure_aggregation",
+    strip_prefix = "secure-aggregation-8e1db6b25be2a191e4478e9b2d1a8553c724a208",
+    urls = ["https://github.com/google/secure-aggregation/archive/8e1db6b25be2a191e4478e9b2d1a8553c724a208.zip"],
+)
+
+bazel_dep(name = "shell-encryption", version = "259ce90f")
+archive_override(
+    module_name = "shell-encryption",
+    integrity = "sha256-qPgdzLiDGXZwj/p5xOuZRQKvqU/qrS0mI8DLhiBWyi0=",
+    strip_prefix = "shell-encryption-259ce90fdd021d035d237be3dce5ec5a17ff0367",
+    urls = [
+        "https://github.com/google/shell-encryption/archive/259ce90fdd021d035d237be3dce5ec5a17ff0367.zip",
+    ],
+)
