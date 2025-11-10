@@ -21,10 +21,10 @@ mod test {
 
     use prost::bytes::Bytes;
     use prost::Message;
+    use secure_aggregation::proto::*;
     use tcp_integration::harness::*;
     use tcp_proto::runtime::endpoint::out_message;
     use willow_decryptor_service::actor::DecryptorActor;
-    use willow_decryptor_service::apps::willow::decryptor::service::*;
 
     fn advance_until_response(cluster: &mut FakeCluster<DecryptorActor>) -> DecryptorResponse {
         let mut decrytpor_response: Option<DecryptorResponse> = None;

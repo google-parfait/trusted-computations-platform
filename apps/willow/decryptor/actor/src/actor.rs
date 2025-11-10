@@ -13,9 +13,7 @@
 // limitations under the License.
 
 use crate::apps::willow::decryptor::service::{
-    decryptor_event, decryptor_request, decryptor_response, DecryptResponse, DecryptorEvent,
-    DecryptorRequest, DecryptorResponse, DecryptorSnapshot, GenerateKeyEvent, GenerateKeyResponse,
-    SnapshotKeyPair, Status,
+    decryptor_event, DecryptorEvent, DecryptorSnapshot, GenerateKeyEvent, SnapshotKeyPair,
 };
 use alloc::collections::BTreeMap;
 use alloc::format;
@@ -29,6 +27,10 @@ use oak_proto_rust::oak::attestation::v1::{
     ReferenceValues, RootLayerReferenceValues, SkipVerification, TextReferenceValue,
 };
 use prost::{bytes::Bytes, Message};
+use secure_aggregation::proto::{
+    decryptor_request, decryptor_response, DecryptResponse, DecryptorRequest, DecryptorResponse,
+    GenerateKeyResponse, Status,
+};
 use slog::{debug, warn};
 use tcp_runtime::model::{
     Actor, ActorCommand, ActorContext, ActorError, ActorEvent, ActorEventContext, CommandOutcome,

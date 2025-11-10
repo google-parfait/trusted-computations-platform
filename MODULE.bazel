@@ -22,11 +22,11 @@ python.toolchain(python_version = "3.10")
 use_repo(python, "python_3_10")
 
 # Willow and dependencies.
-bazel_dep(name = "secure_aggregation", version = "8e1db6b2")
+bazel_dep(name = "secure_aggregation", version = "9edd360")
 archive_override(
     module_name = "secure_aggregation",
-    strip_prefix = "secure-aggregation-8e1db6b25be2a191e4478e9b2d1a8553c724a208",
-    urls = ["https://github.com/google/secure-aggregation/archive/8e1db6b25be2a191e4478e9b2d1a8553c724a208.zip"],
+    strip_prefix = "secure-aggregation-9edd3603f859c7fb376d660177a3feec542f8552",
+    urls = ["https://github.com/google/secure-aggregation/archive/9edd3603f859c7fb376d660177a3feec542f8552.zip"],
 )
 
 bazel_dep(name = "shell-encryption", version = "259ce90f")

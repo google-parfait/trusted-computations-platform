@@ -1,4 +1,4 @@
-// Copyright 2024 The Trusted Computations Platform Authors.
+// Copyright 2025 Google LLC.
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -12,28 +12,18 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-syntax = "proto3";
+#![no_std]
+#![feature(never_type)]
 
-package apps.willow.decryptor.service;
+extern crate alloc;
 
-message DecryptorEvent {
-  oneof event {
-    GenerateKeyEvent generate_key_event = 1;
-  }
-}
+pub mod proto {
+    #![allow(dead_code)]
+    pub(crate) mod secure_aggregation {
+        pub(crate) mod willow {
+            include!(concat!(env!("OUT_DIR"), "/secure_aggregation.willow.rs"));
+        }
+    }
 
-message GenerateKeyEvent {
-  bytes public_key_share = 1;
-  bytes private_key_share = 2;
-  bytes key_id = 3;
-}
-
-message DecryptorSnapshot {
-  repeated SnapshotKeyPair key_pairs = 1;
-}
-
-message SnapshotKeyPair {
-  bytes public_key_share = 1;
-  bytes private_key_share = 2;
-  bytes key_id = 3;
+    pub use secure_aggregation::willow::*;
 }
