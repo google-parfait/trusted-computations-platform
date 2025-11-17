@@ -16,22 +16,33 @@ syntax = "proto3";
 
 package apps.willow.decryptor.service;
 
+// Container of events triggered by Decryptor commands
 message DecryptorEvent {
   oneof event {
     GenerateKeyEvent generate_key_event = 1;
+    DecryptEvent decrypt_event = 2;
   }
 }
 
+// Decryptor event fired while processing GenerateKey commands
 message GenerateKeyEvent {
   bytes public_key_share = 1;
   bytes private_key_share = 2;
   bytes key_id = 3;
 }
 
+// Decryptor event fired while processing Decrypt commands
+message DecryptEvent {
+  bytes key_id = 1;
+  bytes decryption_response = 2;
+}
+
+// Data snapshot for TEE decryptors
 message DecryptorSnapshot {
   repeated SnapshotKeyPair key_pairs = 1;
 }
 
+// Snapshot container of all information required for a decryption session
 message SnapshotKeyPair {
   bytes public_key_share = 1;
   bytes private_key_share = 2;

@@ -142,4 +142,85 @@ mod test {
             format!("Key pair not found for given {} key id", key_id)
         );
     }
+
+    #[test]
+    fn test_attempt_at_second_decryption_fails() {
+        let mut cluster = FakeCluster::new(Bytes::new());
+
+        cluster.start_node(1, true, DecryptorActor::new());
+        cluster.advance_until_elected_leader(None);
+        assert!(cluster.leader_id() == 1);
+
+        let key_id = "key_id";
+        let decryptor_generate_key_request = DecryptorRequest {
+            msg: Some(decryptor_request::Msg::GenerateKey(GenerateKeyRequest {
+                key_id: key_id.into(),
+            })),
+        };
+
+        cluster.send_app_message(
+            cluster.leader_id(),
+            1,
+            decryptor_generate_key_request.encode_to_vec().into(),
+            Bytes::new(),
+        );
+
+        let decyrptor_generate_key_response = advance_until_response(&mut cluster);
+        let public_key = match decyrptor_generate_key_response.msg {
+            Some(decryptor_response::Msg::GenerateKey(generate_key_response)) => {
+                generate_key_response.public_key.clone().into()
+            }
+            Some(_) => Bytes::new(),
+            None => Bytes::new(),
+        };
+
+        assert_ne!(public_key, Bytes::new());
+
+        let request = "message";
+        let decryptor_decrypt_request = DecryptorRequest {
+            msg: Some(decryptor_request::Msg::Decrypt(DecryptRequest {
+                decryption_request: request.into(),
+                public_key: "".into(),
+                key_id: key_id.into(),
+            })),
+        };
+
+        cluster.send_app_message(
+            cluster.leader_id(),
+            2,
+            decryptor_decrypt_request.encode_to_vec().into(),
+            Bytes::new(),
+        );
+
+        let decryptor_decrypt_response = advance_until_response(&mut cluster);
+        let decryption_response = match decryptor_decrypt_response.msg {
+            Some(decryptor_response::Msg::Decrypt(decrypt_response)) => {
+                decrypt_response.decryption_response.clone().into()
+            }
+            Some(_) => Bytes::new(),
+            None => Bytes::new(),
+        };
+
+        assert_eq!(decryption_response, request);
+
+        cluster.send_app_message(
+            cluster.leader_id(),
+            2,
+            decryptor_decrypt_request.encode_to_vec().into(),
+            Bytes::new(),
+        );
+
+        let decryptor_decrypt_response = advance_until_response(&mut cluster);
+        let (error_code, error_message) = match decryptor_decrypt_response.msg {
+            Some(decryptor_response::Msg::Error(error)) => (error.code, error.message),
+            Some(_) => (0, "".to_string()),
+            None => (0, "".to_string()),
+        };
+
+        assert_eq!(error_code, 9);
+        assert_eq!(
+            error_message,
+            format!("Key pair not found for given {} key id", key_id)
+        );
+    }
 }

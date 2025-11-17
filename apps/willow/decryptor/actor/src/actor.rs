@@ -13,7 +13,8 @@
 // limitations under the License.
 
 use crate::apps::willow::decryptor::service::{
-    decryptor_event, DecryptorEvent, DecryptorSnapshot, GenerateKeyEvent, SnapshotKeyPair,
+    decryptor_event, DecryptEvent, DecryptorEvent, DecryptorSnapshot, GenerateKeyEvent,
+    SnapshotKeyPair,
 };
 use alloc::collections::BTreeMap;
 use alloc::format;
@@ -28,8 +29,8 @@ use oak_proto_rust::oak::attestation::v1::{
 };
 use prost::{bytes::Bytes, Message};
 use secure_aggregation::proto::{
-    decryptor_request, decryptor_response, DecryptResponse, DecryptorRequest, DecryptorResponse,
-    GenerateKeyResponse, Status,
+    decryptor_request, decryptor_response, DecryptRequest, DecryptResponse, DecryptorRequest,
+    DecryptorResponse, GenerateKeyRequest, GenerateKeyResponse, Status,
 };
 use slog::{debug, warn};
 use tcp_runtime::model::{
@@ -103,6 +104,136 @@ impl DecryptorActor {
             .as_mut()
     }
 
+    fn process_generate_key_command(
+        &mut self,
+        correlation_id: u64,
+        generate_key_request: GenerateKeyRequest,
+    ) -> Result<CommandOutcome, ActorError> {
+        let key_id = generate_key_request.key_id;
+        if self.key_pairs.contains_key::<Bytes>(&key_id.clone().into()) {
+            let key = self
+                .key_pairs
+                .get::<Bytes>(&key_id.clone().into())
+                .unwrap()
+                .public_key
+                .clone();
+            return Ok(CommandOutcome::with_command(ActorCommand::with_header(
+                correlation_id,
+                &DecryptorResponse {
+                    msg: Some(decryptor_response::Msg::GenerateKey(GenerateKeyResponse {
+                        public_key: key.to_vec(),
+                    })),
+                },
+            )));
+        }
+
+        let key = self.create_public_key_share();
+
+        return Ok(CommandOutcome::with_event(ActorEvent::with_proto(
+            correlation_id,
+            &DecryptorEvent {
+                event: Some(decryptor_event::Event::GenerateKeyEvent(GenerateKeyEvent {
+                    public_key_share: key.to_vec(),
+                    private_key_share: key.to_vec(),
+                    key_id: key_id.into(),
+                })),
+            },
+        )));
+    }
+
+    fn process_decrypt_command(
+        &mut self,
+        correlation_id: u64,
+        decrypt_request: DecryptRequest,
+    ) -> Result<CommandOutcome, ActorError> {
+        let request = decrypt_request.decryption_request;
+        let key_id: Bytes = decrypt_request.key_id.into();
+        let keys = self.get_key_pair(&key_id);
+
+        if keys == None {
+            return self.command_err(
+                correlation_id,
+                StatusCode::FailedPrecondition as i32,
+                format!(
+                    "Key pair not found for given {} key id",
+                    String::from_utf8(key_id.to_vec()).expect("Invalid UTF-8")
+                ),
+            );
+        }
+
+        let private_key = &keys.unwrap().private_key;
+        let decryption_response = self.decrypt(request.into(), private_key.clone());
+
+        match decryption_response {
+            Ok(response) => {
+                return Ok(CommandOutcome::with_event(ActorEvent::with_proto(
+                    correlation_id,
+                    &DecryptorEvent {
+                        event: Some(decryptor_event::Event::DecryptEvent(DecryptEvent {
+                            key_id: key_id.into(),
+                            decryption_response: response.to_vec(),
+                        })),
+                    },
+                )));
+            }
+            Err(status) => {
+                return self.command_err(correlation_id, status.code, status.message);
+            }
+        }
+    }
+
+    fn process_generate_key_event(
+        &mut self,
+        context: ActorEventContext,
+        correlation_id: u64,
+        generate_key_event: GenerateKeyEvent,
+    ) -> Result<EventOutcome, ActorError> {
+        let public_key: Bytes = generate_key_event.public_key_share.clone().into();
+        // TODO: Add garbage collection for unused key pairs.
+        self.key_pairs.insert(
+            generate_key_event.key_id.into(),
+            KeyPair {
+                public_key: generate_key_event.public_key_share.into(),
+                private_key: generate_key_event.private_key_share.into(),
+            },
+        );
+
+        if context.owned {
+            return Ok(EventOutcome::with_command(ActorCommand::with_header(
+                correlation_id,
+                &DecryptorResponse {
+                    msg: Some(decryptor_response::Msg::GenerateKey(GenerateKeyResponse {
+                        public_key: public_key.to_vec(),
+                    })),
+                },
+            )));
+        };
+
+        Ok(EventOutcome::with_none())
+    }
+
+    fn process_decrypt_event(
+        &mut self,
+        context: ActorEventContext,
+        correlation_id: u64,
+        decrypt_event: DecryptEvent,
+    ) -> Result<EventOutcome, ActorError> {
+        self.key_pairs.remove(&decrypt_event.key_id[..]);
+
+        if context.owned {
+            return Ok(EventOutcome::with_command(ActorCommand::with_header(
+                correlation_id,
+                &DecryptorResponse {
+                    msg: Some(decryptor_response::Msg::Decrypt(DecryptResponse {
+                        decryption_response: decrypt_event.decryption_response,
+                    })),
+                },
+            )));
+        };
+
+        Ok(EventOutcome::with_none())
+    }
+
     // TODO: Replace with the actual Willow library once open-sourced.
     fn create_public_key_share(&self) -> Bytes {
         return "symmetric key".into();
@@ -113,11 +244,8 @@ impl DecryptorActor {
     }
 
     // TODO: Replace with the actual Willow library once open-sourced.
-    fn decrypt(&self, request: Bytes, _private_key: Bytes) -> DecryptResponse {
-        return DecryptResponse {
-            decryption_response: request.to_vec(),
-        };
-        // TODO: Clear the key pair before returning if decryption is successful.
+    fn decrypt(&self, request: Bytes, _private_key: Bytes) -> Result<Bytes, Status> {
+        return Ok(request);
     }
 
     fn command_err(
@@ -240,63 +368,11 @@ impl Actor for DecryptorActor {
 
         match decryptor_request.msg {
             Some(decryptor_request::Msg::GenerateKey(generate_key_request)) => {
-                let key_id = generate_key_request.key_id;
-                if self.key_pairs.contains_key::<Bytes>(&key_id.clone().into()) {
-                    let key = self
-                        .key_pairs
-                        .get::<Bytes>(&key_id.clone().into())
-                        .unwrap()
-                        .public_key
-                        .clone();
-                    return Ok(CommandOutcome::with_command(ActorCommand::with_header(
-                        command.correlation_id,
-                        &DecryptorResponse {
-                            msg: Some(decryptor_response::Msg::GenerateKey(GenerateKeyResponse {
-                                public_key: key.to_vec(),
-                            })),
-                        },
-                    )));
-                }
-
-                let key = self.create_public_key_share();
-
-                return Ok(CommandOutcome::with_event(ActorEvent::with_proto(
-                    command.correlation_id,
-                    &DecryptorEvent {
-                        event: Some(decryptor_event::Event::GenerateKeyEvent(GenerateKeyEvent {
-                            public_key_share: key.to_vec(),
-                            private_key_share: key.to_vec(),
-                            key_id: key_id.into(),
-                        })),
-                    },
-                )));
+                return self
+                    .process_generate_key_command(command.correlation_id, generate_key_request);
             }
             Some(decryptor_request::Msg::Decrypt(decrypt_request)) => {
-                let request = decrypt_request.decryption_request;
-                let key_id: Bytes = decrypt_request.key_id.into();
-                let keys = self.get_key_pair(&key_id);
-
-                if keys == None {
-                    return self.command_err(
-                        command.correlation_id,
-                        StatusCode::FailedPrecondition as i32,
-                        format!(
-                            "Key pair not found for given {} key id",
-                            String::from_utf8(key_id.to_vec()).expect("Invalid UTF-8")
-                        ),
-                    );
-                }
-
-                let private_key = &keys.unwrap().private_key;
-
-                return Ok(CommandOutcome::with_command(ActorCommand::with_header(
-                    command.correlation_id,
-                    &DecryptorResponse {
-                        msg: Some(decryptor_response::Msg::Decrypt(
-                            self.decrypt(request.into(), private_key.clone()),
-                        )),
-                    },
-                )));
+                return self.process_decrypt_command(command.correlation_id, decrypt_request);
             }
             _ => {
                 warn!(
@@ -331,18 +407,16 @@ impl Actor for DecryptorActor {
             event_name(&decryptor_event)
         );
 
-        let public_key: Bytes;
         match decryptor_event.event {
             Some(decryptor_event::Event::GenerateKeyEvent(generate_key_event)) => {
-                public_key = generate_key_event.public_key_share.clone().into();
-                // TODO: Add garbage collection for key pairs.
-                self.key_pairs.insert(
-                    generate_key_event.key_id.into(),
-                    KeyPair {
-                        public_key: generate_key_event.public_key_share.into(),
-                        private_key: generate_key_event.private_key_share.into(),
-                    },
+                return self.process_generate_key_event(
+                    context,
+                    event.correlation_id,
+                    generate_key_event,
                 );
+            }
+            Some(decryptor_event::Event::DecryptEvent(decrypt_event)) => {
+                return self.process_decrypt_event(context, event.correlation_id, decrypt_event);
             }
             _ => {
                 warn!(
@@ -356,19 +430,6 @@ impl Actor for DecryptorActor {
                 );
             }
         }
-
-        if context.owned {
-            return Ok(EventOutcome::with_command(ActorCommand::with_header(
-                event.correlation_id,
-                &DecryptorResponse {
-                    msg: Some(decryptor_response::Msg::GenerateKey(GenerateKeyResponse {
-                        public_key: public_key.to_vec(),
-                    })),
-                },
-            )));
-        }
-
-        Ok(EventOutcome::with_none())
     }
 
     fn get_reference_values(&self) -> ReferenceValues {
