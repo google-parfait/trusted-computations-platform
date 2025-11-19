@@ -7,10 +7,16 @@ cargo_build_script(
     build_script_env = {
         "PROTOC": "$(execpath @com_google_protobuf//:protoc)",
         "DECRYPTOR_PROTO": "$(location @secure_aggregation//willow/proto/willow:decryptor.proto)",
+        "SHELL_ENCRYPTION_PROTO": "$(location @shell-encryption//shell_encryption:serialization.proto)",
     },
     data = [
+        "@secure_aggregation//willow/proto/shell:ciphertexts.proto",
         "@secure_aggregation//willow/proto/willow:decryptor.proto",
         "@secure_aggregation//willow/proto/willow:key.proto",
+        "@secure_aggregation//willow/proto/willow:messages.proto",
+        "@secure_aggregation//willow/proto/zk:proofs.proto",
+        "@shell-encryption//shell_encryption:serialization.proto",
+        "@shell-encryption//shell_encryption/rns:rns_serialization.proto",
     ],
     tools = ["@com_google_protobuf//:protoc"],
     deps = ["@oak//micro_rpc_build"],

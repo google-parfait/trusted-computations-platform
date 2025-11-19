@@ -16,10 +16,16 @@ use crate::apps::willow::decryptor::service::{
     decryptor_event, DecryptEvent, DecryptorEvent, DecryptorSnapshot, GenerateKeyEvent,
     SnapshotKeyPair,
 };
+use ahe_traits::AheBase;
 use alloc::collections::BTreeMap;
 use alloc::format;
 use alloc::string::{String, ToString};
 use alloc::{boxed::Box, vec::Vec};
+use decryptor_traits::SecureAggregationDecryptor;
+use messages::PartialDecryptionRequest;
+use messages_rust_proto::{
+    DecryptorStateProto, PartialDecryptionRequest as PartialDecryptionRequestProto,
+};
 use micro_rpc::StatusCode;
 use oak_proto_rust::oak::attestation::v1::{
     binary_reference_value, kernel_binary_reference_value, reference_values, text_reference_value,
@@ -27,28 +33,37 @@ use oak_proto_rust::oak::attestation::v1::{
     KernelBinaryReferenceValue, KernelLayerReferenceValues, OakRestrictedKernelReferenceValues,
     ReferenceValues, RootLayerReferenceValues, SkipVerification, TextReferenceValue,
 };
+use parameters_shell::create_shell_ahe_config;
+use prng_traits::SecurePrng;
 use prost::{bytes::Bytes, Message};
+use proto_serialization_traits::{FromProto, ToProto};
+use protobuf::prelude::*;
 use secure_aggregation::proto::{
     decryptor_request, decryptor_response, DecryptRequest, DecryptResponse, DecryptorRequest,
     DecryptorResponse, GenerateKeyRequest, GenerateKeyResponse, Status,
 };
+use single_thread_hkdf::SingleThreadHkdfPrng;
 use slog::{debug, warn};
 use tcp_runtime::model::{
     Actor, ActorCommand, ActorContext, ActorError, ActorEvent, ActorEventContext, CommandOutcome,
     EventOutcome,
 };
+use vahe_shell::ShellVahe;
+use willow_v1_decryptor::{DecryptorState, WillowV1Decryptor};
 
 #[derive(PartialEq)]
 struct KeyPair {
-    public_key: Bytes,
-    private_key: Bytes,
+    public_key_share: Bytes,
+    decryptor_state: Bytes,
 }
 
 pub struct DecryptorActor {
     reference_values: ReferenceValues,
     context: Option<Box<dyn ActorContext>>,
-    key_pairs: BTreeMap<Bytes, KeyPair>,
+    key_pairs: BTreeMap<Vec<u8>, KeyPair>,
 }
+
+const MAX_NUMBER_OF_DECRYPTORS: i64 = 1;
 
 impl DecryptorActor {
     pub fn new() -> Self {
@@ -109,32 +124,32 @@ impl DecryptorActor {
         correlation_id: u64,
         generate_key_request: GenerateKeyRequest,
     ) -> Result<CommandOutcome, ActorError> {
-        let key_id = generate_key_request.key_id;
-        if self.key_pairs.contains_key::<Bytes>(&key_id.clone().into()) {
-            let key = self
+        let key_id: Vec<u8> = generate_key_request.key_id;
+        if self.key_pairs.contains_key(&key_id) {
+            let public_key_share = self
                 .key_pairs
-                .get::<Bytes>(&key_id.clone().into())
+                .get(&key_id)
                 .unwrap()
-                .public_key
+                .public_key_share
                 .clone();
             return Ok(CommandOutcome::with_command(ActorCommand::with_header(
                 correlation_id,
                 &DecryptorResponse {
                     msg: Some(decryptor_response::Msg::GenerateKey(GenerateKeyResponse {
-                        public_key: key.to_vec(),
+                        public_key: public_key_share.to_vec(),
                     })),
                 },
             )));
         }
 
-        let key = self.create_public_key_share();
+        let key_pair = self.create_public_key_share(key_id.clone());
 
         return Ok(CommandOutcome::with_event(ActorEvent::with_proto(
             correlation_id,
             &DecryptorEvent {
                 event: Some(decryptor_event::Event::GenerateKeyEvent(GenerateKeyEvent {
-                    public_key_share: key.to_vec(),
-                    private_key_share: key.to_vec(),
+                    public_key_share: key_pair.public_key_share.to_vec(),
+                    private_key_share: key_pair.decryptor_state.to_vec(),
                     key_id: key_id.into(),
                 })),
             },
@@ -147,10 +162,10 @@ impl DecryptorActor {
         decrypt_request: DecryptRequest,
     ) -> Result<CommandOutcome, ActorError> {
         let request = decrypt_request.decryption_request;
-        let key_id: Bytes = decrypt_request.key_id.into();
-        let keys = self.get_key_pair(&key_id);
+        let key_id: Vec<u8> = decrypt_request.key_id;
+        let key_pair = self.get_key_pair(&key_id);
 
-        if keys == None {
+        if key_pair == None {
             return self.command_err(
                 correlation_id,
                 StatusCode::FailedPrecondition as i32,
@@ -161,8 +176,12 @@ impl DecryptorActor {
             );
         }
 
-        let private_key = &keys.unwrap().private_key;
-        let decryption_response = self.decrypt(request.into(), private_key.clone());
+        let decryptor_state = &key_pair.unwrap().decryptor_state.to_vec();
+        let decryption_response = self.decrypt(
+            key_id.clone().into(),
+            request.into(),
+            decryptor_state.clone().into(),
+        );
 
         match decryption_response {
             Ok(response) => {
@@ -188,13 +207,14 @@ impl DecryptorActor {
         correlation_id: u64,
         generate_key_event: GenerateKeyEvent,
     ) -> Result<EventOutcome, ActorError> {
-        let public_key: Bytes = generate_key_event.public_key_share.clone().into();
+        let public_key_share: Bytes = generate_key_event.public_key_share.into();
+        let decryptor_state: Bytes = generate_key_event.private_key_share.into();
         // TODO: Add garbage collection for unused key pairs.
         self.key_pairs.insert(
             generate_key_event.key_id.into(),
             KeyPair {
-                public_key: generate_key_event.public_key_share.into(),
-                private_key: generate_key_event.private_key_share.into(),
+                public_key_share: public_key_share.clone(),
+                decryptor_state: decryptor_state,
             },
         );
 
@@ -203,7 +223,7 @@ impl DecryptorActor {
                 correlation_id,
                 &DecryptorResponse {
                     msg: Some(decryptor_response::Msg::GenerateKey(GenerateKeyResponse {
-                        public_key: public_key.to_vec(),
+                        public_key: public_key_share.to_vec(),
                     })),
                 },
             )));
@@ -234,18 +254,48 @@ impl DecryptorActor {
         Ok(EventOutcome::with_none())
     }
 
-    // TODO: Replace with the actual Willow library once open-sourced.
-    fn create_public_key_share(&self) -> Bytes {
-        return "symmetric key".into();
+    fn create_public_key_share(&self, key_id: Vec<u8>) -> KeyPair {
+        let mut decryptor_state = DecryptorState::default();
+        let mut decryptor = self.create_willow_v1_decryptor(key_id);
+
+        let public_key_share_proto = decryptor
+            .create_public_key_share(&mut decryptor_state)
+            .unwrap()
+            .to_proto(&decryptor.vahe)
+            .unwrap();
+        let decryptor_state_proto = decryptor_state.to_proto(&decryptor).unwrap();
+
+        return KeyPair {
+            public_key_share: public_key_share_proto.serialize().unwrap().into(),
+            decryptor_state: decryptor_state_proto.serialize().unwrap().into(),
+        };
     }
 
-    fn get_key_pair(&self, key_id: &Bytes) -> Option<&KeyPair> {
-        return self.key_pairs.get(key_id).map(|key| key);
+    fn get_key_pair(&self, key_id: &Vec<u8>) -> Option<&KeyPair> {
+        return self.key_pairs.get(key_id);
     }
 
-    // TODO: Replace with the actual Willow library once open-sourced.
-    fn decrypt(&self, request: Bytes, _private_key: Bytes) -> Result<Bytes, Status> {
-        return Ok(request);
+    fn decrypt(
+        &self,
+        key_id: Vec<u8>,
+        request_bytes: Bytes,
+        decryptor_state_bytes: Bytes,
+    ) -> Result<Bytes, Status> {
+        let mut decryptor = self.create_willow_v1_decryptor(key_id);
+
+        let decryptor_state_proto = DecryptorStateProto::parse(&decryptor_state_bytes).unwrap();
+        let decryptor_state =
+            DecryptorState::from_proto(decryptor_state_proto, &decryptor).unwrap();
+
+        let request_proto = PartialDecryptionRequestProto::parse(&request_bytes).unwrap();
+        let request = PartialDecryptionRequest::from_proto(request_proto, &decryptor).unwrap();
+
+        let partial_decryption = decryptor
+            .handle_partial_decryption_request(request, &decryptor_state)
+            .unwrap();
+        let partial_decryption_proto = partial_decryption.to_proto(&decryptor).unwrap();
+
+        return Ok(partial_decryption_proto.serialize().unwrap().into());
     }
 
     fn command_err(
@@ -281,6 +331,17 @@ impl DecryptorActor {
             },
         )));
     }
+
+    fn create_willow_v1_decryptor(&self, key_id: Vec<u8>) -> WillowV1Decryptor<ShellVahe> {
+        let vahe = ShellVahe::new(
+            create_shell_ahe_config(MAX_NUMBER_OF_DECRYPTORS).unwrap(),
+            &key_id,
+        )
+        .unwrap();
+        let seed = SingleThreadHkdfPrng::generate_seed().unwrap();
+        let prng = SingleThreadHkdfPrng::create(&seed).unwrap();
+        WillowV1Decryptor { vahe, prng }
+    }
 }
 
 impl Actor for DecryptorActor {
@@ -297,11 +358,11 @@ impl Actor for DecryptorActor {
             key_pairs: Vec::<SnapshotKeyPair>::new(),
         };
 
-        for (key_id, keys) in &self.key_pairs {
+        for (key_id, key_pair) in &self.key_pairs {
             snapshot.key_pairs.push(SnapshotKeyPair {
-                public_key_share: keys.public_key.clone(),
-                private_key_share: keys.private_key.clone(),
-                key_id: key_id.clone(),
+                public_key_share: key_pair.public_key_share.clone(),
+                private_key_share: key_pair.decryptor_state.clone(),
+                key_id: key_id.clone().into(),
             });
         }
 
@@ -317,10 +378,10 @@ impl Actor for DecryptorActor {
         self.key_pairs.clear();
         for key_pair in snapshot.key_pairs {
             self.key_pairs.insert(
-                key_pair.key_id,
+                key_pair.key_id.into(),
                 KeyPair {
-                    public_key: key_pair.public_key_share,
-                    private_key: key_pair.private_key_share,
+                    public_key_share: key_pair.public_key_share,
+                    decryptor_state: key_pair.private_key_share,
                 },
             );
         }

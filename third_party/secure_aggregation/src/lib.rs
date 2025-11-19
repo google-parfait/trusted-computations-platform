@@ -24,6 +24,10 @@ pub mod proto {
             include!(concat!(env!("OUT_DIR"), "/secure_aggregation.willow.rs"));
         }
     }
+    pub(crate) mod rlwe {
+        include!(concat!(env!("OUT_DIR"), "/rlwe.rs"));
+    }
 
+    pub use rlwe::*;
     pub use secure_aggregation::willow::*;
 }

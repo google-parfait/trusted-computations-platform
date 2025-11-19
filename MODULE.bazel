@@ -7,8 +7,17 @@ module(
 )
 
 bazel_dep(name = "rules_python", version = "1.7.0-rc4")
-bazel_dep(name = "rules_rust", version = "0.61.0")
-bazel_dep(name = "protobuf", version = "33.0", repo_name = "com_google_protobuf")
+bazel_dep(name = "rules_rust", version = "0.67.0")
+bazel_dep(name = "protobuf", version = "33.1", repo_name = "com_google_protobuf")
+archive_override(
+    # Patches protobuf to make the Rust libraries visible. See
+    # https://github.com/protocolbuffers/protobuf/issues/23866.
+    module_name = "protobuf",
+    integrity = "sha256-F4n12LZfTcM249HtTdCAw3iK35iU7Ei61GTtjK3cS4Y=",
+    strip_prefix = "protobuf-9151e03956a34b795ca0d58e19d8a9991904b459",
+    urls = ["https://github.com/google/protobuf/archive/9151e03956a34b795ca0d58e19d8a9991904b459.zip"],
+)
+
 bazel_dep(name = "rules_pkg", version = "1.1.0")
 bazel_dep(name = "aspect_bazel_lib", version = "2.21.2")
 bazel_dep(name = "rules_proto", version = "7.1.0")
@@ -25,16 +34,24 @@ use_repo(python, "python_3_10")
 bazel_dep(name = "secure_aggregation", version = "9edd360")
 archive_override(
     module_name = "secure_aggregation",
-    strip_prefix = "secure-aggregation-9edd3603f859c7fb376d660177a3feec542f8552",
-    urls = ["https://github.com/google/secure-aggregation/archive/9edd3603f859c7fb376d660177a3feec542f8552.zip"],
+    strip_prefix = "secure-aggregation-4c6e80f8ab4d92504a34e6023f3f1ef6f24055d6",
+    urls = ["https://github.com/google/secure-aggregation/archive/4c6e80f8ab4d92504a34e6023f3f1ef6f24055d6.zip"],
 )
 
-bazel_dep(name = "shell-encryption", version = "259ce90f")
+bazel_dep(name = "shell-encryption", version = "0.0.0")
 archive_override(
     module_name = "shell-encryption",
-    integrity = "sha256-qPgdzLiDGXZwj/p5xOuZRQKvqU/qrS0mI8DLhiBWyi0=",
-    strip_prefix = "shell-encryption-259ce90fdd021d035d237be3dce5ec5a17ff0367",
+    integrity = "sha256-fR28P87WkRNGlF38tO/cMz9mrt6g/+LF8jhK4eeAows=",
+    strip_prefix = "shell-encryption-8607279e72f79efc51077f2b4f982a6a6296774e",
     urls = [
-        "https://github.com/google/shell-encryption/archive/259ce90fdd021d035d237be3dce5ec5a17ff0367.zip",
+        "https://github.com/google/shell-encryption/archive/8607279e72f79efc51077f2b4f982a6a6296774e.zip",
     ],
 )
+
+# single_version_override(
+#     module_name = "protobuf",
+#     patch_cmds = [
+#         # Explicitly add rules_rust dependency to protobuf's module file
+#         "echo 'bazel_dep(name = \"rules_rust\", version = \"0.61.0\")' >> MODULE.bazel",
+#     ],
+# )
