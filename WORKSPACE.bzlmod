@@ -23,10 +23,10 @@ http_archive(
 
 http_archive(
     name = "oak",
-    integrity = "sha256-ZEZ+qDfHWNivUm3z9LkWG5q2F6udbjij8GTgUFmIl/k=",
+    integrity = "sha256-WHDrpSMKtd1NdzCvT7odZKseG0qqnPNfWCiw0CkmHXY=",
     patches = ["//third_party/oak:session_binder.patch"],
-    strip_prefix = "oak-0beb0de86a546df46365cf4caef3ac8065e304e9",
-    url = "https://github.com/project-oak/oak/archive/0beb0de86a546df46365cf4caef3ac8065e304e9.tar.gz",
+    strip_prefix = "oak-cb4ce74ed6e9e38f05def5af67207517fe4663a2",
+    url = "https://github.com/project-oak/oak/archive/cb4ce74ed6e9e38f05def5af67207517fe4663a2.tar.gz",
 )
 
 load("@oak//bazel:repositories.bzl", "oak_toolchain_repositories")

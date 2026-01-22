@@ -1,5 +1,5 @@
 {
-  "checksum": "426a546234d48e303c2a88b9840ea621eb0f610e4e8e55efdd7c35996886300d",
+  "checksum": "ca71463d6300c465aaab68ecd03b6711a07d687d362d71fb7e0d917d0cbbb101",
   "crates": {
     "acpi 5.0.0": {
       "name": "acpi",
@@ -2729,58 +2729,6 @@
         "MIT"
       ],
       "license_file": "LICENSE-APACHE"
-    },
-    "bmrng 0.5.2": {
-      "name": "bmrng",
-      "version": "0.5.2",
-      "package_url": "https://github.com/oguzbilgener/bmrng",
-      "repository": {
-        "Http": {
-          "url": "https://static.crates.io/crates/bmrng/0.5.2/download",
-          "sha256": "d54df9073108f1558f90ae6c5bf5ab9c917c4185f5527b280c87a993cbead0ac"
-        }
-      },
-      "targets": [
-        {
-          "Library": {
-            "crate_name": "bmrng",
-            "crate_root": "src/lib.rs",
-            "srcs": {
-              "allow_empty": true,
-              "include": [
-                "**/*.rs"
-              ]
-            }
-          }
-        }
-      ],
-      "library_target_name": "bmrng",
-      "common_attrs": {
-        "compile_data_glob": [
-          "**"
-        ],
-        "deps": {
-          "common": [
-            {
-              "id": "futures-core 0.3.31",
-              "target": "futures_core"
-            },
-            {
-              "id": "tokio 1.46.1",
-              "target": "tokio"
-            }
-          ],
-          "selects": {}
-        },
-        "edition": "2018",
-        "version": "0.5.2"
-      },
-      "license": "MIT OR Apache-2.0",
-      "license_ids": [
-        "Apache-2.0",
-        "MIT"
-      ],
-      "license_file": "LICENSE"
     },
     "bstr 1.10.0": {
       "name": "bstr",
@@ -7630,10 +7578,6 @@
               "target": "bitvec"
             },
             {
-              "id": "bmrng 0.5.2",
-              "target": "bmrng"
-            },
-            {
               "id": "bytes 1.10.1",
               "target": "bytes"
             },
@@ -7954,7 +7898,7 @@
               "target": "rlsf"
             },
             {
-              "id": "rmcp 0.6.4",
+              "id": "rmcp 0.8.5",
               "target": "rmcp"
             },
             {
@@ -8196,7 +8140,7 @@
               "target": "prost_derive"
             },
             {
-              "id": "rmcp-macros 0.6.4",
+              "id": "rmcp-macros 0.8.5",
               "target": "rmcp_macros"
             },
             {
@@ -25017,14 +24961,14 @@
       ],
       "license_file": null
     },
-    "rmcp 0.6.4": {
+    "rmcp 0.8.5": {
       "name": "rmcp",
-      "version": "0.6.4",
+      "version": "0.8.5",
       "package_url": "https://github.com/modelcontextprotocol/rust-sdk/",
       "repository": {
         "Http": {
-          "url": "https://static.crates.io/crates/rmcp/0.6.4/download",
-          "sha256": "41ab0892f4938752b34ae47cb53910b1b0921e55e77ddb6e44df666cab17939f"
+          "url": "https://static.crates.io/crates/rmcp/0.8.5/download",
+          "sha256": "e5947688160b56fb6c827e3c20a72c90392a1d7e9dec74749197aa1780ac42ca"
         }
       },
       "targets": [
@@ -25163,13 +25107,13 @@
               "target": "paste"
             },
             {
-              "id": "rmcp-macros 0.6.4",
+              "id": "rmcp-macros 0.8.5",
               "target": "rmcp_macros"
             }
           ],
           "selects": {}
         },
-        "version": "0.6.4"
+        "version": "0.8.5"
       },
       "license": "MIT",
       "license_ids": [
@@ -25177,14 +25121,14 @@
       ],
       "license_file": null
     },
-    "rmcp-macros 0.6.4": {
+    "rmcp-macros 0.8.5": {
       "name": "rmcp-macros",
-      "version": "0.6.4",
+      "version": "0.8.5",
       "package_url": "https://github.com/modelcontextprotocol/rust-sdk/",
       "repository": {
         "Http": {
-          "url": "https://static.crates.io/crates/rmcp-macros/0.6.4/download",
-          "sha256": "1827cd98dab34cade0513243c6fe0351f0f0b2c9d6825460bcf45b42804bdda0"
+          "url": "https://static.crates.io/crates/rmcp-macros/0.8.5/download",
+          "sha256": "01263441d3f8635c628e33856c468b96ebbce1af2d3699ea712ca71432d4ee7a"
         }
       },
       "targets": [
@@ -25232,7 +25176,7 @@
           "selects": {}
         },
         "edition": "2024",
-        "version": "0.6.4"
+        "version": "0.8.5"
       },
       "license": "MIT",
       "license_ids": [
@@ -42067,7 +42011,6 @@
     "base64 0.21.7",
     "bitflags 2.9.1",
     "bitvec 1.0.1",
-    "bmrng 0.5.2",
     "bytes 1.10.1",
     "chrono 0.4.42",
     "ciborium 0.2.2",
@@ -42152,8 +42095,8 @@
     "reqwest 0.12.22",
     "ring 0.17.14",
     "rlsf 0.2.1",
-    "rmcp 0.6.4",
-    "rmcp-macros 0.6.4",
+    "rmcp 0.8.5",
+    "rmcp-macros 0.8.5",
     "rpassword 7.4.0",
     "rsa 0.9.8",
     "rtnetlink 0.14.1",
