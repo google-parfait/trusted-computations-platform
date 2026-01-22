@@ -38,6 +38,7 @@ rust_library(
         "@oak//oak_proto_rust",
         "@oak//oak_restricted_kernel_sdk",
         "@oak//oak_session",
+        "@oak//oak_session/endorsed_evidence:oak_session_endorsed_evidence",
         "@oak//oak_time",
         "@oak_crates_index//:anyhow",
         "@oak_crates_index//:hashbrown",
