@@ -24,10 +24,10 @@ mod test {
     use client_traits::SecureAggregationClient;
     use kahe_shell::ShellKahe;
     use kahe_traits::KaheBase;
+    use key_rust_proto::Key as KeyProto;
     use messages::{DecryptorPublicKeyShare, PartialDecryptionResponse};
     use messages_rust_proto::PartialDecryptionResponse as PartialDecryptionResponseProto;
     use parameters_shell::{create_shell_ahe_config, create_shell_kahe_config};
-    use prng_traits::SecurePrng;
     use prost::bytes::Bytes;
     use prost::Message;
     use proto_serialization_traits::{FromProto, ToProto};
@@ -35,8 +35,8 @@ mod test {
     use secure_aggregation::proto::*;
     use server_traits::SecureAggregationServer;
     use shell_ciphertexts_rust_proto::ShellAhePublicKeyShare;
-    use single_thread_hkdf::SingleThreadHkdfPrng;
     use std::collections::HashMap;
+    use std::rc::Rc;
     use tcp_integration::harness::*;
     use tcp_proto::runtime::endpoint::out_message;
     use vahe_shell::ShellVahe;
@@ -72,10 +72,10 @@ mod test {
         cluster.advance_until_elected_leader(None);
         assert!(cluster.leader_id() == 1);
 
-        let key_id = "key_id";
+        let key_id: Vec<u8> = "key_id".into();
         let decryptor_generate_key_request = DecryptorRequest {
             msg: Some(decryptor_request::Msg::GenerateKey(GenerateKeyRequest {
-                key_id: key_id.into(),
+                key_id: key_id.clone(),
             })),
         };
 
@@ -87,16 +87,87 @@ mod test {
         );
 
         let decyrptor_generate_key_response = advance_until_response(&mut cluster);
-        let public_key_share_bytes: Option<Bytes> =
-            decyrptor_generate_key_response.msg.and_then(|msg| {
-                if let decryptor_response::Msg::GenerateKey(generate_key_response) = msg {
-                    Some(generate_key_response.public_key.clone().into())
-                } else {
-                    None
-                }
-            });
+        let public_key: Option<Bytes> = decyrptor_generate_key_response.msg.and_then(|msg| {
+            if let decryptor_response::Msg::GenerateKey(generate_key_response) = msg {
+                Some(generate_key_response.public_key.clone().into())
+            } else {
+                None
+            }
+        });
 
-        assert!(public_key_share_bytes.is_some());
+        assert!(public_key.is_some());
+
+        let key = KeyProto::parse(&public_key.unwrap()).unwrap();
+        assert_eq!(key.key_id(), key_id);
+        assert!(!key.key_material().is_empty());
+    }
+
+    #[test]
+    fn test_generate_key_already_exists_returns_same_key() {
+        let mut cluster = FakeCluster::new(Bytes::new());
+
+        cluster.start_node(1, true, DecryptorActor::new());
+        cluster.advance_until_elected_leader(None);
+        assert!(cluster.leader_id() == 1);
+
+        let key_id: Vec<u8> = "key_id".into();
+        let decryptor_generate_key_request = DecryptorRequest {
+            msg: Some(decryptor_request::Msg::GenerateKey(GenerateKeyRequest {
+                key_id: key_id.clone(),
+            })),
+        };
+
+        cluster.send_app_message(
+            cluster.leader_id(),
+            1,
+            decryptor_generate_key_request.encode_to_vec().into(),
+            Bytes::new(),
+        );
+
+        let decyrptor_generate_key_response = advance_until_response(&mut cluster);
+        let public_key: Option<Bytes> = decyrptor_generate_key_response.msg.and_then(|msg| {
+            if let decryptor_response::Msg::GenerateKey(generate_key_response) = msg {
+                Some(generate_key_response.public_key.clone().into())
+            } else {
+                None
+            }
+        });
+
+        assert!(public_key.is_some());
+
+        let key_1 = KeyProto::parse(&public_key.unwrap()).unwrap();
+        assert_eq!(key_1.key_id(), key_id);
+        assert!(!key_1.key_material().is_empty());
+
+        let decryptor_generate_key_request = DecryptorRequest {
+            msg: Some(decryptor_request::Msg::GenerateKey(GenerateKeyRequest {
+                key_id: key_id.clone(),
+            })),
+        };
+
+        cluster.send_app_message(
+            cluster.leader_id(),
+            1,
+            decryptor_generate_key_request.encode_to_vec().into(),
+            Bytes::new(),
+        );
+
+        let decyrptor_generate_key_response = advance_until_response(&mut cluster);
+        let public_key_2: Option<Bytes> = decyrptor_generate_key_response.msg.and_then(|msg| {
+            if let decryptor_response::Msg::GenerateKey(generate_key_response) = msg {
+                Some(generate_key_response.public_key.clone().into())
+            } else {
+                None
+            }
+        });
+
+        assert!(public_key_2.is_some());
+
+        let key_2 = KeyProto::parse(&public_key_2.unwrap()).unwrap();
+        assert_eq!(key_2.key_id(), key_id);
+        assert!(!key_2.key_material().is_empty());
+
+        assert_eq!(key_1.key_material(), key_2.key_material());
     }
 
     #[test]
@@ -123,65 +194,74 @@ mod test {
         );
 
         let decyrptor_generate_key_response = advance_until_response(&mut cluster);
-        let public_key_share_bytes: Option<Bytes> =
-            decyrptor_generate_key_response.msg.and_then(|msg| {
-                if let decryptor_response::Msg::GenerateKey(generate_key_response) = msg {
-                    Some(generate_key_response.public_key.clone().into())
-                } else {
-                    None
-                }
-            });
+        let public_key: Option<Bytes> = decyrptor_generate_key_response.msg.and_then(|msg| {
+            if let decryptor_response::Msg::GenerateKey(generate_key_response) = msg {
+                Some(generate_key_response.public_key.clone().into())
+            } else {
+                None
+            }
+        });
 
-        assert!(public_key_share_bytes.is_some());
+        assert!(public_key.is_some());
+
+        let key = KeyProto::parse(&public_key.unwrap()).unwrap();
+        let public_key_share_bytes = key.key_material();
 
         // Step 2: Encrypt a message using the public key
         let default_id = String::from("default");
+        let max_number_of_decryptors = 1;
         let aggregation_config = AggregationConfig {
             vector_lengths_and_bounds: HashMap::from([(default_id.clone(), (16, 10))]),
-            max_number_of_decryptors: 1,
+            max_number_of_decryptors: max_number_of_decryptors,
             max_number_of_clients: 1,
             max_decryptor_dropouts: 0,
-            session_id: String::from_utf8(key_id.into()).expect("key_id is not valid UTF-8"),
+            key_id: key_id.into(),
         };
 
+        // Create common KAHE/VAHE instances.
+        let kahe = Rc::new(
+            ShellKahe::new(
+                create_shell_kahe_config(&aggregation_config).unwrap(),
+                key_id.as_bytes(),
+            )
+            .unwrap(),
+        );
+        let vahe = Rc::new(
+            ShellVahe::new(
+                create_shell_ahe_config(max_number_of_decryptors).unwrap(),
+                key_id.as_bytes(),
+            )
+            .unwrap(),
+        );
+
         // Create client.
-        let vahe = ShellVahe::new(create_shell_ahe_config(1).unwrap(), key_id.as_bytes()).unwrap();
-        let kahe = ShellKahe::new(
-            create_shell_kahe_config(&aggregation_config).unwrap(),
-            key_id.as_bytes(),
-        )
-        .unwrap();
-        let seed = SingleThreadHkdfPrng::generate_seed().unwrap();
-        let prng = SingleThreadHkdfPrng::create(&seed).unwrap();
-        let mut client = WillowV1Client { kahe, vahe, prng };
+        let client =
+            WillowV1Client::new_with_randomly_generated_seed(Rc::clone(&kahe), Rc::clone(&vahe))
+                .unwrap();
 
         // Create decryptor
-        let vahe = ShellVahe::new(create_shell_ahe_config(1).unwrap(), key_id.as_bytes()).unwrap();
-        let seed = SingleThreadHkdfPrng::generate_seed().unwrap();
-        let prng = SingleThreadHkdfPrng::create(&seed).unwrap();
-        let decryptor = WillowV1Decryptor { vahe, prng };
+        let decryptor =
+            WillowV1Decryptor::new_with_randomly_generated_seed(Rc::clone(&vahe)).unwrap();
 
         // Create server.
-        let vahe = ShellVahe::new(create_shell_ahe_config(1).unwrap(), key_id.as_bytes()).unwrap();
-        let kahe = ShellKahe::new(
-            create_shell_kahe_config(&aggregation_config).unwrap(),
-            key_id.as_bytes(),
-        )
-        .unwrap();
-        let server = WillowV1Server { kahe, vahe };
+        let server = WillowV1Server {
+            kahe: Rc::clone(&kahe),
+            vahe: Rc::clone(&vahe),
+        };
         let mut server_state = ServerState::default();
 
         // Create verifier.
-        let vahe = ShellVahe::new(create_shell_ahe_config(1).unwrap(), key_id.as_bytes()).unwrap();
-        let verifier = WillowV1Verifier { vahe };
+        let verifier = WillowV1Verifier {
+            vahe: Rc::clone(&vahe),
+        };
         let mut verifier_state = VerifierState::default();
 
         let public_key_share_proto =
-            ShellAhePublicKeyShare::parse(&public_key_share_bytes.unwrap()).unwrap();
+            ShellAhePublicKeyShare::parse(&public_key_share_bytes).unwrap();
         let public_key_share: DecryptorPublicKeyShare<ShellVahe> =
             DecryptorPublicKeyShare::<ShellVahe>::from_proto(
                 public_key_share_proto,
-                &decryptor.vahe,
+                &decryptor.vahe.as_ref(),
             )
             .unwrap();
 
@@ -290,58 +370,72 @@ mod test {
         );
 
         let decyrptor_generate_key_response = advance_until_response(&mut cluster);
-        let public_key_share_bytes: Option<Bytes> =
-            decyrptor_generate_key_response.msg.and_then(|msg| {
-                if let decryptor_response::Msg::GenerateKey(generate_key_response) = msg {
-                    Some(generate_key_response.public_key.clone().into())
-                } else {
-                    None
-                }
-            });
+        let public_key: Option<Bytes> = decyrptor_generate_key_response.msg.and_then(|msg| {
+            if let decryptor_response::Msg::GenerateKey(generate_key_response) = msg {
+                Some(generate_key_response.public_key.clone().into())
+            } else {
+                None
+            }
+        });
 
-        assert!(public_key_share_bytes.is_some());
+        assert!(public_key.is_some());
+
+        let key = KeyProto::parse(&public_key.unwrap()).unwrap();
+        let public_key_share_bytes = key.key_material();
 
         // Step 2: Encrypt a message using the public key
         let default_id = String::from("default");
+        let max_number_of_decryptors = 1;
         let aggregation_config = AggregationConfig {
             vector_lengths_and_bounds: HashMap::from([(default_id.clone(), (16, 10))]),
-            max_number_of_decryptors: 1,
+            max_number_of_decryptors: max_number_of_decryptors,
             max_number_of_clients: 1,
             max_decryptor_dropouts: 0,
-            session_id: String::from_utf8(key_id.into()).expect("key_id is not valid UTF-8"),
+            key_id: key_id.into(),
         };
 
+        // Create common KAHE/VAHE instances.
+        let kahe = Rc::new(
+            ShellKahe::new(
+                create_shell_kahe_config(&aggregation_config).unwrap(),
+                key_id.as_bytes(),
+            )
+            .unwrap(),
+        );
+        let vahe = Rc::new(
+            ShellVahe::new(
+                create_shell_ahe_config(max_number_of_decryptors).unwrap(),
+                key_id.as_bytes(),
+            )
+            .unwrap(),
+        );
+
         // Create client.
-        let vahe = ShellVahe::new(create_shell_ahe_config(1).unwrap(), key_id.as_bytes()).unwrap();
-        let kahe = ShellKahe::new(
-            create_shell_kahe_config(&aggregation_config).unwrap(),
-            key_id.as_bytes(),
-        )
-        .unwrap();
-        let seed = SingleThreadHkdfPrng::generate_seed().unwrap();
-        let prng = SingleThreadHkdfPrng::create(&seed).unwrap();
-        let mut client = WillowV1Client { kahe, vahe, prng };
+        let client =
+            WillowV1Client::new_with_randomly_generated_seed(Rc::clone(&kahe), Rc::clone(&vahe))
+                .unwrap();
 
         // Create server.
-        let vahe = ShellVahe::new(create_shell_ahe_config(1).unwrap(), key_id.as_bytes()).unwrap();
-        let kahe = ShellKahe::new(
-            create_shell_kahe_config(&aggregation_config).unwrap(),
-            key_id.as_bytes(),
-        )
-        .unwrap();
-        let server = WillowV1Server { kahe, vahe };
+        let server = WillowV1Server {
+            kahe: Rc::clone(&kahe),
+            vahe: Rc::clone(&vahe),
+        };
         let mut server_state = ServerState::default();
 
         // Create verifier.
-        let vahe = ShellVahe::new(create_shell_ahe_config(1).unwrap(), key_id.as_bytes()).unwrap();
-        let verifier = WillowV1Verifier { vahe };
+        let verifier = WillowV1Verifier {
+            vahe: Rc::clone(&vahe),
+        };
         let mut verifier_state = VerifierState::default();
 
         let public_key_share_proto =
-            ShellAhePublicKeyShare::parse(&public_key_share_bytes.unwrap()).unwrap();
+            ShellAhePublicKeyShare::parse(&public_key_share_bytes).unwrap();
         let public_key_share: DecryptorPublicKeyShare<ShellVahe> =
-            DecryptorPublicKeyShare::<ShellVahe>::from_proto(public_key_share_proto, &server.vahe)
-                .unwrap();
+            DecryptorPublicKeyShare::<ShellVahe>::from_proto(
+                public_key_share_proto,
+                &server.vahe.as_ref(),
+            )
+            .unwrap();
 
         server
             .handle_decryptor_public_key_share(public_key_share, "Decryptor 0", &mut server_state)
@@ -433,58 +527,72 @@ mod test {
         );
 
         let decyrptor_generate_key_response = advance_until_response(&mut cluster);
-        let public_key_share_bytes: Option<Bytes> =
-            decyrptor_generate_key_response.msg.and_then(|msg| {
-                if let decryptor_response::Msg::GenerateKey(generate_key_response) = msg {
-                    Some(generate_key_response.public_key.clone().into())
-                } else {
-                    None
-                }
-            });
+        let public_key: Option<Bytes> = decyrptor_generate_key_response.msg.and_then(|msg| {
+            if let decryptor_response::Msg::GenerateKey(generate_key_response) = msg {
+                Some(generate_key_response.public_key.clone().into())
+            } else {
+                None
+            }
+        });
 
-        assert!(public_key_share_bytes.is_some());
+        assert!(public_key.is_some());
+
+        let key = KeyProto::parse(&public_key.unwrap()).unwrap();
+        let public_key_share_bytes = key.key_material();
 
         // Step 2: Encrypt a message using the public key
         let default_id = String::from("default");
+        let max_number_of_decryptors = 1;
         let aggregation_config = AggregationConfig {
             vector_lengths_and_bounds: HashMap::from([(default_id.clone(), (16, 10))]),
-            max_number_of_decryptors: 1,
+            max_number_of_decryptors: max_number_of_decryptors,
             max_number_of_clients: 1,
             max_decryptor_dropouts: 0,
-            session_id: String::from_utf8(key_id.into()).expect("key_id is not valid UTF-8"),
+            key_id: key_id.into(),
         };
 
+        // Create common KAHE/VAHE instances.
+        let kahe = Rc::new(
+            ShellKahe::new(
+                create_shell_kahe_config(&aggregation_config).unwrap(),
+                key_id.as_bytes(),
+            )
+            .unwrap(),
+        );
+        let vahe = Rc::new(
+            ShellVahe::new(
+                create_shell_ahe_config(max_number_of_decryptors).unwrap(),
+                key_id.as_bytes(),
+            )
+            .unwrap(),
+        );
+
         // Create client.
-        let vahe = ShellVahe::new(create_shell_ahe_config(1).unwrap(), key_id.as_bytes()).unwrap();
-        let kahe = ShellKahe::new(
-            create_shell_kahe_config(&aggregation_config).unwrap(),
-            key_id.as_bytes(),
-        )
-        .unwrap();
-        let seed = SingleThreadHkdfPrng::generate_seed().unwrap();
-        let prng = SingleThreadHkdfPrng::create(&seed).unwrap();
-        let mut client = WillowV1Client { kahe, vahe, prng };
+        let client =
+            WillowV1Client::new_with_randomly_generated_seed(Rc::clone(&kahe), Rc::clone(&vahe))
+                .unwrap();
 
         // Create server.
-        let vahe = ShellVahe::new(create_shell_ahe_config(1).unwrap(), key_id.as_bytes()).unwrap();
-        let kahe = ShellKahe::new(
-            create_shell_kahe_config(&aggregation_config).unwrap(),
-            key_id.as_bytes(),
-        )
-        .unwrap();
-        let server = WillowV1Server { kahe, vahe };
+        let server = WillowV1Server {
+            kahe: Rc::clone(&kahe),
+            vahe: Rc::clone(&vahe),
+        };
         let mut server_state = ServerState::default();
 
         // Create verifier.
-        let vahe = ShellVahe::new(create_shell_ahe_config(1).unwrap(), key_id.as_bytes()).unwrap();
-        let verifier = WillowV1Verifier { vahe };
+        let verifier = WillowV1Verifier {
+            vahe: Rc::clone(&vahe),
+        };
         let mut verifier_state = VerifierState::default();
 
         let public_key_share_proto =
-            ShellAhePublicKeyShare::parse(&public_key_share_bytes.unwrap()).unwrap();
+            ShellAhePublicKeyShare::parse(&public_key_share_bytes).unwrap();
         let public_key_share: DecryptorPublicKeyShare<ShellVahe> =
-            DecryptorPublicKeyShare::<ShellVahe>::from_proto(public_key_share_proto, &server.vahe)
-                .unwrap();
+            DecryptorPublicKeyShare::<ShellVahe>::from_proto(
+                public_key_share_proto,
+                &server.vahe.as_ref(),
+            )
+            .unwrap();
 
         server
             .handle_decryptor_public_key_share(public_key_share, "Decryptor 0", &mut server_state)

@@ -22,6 +22,7 @@ use alloc::format;
 use alloc::string::{String, ToString};
 use alloc::{boxed::Box, vec::Vec};
 use decryptor_traits::SecureAggregationDecryptor;
+use key_rust_proto::Key as KeyProto;
 use messages::PartialDecryptionRequest;
 use messages_rust_proto::{
     DecryptorStateProto, PartialDecryptionRequest as PartialDecryptionRequestProto,
@@ -34,7 +35,6 @@ use oak_proto_rust::oak::attestation::v1::{
     ReferenceValues, RootLayerReferenceValues, SkipVerification, TextReferenceValue,
 };
 use parameters_shell::create_shell_ahe_config;
-use prng_traits::SecurePrng;
 use prost::{bytes::Bytes, Message};
 use proto_serialization_traits::{FromProto, ToProto};
 use protobuf::prelude::*;
@@ -42,8 +42,8 @@ use secure_aggregation::proto::{
     decryptor_request, decryptor_response, DecryptRequest, DecryptResponse, DecryptorRequest,
     DecryptorResponse, GenerateKeyRequest, GenerateKeyResponse, Status,
 };
-use single_thread_hkdf::SingleThreadHkdfPrng;
 use slog::{debug, warn};
+use std::rc::Rc;
 use tcp_runtime::model::{
     Actor, ActorCommand, ActorContext, ActorError, ActorEvent, ActorEventContext, CommandOutcome,
     EventOutcome,
@@ -132,11 +132,14 @@ impl DecryptorActor {
                 .unwrap()
                 .public_key_share
                 .clone();
+            let mut key = KeyProto::default();
+            key.set_key_id(key_id.clone());
+            key.set_key_material(public_key_share.to_vec());
             return Ok(CommandOutcome::with_command(ActorCommand::with_header(
                 correlation_id,
                 &DecryptorResponse {
                     msg: Some(decryptor_response::Msg::GenerateKey(GenerateKeyResponse {
-                        public_key: public_key_share.to_vec(),
+                        public_key: key.serialize().unwrap().into(),
                     })),
                 },
             )));
@@ -211,7 +214,7 @@ impl DecryptorActor {
         let decryptor_state: Bytes = generate_key_event.private_key_share.into();
         // TODO: Add garbage collection for unused key pairs.
         self.key_pairs.insert(
-            generate_key_event.key_id.into(),
+            generate_key_event.key_id.clone().into(),
             KeyPair {
                 public_key_share: public_key_share.clone(),
                 decryptor_state: decryptor_state,
@@ -219,11 +222,14 @@ impl DecryptorActor {
         );
 
         if context.owned {
+            let mut key = KeyProto::default();
+            key.set_key_id(generate_key_event.key_id.clone());
+            key.set_key_material(public_key_share.to_vec());
             return Ok(EventOutcome::with_command(ActorCommand::with_header(
                 correlation_id,
                 &DecryptorResponse {
                     msg: Some(decryptor_response::Msg::GenerateKey(GenerateKeyResponse {
-                        public_key: public_key_share.to_vec(),
+                        public_key: key.serialize().unwrap().into(),
                     })),
                 },
             )));
@@ -256,12 +262,12 @@ impl DecryptorActor {
 
     fn create_public_key_share(&self, key_id: Vec<u8>) -> KeyPair {
         let mut decryptor_state = DecryptorState::default();
-        let mut decryptor = self.create_willow_v1_decryptor(key_id);
+        let decryptor = self.create_willow_v1_decryptor(key_id);
 
         let public_key_share_proto = decryptor
             .create_public_key_share(&mut decryptor_state)
             .unwrap()
-            .to_proto(&decryptor.vahe)
+            .to_proto(&decryptor.vahe.as_ref())
             .unwrap();
         let decryptor_state_proto = decryptor_state.to_proto(&decryptor).unwrap();
 
@@ -281,7 +287,7 @@ impl DecryptorActor {
         request_bytes: Bytes,
         decryptor_state_bytes: Bytes,
     ) -> Result<Bytes, Status> {
-        let mut decryptor = self.create_willow_v1_decryptor(key_id);
+        let decryptor = self.create_willow_v1_decryptor(key_id);
 
         let decryptor_state_proto = DecryptorStateProto::parse(&decryptor_state_bytes).unwrap();
         let decryptor_state =
@@ -333,14 +339,14 @@ impl DecryptorActor {
     }
 
     fn create_willow_v1_decryptor(&self, key_id: Vec<u8>) -> WillowV1Decryptor<ShellVahe> {
-        let vahe = ShellVahe::new(
-            create_shell_ahe_config(MAX_NUMBER_OF_DECRYPTORS).unwrap(),
-            &key_id,
-        )
-        .unwrap();
-        let seed = SingleThreadHkdfPrng::generate_seed().unwrap();
-        let prng = SingleThreadHkdfPrng::create(&seed).unwrap();
-        WillowV1Decryptor { vahe, prng }
+        let vahe = Rc::new(
+            ShellVahe::new(
+                create_shell_ahe_config(MAX_NUMBER_OF_DECRYPTORS).unwrap(),
+                &key_id,
+            )
+            .unwrap(),
+        );
+        WillowV1Decryptor::new_with_randomly_generated_seed(Rc::clone(&vahe)).unwrap()
     }
 }
 

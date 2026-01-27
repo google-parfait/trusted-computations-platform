@@ -34,8 +34,8 @@ use_repo(python, "python_3_10")
 bazel_dep(name = "secure_aggregation", version = "9edd360")
 archive_override(
     module_name = "secure_aggregation",
-    strip_prefix = "secure-aggregation-4c6e80f8ab4d92504a34e6023f3f1ef6f24055d6",
-    urls = ["https://github.com/google/secure-aggregation/archive/4c6e80f8ab4d92504a34e6023f3f1ef6f24055d6.zip"],
+    strip_prefix = "secure-aggregation-a5cbddbaa8cfd284c46b991fabb3c8193e191cd4",
+    urls = ["https://github.com/google/secure-aggregation/archive/a5cbddbaa8cfd284c46b991fabb3c8193e191cd4.zip"],
 )
 
 bazel_dep(name = "shell-encryption", version = "0.0.0")
