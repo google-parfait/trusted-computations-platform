@@ -31,6 +31,7 @@ use oak_proto_rust::oak::attestation::v1::{
 };
 use oak_proto_rust::oak::session::v1::{PlaintextMessage, SessionRequest, SessionResponse};
 use oak_restricted_kernel_sdk::{attestation::InstanceAttester, crypto::InstanceSessionBinder};
+use oak_session::aggregators::PassThrough;
 use oak_session::attestation::AttestationType;
 use oak_session::config::{EncryptorProvider, SessionConfig};
 use oak_session::encryptors::UnorderedChannelEncryptor;
@@ -39,8 +40,11 @@ use oak_session::handshake::HandshakeType;
 use oak_session::key_extractor::KeyExtractor;
 use oak_session::session::{ClientSession, ServerSession, Session};
 use oak_session::session_binding::SessionBinder;
+use oak_session::session_binding::SignatureBindingVerifierProvider;
+use oak_session::verifier::BoundAssertionVerifier;
 use oak_session::ProtocolEngine;
 use oak_session_endorsed_evidence::EndorsedEvidenceBindableAssertionGenerator;
+use oak_session_endorsed_evidence::EndorsedEvidenceBoundAssertionVerifier;
 use oak_time::Clock;
 
 const UNORDERED_CHANNEL_ENCRYPTOR_WINDOW_SIZE: u32 = 3;
@@ -279,11 +283,18 @@ impl OakSessionFactory for DefaultOakSessionFactory {
             }),
             self.session_binder_factory.get()?.into(),
         ));
+        let assertion_verifier = Box::new(EndorsedEvidenceBoundAssertionVerifier::new(
+            self.peer_verifier.as_ref().unwrap().clone(),
+            Arc::new(SignatureBindingVerifierProvider::new(
+                self.key_extractor.as_ref().unwrap().clone(),
+            )),
+        ));
         let client_session = DefaultOakClientSession::create(
             self.attester_factory.get()?,
             endorser,
             self.session_binder_factory.get()?,
             assertion_generator,
+            assertion_verifier,
             self.peer_verifier.as_ref().unwrap(),
             self.key_extractor.as_ref().unwrap(),
         )?;
@@ -301,11 +312,18 @@ impl OakSessionFactory for DefaultOakSessionFactory {
             }),
             self.session_binder_factory.get()?.into(),
         ));
+        let assertion_verifier = Box::new(EndorsedEvidenceBoundAssertionVerifier::new(
+            self.peer_verifier.as_ref().unwrap().clone(),
+            Arc::new(SignatureBindingVerifierProvider::new(
+                self.key_extractor.as_ref().unwrap().clone(),
+            )),
+        ));
         let server_session = DefaultOakServerSession::create(
             self.attester_factory.get()?,
             endorser,
             self.session_binder_factory.get()?,
             assertion_generator,
+            assertion_verifier,
             self.peer_verifier.as_ref().unwrap(),
             self.key_extractor.as_ref().unwrap(),
         )?;
@@ -339,6 +357,7 @@ impl DefaultOakClientSession {
         endorser: Box<dyn Endorser>,
         session_binder: Box<dyn SessionBinder>,
         assertion_generator: Box<dyn BindableAssertionGenerator>,
+        assertion_verifier: Box<dyn BoundAssertionVerifier>,
         peer_verifier: &Arc<dyn AttestationVerifier>,
         key_extractor: &Arc<dyn KeyExtractor>,
     ) -> Result<Self> {
@@ -356,6 +375,11 @@ impl DefaultOakClientSession {
                         String::from(TCP_ASSERTION_ID),
                         assertion_generator,
                     )
+                    .add_peer_assertion_verifier(String::from(TCP_ASSERTION_ID), assertion_verifier)
+                    // Since TCP only uses one assertion type for the attestation verification we
+                    // can use the trivial PassThrough aggregator. If more assertion types are added
+                    // in the future Any/All or custom aggregator needs to be specified.
+                    .set_assertion_attestation_aggregator(Box::new(PassThrough {}))
                     .set_encryption_provider(Box::new(DefaultEncryptorProvider))
                     .add_session_binder(String::from(TCP_ATTESTER_ID), session_binder)
                     .build(),
@@ -400,7 +424,7 @@ impl DefaultOakServerSession {
         endorser: Box<dyn Endorser>,
         session_binder: Box<dyn SessionBinder>,
         assertion_generator: Box<dyn BindableAssertionGenerator>,
-
+        assertion_verifier: Box<dyn BoundAssertionVerifier>,
         peer_verifier: &Arc<dyn AttestationVerifier>,
         key_extractor: &Arc<dyn KeyExtractor>,
     ) -> Result<Self> {
@@ -409,15 +433,20 @@ impl DefaultOakServerSession {
                 SessionConfig::builder(AttestationType::Bidirectional, HandshakeType::NoiseNN)
                     .add_self_attester(String::from(TCP_ATTESTER_ID), attester)
                     .add_self_endorser(String::from(TCP_ATTESTER_ID), endorser)
-                    .add_self_assertion_generator(
-                        String::from(TCP_ASSERTION_ID),
-                        assertion_generator,
-                    )
                     .add_peer_verifier_with_key_extractor_ref(
                         String::from(TCP_ATTESTER_ID),
                         peer_verifier,
                         key_extractor,
                     )
+                    .add_self_assertion_generator(
+                        String::from(TCP_ASSERTION_ID),
+                        assertion_generator,
+                    )
+                    .add_peer_assertion_verifier(String::from(TCP_ASSERTION_ID), assertion_verifier)
+                    // Since TCP only uses one assertion type for the attestation verification we
+                    // can use the trivial PassThrough aggregator. If more assertion types are added
+                    // in the future Any/All or custom aggregator needs to be specified.
+                    .set_assertion_attestation_aggregator(Box::new(PassThrough {}))
                     .set_encryption_provider(Box::new(DefaultEncryptorProvider))
                     .add_session_binder(String::from(TCP_ATTESTER_ID), session_binder)
                     .build(),
