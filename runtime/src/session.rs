@@ -295,8 +295,6 @@ impl OakSessionFactory for DefaultOakSessionFactory {
             self.session_binder_factory.get()?,
             assertion_generator,
             assertion_verifier,
-            self.peer_verifier.as_ref().unwrap(),
-            self.key_extractor.as_ref().unwrap(),
         )?;
         Ok(Box::new(client_session))
     }
@@ -324,8 +322,6 @@ impl OakSessionFactory for DefaultOakSessionFactory {
             self.session_binder_factory.get()?,
             assertion_generator,
             assertion_verifier,
-            self.peer_verifier.as_ref().unwrap(),
-            self.key_extractor.as_ref().unwrap(),
         )?;
         Ok(Box::new(server_session))
     }
@@ -358,19 +354,12 @@ impl DefaultOakClientSession {
         session_binder: Box<dyn SessionBinder>,
         assertion_generator: Box<dyn BindableAssertionGenerator>,
         assertion_verifier: Box<dyn BoundAssertionVerifier>,
-        peer_verifier: &Arc<dyn AttestationVerifier>,
-        key_extractor: &Arc<dyn KeyExtractor>,
     ) -> Result<Self> {
         Ok(Self {
             inner: ClientSession::create(
                 SessionConfig::builder(AttestationType::Bidirectional, HandshakeType::NoiseNN)
                     .add_self_attester(String::from(TCP_ATTESTER_ID), attester)
                     .add_self_endorser(String::from(TCP_ATTESTER_ID), endorser)
-                    .add_peer_verifier_with_key_extractor_ref(
-                        String::from(TCP_ATTESTER_ID),
-                        peer_verifier,
-                        key_extractor,
-                    )
                     .add_self_assertion_generator(
                         String::from(TCP_ASSERTION_ID),
                         assertion_generator,
@@ -425,19 +414,12 @@ impl DefaultOakServerSession {
         session_binder: Box<dyn SessionBinder>,
         assertion_generator: Box<dyn BindableAssertionGenerator>,
         assertion_verifier: Box<dyn BoundAssertionVerifier>,
-        peer_verifier: &Arc<dyn AttestationVerifier>,
-        key_extractor: &Arc<dyn KeyExtractor>,
     ) -> Result<Self> {
         Ok(Self {
             inner: ServerSession::create(
                 SessionConfig::builder(AttestationType::Bidirectional, HandshakeType::NoiseNN)
                     .add_self_attester(String::from(TCP_ATTESTER_ID), attester)
                     .add_self_endorser(String::from(TCP_ATTESTER_ID), endorser)
-                    .add_peer_verifier_with_key_extractor_ref(
-                        String::from(TCP_ATTESTER_ID),
-                        peer_verifier,
-                        key_extractor,
-                    )
                     .add_self_assertion_generator(
                         String::from(TCP_ASSERTION_ID),
                         assertion_generator,
