@@ -48,7 +48,6 @@ use oak_session_endorsed_evidence::EndorsedEvidenceBoundAssertionVerifier;
 use oak_time::Clock;
 
 const UNORDERED_CHANNEL_ENCRYPTOR_WINDOW_SIZE: u32 = 3;
-const TCP_ATTESTER_ID: &str = "tcp_attester_id";
 const TCP_ASSERTION_ID: &str = "tcp_assertion_id";
 
 // Factory class for creating instances of `OakClientSession` and `OakServerSession`
@@ -273,9 +272,6 @@ impl OakSessionFactory for DefaultOakSessionFactory {
     }
 
     fn get_oak_client_session(&self) -> Result<Box<dyn OakClientSession>> {
-        let endorser: Box<dyn Endorser> = Box::new(DefaultEndorser {
-            endorsements: self.endorsements.clone(),
-        });
         let assertion_generator = Box::new(EndorsedEvidenceBindableAssertionGenerator::new(
             self.attester_factory.get()?.into(),
             Arc::new(DefaultEndorser {
@@ -289,20 +285,12 @@ impl OakSessionFactory for DefaultOakSessionFactory {
                 self.key_extractor.as_ref().unwrap().clone(),
             )),
         ));
-        let client_session = DefaultOakClientSession::create(
-            self.attester_factory.get()?,
-            endorser,
-            self.session_binder_factory.get()?,
-            assertion_generator,
-            assertion_verifier,
-        )?;
+        let client_session =
+            DefaultOakClientSession::create(assertion_generator, assertion_verifier)?;
         Ok(Box::new(client_session))
     }
 
     fn get_oak_server_session(&self) -> Result<Box<dyn OakServerSession>> {
-        let endorser: Box<dyn Endorser> = Box::new(DefaultEndorser {
-            endorsements: self.endorsements.clone(),
-        });
         let assertion_generator = Box::new(EndorsedEvidenceBindableAssertionGenerator::new(
             self.attester_factory.get()?.into(),
             Arc::new(DefaultEndorser {
@@ -316,13 +304,8 @@ impl OakSessionFactory for DefaultOakSessionFactory {
                 self.key_extractor.as_ref().unwrap().clone(),
             )),
         ));
-        let server_session = DefaultOakServerSession::create(
-            self.attester_factory.get()?,
-            endorser,
-            self.session_binder_factory.get()?,
-            assertion_generator,
-            assertion_verifier,
-        )?;
+        let server_session =
+            DefaultOakServerSession::create(assertion_generator, assertion_verifier)?;
         Ok(Box::new(server_session))
     }
 }
@@ -349,17 +332,12 @@ pub struct DefaultOakClientSession {
 
 impl DefaultOakClientSession {
     pub fn create(
-        attester: Box<dyn Attester>,
-        endorser: Box<dyn Endorser>,
-        session_binder: Box<dyn SessionBinder>,
         assertion_generator: Box<dyn BindableAssertionGenerator>,
         assertion_verifier: Box<dyn BoundAssertionVerifier>,
     ) -> Result<Self> {
         Ok(Self {
             inner: ClientSession::create(
                 SessionConfig::builder(AttestationType::Bidirectional, HandshakeType::NoiseNN)
-                    .add_self_attester(String::from(TCP_ATTESTER_ID), attester)
-                    .add_self_endorser(String::from(TCP_ATTESTER_ID), endorser)
                     .add_self_assertion_generator(
                         String::from(TCP_ASSERTION_ID),
                         assertion_generator,
@@ -370,7 +348,6 @@ impl DefaultOakClientSession {
                     // in the future Any/All or custom aggregator needs to be specified.
                     .set_assertion_attestation_aggregator(Box::new(PassThrough {}))
                     .set_encryption_provider(Box::new(DefaultEncryptorProvider))
-                    .add_session_binder(String::from(TCP_ATTESTER_ID), session_binder)
                     .build(),
             )?,
         })
@@ -409,17 +386,12 @@ pub struct DefaultOakServerSession {
 
 impl DefaultOakServerSession {
     pub fn create(
-        attester: Box<dyn Attester>,
-        endorser: Box<dyn Endorser>,
-        session_binder: Box<dyn SessionBinder>,
         assertion_generator: Box<dyn BindableAssertionGenerator>,
         assertion_verifier: Box<dyn BoundAssertionVerifier>,
     ) -> Result<Self> {
         Ok(Self {
             inner: ServerSession::create(
                 SessionConfig::builder(AttestationType::Bidirectional, HandshakeType::NoiseNN)
-                    .add_self_attester(String::from(TCP_ATTESTER_ID), attester)
-                    .add_self_endorser(String::from(TCP_ATTESTER_ID), endorser)
                     .add_self_assertion_generator(
                         String::from(TCP_ASSERTION_ID),
                         assertion_generator,
@@ -430,7 +402,6 @@ impl DefaultOakServerSession {
                     // in the future Any/All or custom aggregator needs to be specified.
                     .set_assertion_attestation_aggregator(Box::new(PassThrough {}))
                     .set_encryption_provider(Box::new(DefaultEncryptorProvider))
-                    .add_session_binder(String::from(TCP_ATTESTER_ID), session_binder)
                     .build(),
             )?,
         })
