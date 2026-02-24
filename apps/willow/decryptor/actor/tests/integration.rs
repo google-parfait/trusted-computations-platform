@@ -22,12 +22,10 @@ mod test {
     use aggregation_config::AggregationConfig;
     use ahe_traits::AheBase;
     use client_traits::SecureAggregationClient;
-    use kahe_shell::ShellKahe;
     use kahe_traits::KaheBase;
     use key_rust_proto::Key as KeyProto;
     use messages::{DecryptorPublicKeyShare, PartialDecryptionResponse};
     use messages_rust_proto::PartialDecryptionResponse as PartialDecryptionResponseProto;
-    use parameters_shell::{create_shell_ahe_config, create_shell_kahe_config};
     use prost::bytes::Bytes;
     use prost::Message;
     use proto_serialization_traits::{FromProto, ToProto};
@@ -35,11 +33,13 @@ mod test {
     use secure_aggregation::proto::*;
     use server_traits::SecureAggregationServer;
     use shell_ciphertexts_rust_proto::ShellAhePublicKeyShare;
+    use shell_kahe::ShellKahe;
+    use shell_parameters::{create_shell_ahe_config, create_shell_kahe_config};
+    use shell_vahe::ShellVahe;
     use std::collections::HashMap;
     use std::rc::Rc;
     use tcp_integration::harness::*;
     use tcp_proto::runtime::endpoint::out_message;
-    use vahe_shell::ShellVahe;
     use verifier_traits::SecureAggregationVerifier;
     use willow_decryptor_service::actor::DecryptorActor;
     use willow_v1_client::WillowV1Client;

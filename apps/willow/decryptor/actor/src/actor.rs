@@ -34,7 +34,6 @@ use oak_proto_rust::oak::attestation::v1::{
     KernelBinaryReferenceValue, KernelLayerReferenceValues, OakRestrictedKernelReferenceValues,
     ReferenceValues, RootLayerReferenceValues, SkipVerification, TextReferenceValue,
 };
-use parameters_shell::create_shell_ahe_config;
 use prost::{bytes::Bytes, Message};
 use proto_serialization_traits::{FromProto, ToProto};
 use protobuf::prelude::*;
@@ -42,13 +41,14 @@ use secure_aggregation::proto::{
     decryptor_request, decryptor_response, DecryptRequest, DecryptResponse, DecryptorRequest,
     DecryptorResponse, GenerateKeyRequest, GenerateKeyResponse, Status,
 };
+use shell_parameters::create_shell_ahe_config;
+use shell_vahe::ShellVahe;
 use slog::{debug, warn};
 use std::rc::Rc;
 use tcp_runtime::model::{
     Actor, ActorCommand, ActorContext, ActorError, ActorEvent, ActorEventContext, CommandOutcome,
     EventOutcome,
 };
-use vahe_shell::ShellVahe;
 use willow_v1_decryptor::{DecryptorState, WillowV1Decryptor};
 
 #[derive(PartialEq)]
