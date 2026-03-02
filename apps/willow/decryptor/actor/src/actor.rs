@@ -55,6 +55,7 @@ use willow_v1_decryptor::{DecryptorState, WillowV1Decryptor};
 struct KeyPair {
     public_key_share: Bytes,
     decryptor_state: Bytes,
+    sequential_order: i32,
 }
 
 pub struct DecryptorActor {
@@ -64,6 +65,10 @@ pub struct DecryptorActor {
 }
 
 const MAX_NUMBER_OF_DECRYPTORS: i64 = 1;
+// The maximum number of key pairs that the actor can store. This is a safeguard to prevent
+// unbounded memory growth in case of a large number of key generation requests or a large
+// number of unconsumed keys.
+const MAX_NUMBER_OF_KEY_PAIRS: i32 = 1000;
 
 impl DecryptorActor {
     pub fn new() -> Self {
@@ -145,7 +150,14 @@ impl DecryptorActor {
             )));
         }
 
-        let key_pair = self.create_public_key_share(key_id.clone());
+        let highest_sequential_order: i32 = self
+            .key_pairs
+            .values()
+            .map(|kp| kp.sequential_order)
+            .max()
+            .unwrap_or(0);
+
+        let key_pair = self.create_public_key_share(key_id.clone(), highest_sequential_order + 1);
 
         return Ok(CommandOutcome::with_event(ActorEvent::with_proto(
             correlation_id,
@@ -153,6 +165,7 @@ impl DecryptorActor {
                 event: Some(decryptor_event::Event::GenerateKeyEvent(GenerateKeyEvent {
                     public_key_share: key_pair.public_key_share.to_vec(),
                     private_key_share: key_pair.decryptor_state.to_vec(),
+                    sequential_order: key_pair.sequential_order,
                     key_id: key_id.into(),
                 })),
             },
@@ -212,12 +225,28 @@ impl DecryptorActor {
     ) -> Result<EventOutcome, ActorError> {
         let public_key_share: Bytes = generate_key_event.public_key_share.into();
         let decryptor_state: Bytes = generate_key_event.private_key_share.into();
-        // TODO: Add garbage collection for unused key pairs.
+        let sequential_order: i32 = generate_key_event.sequential_order;
+
+        // If the number of key pairs has reached the maximum, remove the oldest one (the one
+        // with the smallest sequential order) to make room for the new key pair. This is done
+        // here instead of in the command processing function to ensure that the key pair is
+        // removed from all replicas.
+        if (self.key_pairs.len() as i32) == MAX_NUMBER_OF_KEY_PAIRS {
+            let key_to_remove = self
+                .key_pairs
+                .iter()
+                .min_by_key(|(_, kp)| kp.sequential_order)
+                .map(|(key, _)| key.clone());
+
+            key_to_remove.and_then(|k| self.key_pairs.remove(&k));
+        }
+
         self.key_pairs.insert(
             generate_key_event.key_id.clone().into(),
             KeyPair {
                 public_key_share: public_key_share.clone(),
                 decryptor_state: decryptor_state,
+                sequential_order: sequential_order,
             },
         );
 
@@ -260,7 +289,7 @@ impl DecryptorActor {
         Ok(EventOutcome::with_none())
     }
 
-    fn create_public_key_share(&self, key_id: Vec<u8>) -> KeyPair {
+    fn create_public_key_share(&self, key_id: Vec<u8>, sequential_order: i32) -> KeyPair {
         let mut decryptor_state = DecryptorState::default();
         let decryptor = self.create_willow_v1_decryptor(key_id);
 
@@ -274,6 +303,7 @@ impl DecryptorActor {
         return KeyPair {
             public_key_share: public_key_share_proto.serialize().unwrap().into(),
             decryptor_state: decryptor_state_proto.serialize().unwrap().into(),
+            sequential_order: sequential_order,
         };
     }
 
@@ -369,6 +399,7 @@ impl Actor for DecryptorActor {
                 public_key_share: key_pair.public_key_share.clone(),
                 private_key_share: key_pair.decryptor_state.clone(),
                 key_id: key_id.clone().into(),
+                sequential_order: key_pair.sequential_order,
             });
         }
 
@@ -388,6 +419,7 @@ impl Actor for DecryptorActor {
                 KeyPair {
                     public_key_share: key_pair.public_key_share,
                     decryptor_state: key_pair.private_key_share,
+                    sequential_order: key_pair.sequential_order,
                 },
             );
         }

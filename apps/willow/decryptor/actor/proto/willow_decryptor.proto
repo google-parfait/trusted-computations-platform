@@ -29,6 +29,7 @@ message GenerateKeyEvent {
   bytes public_key_share = 1;
   bytes private_key_share = 2;
   bytes key_id = 3;
+  int32 sequential_order = 4;
 }
 
 // Decryptor event fired while processing Decrypt commands
@@ -47,4 +48,5 @@ message SnapshotKeyPair {
   bytes public_key_share = 1;
   bytes private_key_share = 2;
   bytes key_id = 3;
+  int32 sequential_order = 4;
 }
