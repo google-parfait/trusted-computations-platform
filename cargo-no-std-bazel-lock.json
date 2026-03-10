@@ -1,5 +1,5 @@
 {
-  "checksum": "f82ec25014ddc7ab0f015eecc9d6fc65cb6db905759c4eb6b849d8513bf03945",
+  "checksum": "99da93c4668726a7e8598fafe921d97b2144b06e00ce8b656117fc668f862d96",
   "crates": {
     "acpi 5.0.0": {
       "name": "acpi",
@@ -1241,14 +1241,14 @@
       ],
       "license_file": "LICENSE-MIT"
     },
-    "bytes 1.7.1": {
+    "bytes 1.11.1": {
       "name": "bytes",
-      "version": "1.7.1",
+      "version": "1.11.1",
       "package_url": "https://github.com/tokio-rs/bytes",
       "repository": {
         "Http": {
-          "url": "https://static.crates.io/crates/bytes/1.7.1/download",
-          "sha256": "8318a53db07bb3f8dca91a600466bdb3f2eaadeedfdbcf02e1accbad9271ba50"
+          "url": "https://static.crates.io/crates/bytes/1.11.1/download",
+          "sha256": "1e748733b7cbc798e1434b6ac524f0c1ff2ab456fe201501e6497c8417a4fc33"
         }
       },
       "targets": [
@@ -1270,8 +1270,8 @@
         "compile_data_glob": [
           "**"
         ],
-        "edition": "2018",
-        "version": "1.7.1"
+        "edition": "2021",
+        "version": "1.11.1"
       },
       "license": "MIT",
       "license_ids": [
@@ -2219,6 +2219,12 @@
         "compile_data_glob": [
           "**"
         ],
+        "crate_features": {
+          "common": [
+            "digest"
+          ],
+          "selects": {}
+        },
         "deps": {
           "common": [
             {
@@ -2228,6 +2234,10 @@
             {
               "id": "curve25519-dalek 4.1.3",
               "target": "build_script_build"
+            },
+            {
+              "id": "digest 0.10.7",
+              "target": "digest"
             },
             {
               "id": "subtle 2.6.1",
@@ -2999,7 +3009,7 @@
               "target": "bitvec"
             },
             {
-              "id": "bytes 1.7.1",
+              "id": "bytes 1.11.1",
               "target": "bytes"
             },
             {
@@ -3019,10 +3029,6 @@
               "target": "coset"
             },
             {
-              "id": "curve25519-dalek 4.1.3",
-              "target": "curve25519_dalek"
-            },
-            {
               "id": "derive_builder 0.20.2",
               "target": "derive_builder"
             },
@@ -3031,8 +3037,16 @@
               "target": "ecdsa"
             },
             {
+              "id": "ed25519-dalek 2.2.0",
+              "target": "ed25519_dalek"
+            },
+            {
               "id": "elf 0.7.4",
               "target": "elf"
+            },
+            {
+              "id": "embedded-io 0.6.1",
+              "target": "embedded_io"
             },
             {
               "id": "getrandom 0.2.15",
@@ -3115,7 +3129,7 @@
               "target": "primeorder"
             },
             {
-              "id": "prost 0.13.5",
+              "id": "prost 0.14.3",
               "target": "prost"
             },
             {
@@ -3159,16 +3173,12 @@
               "target": "sha2"
             },
             {
-              "id": "signature 2.2.0",
-              "target": "signature"
+              "id": "sha3 0.10.8",
+              "target": "sha3"
             },
             {
               "id": "slog 2.7.0",
               "target": "slog"
-            },
-            {
-              "id": "snafu 0.8.4",
-              "target": "snafu"
             },
             {
               "id": "spin 0.9.8",
@@ -3183,7 +3193,7 @@
               "target": "static_assertions"
             },
             {
-              "id": "strum 0.26.3",
+              "id": "strum 0.27.2",
               "target": "strum"
             },
             {
@@ -3199,7 +3209,7 @@
               "target": "virtio_drivers"
             },
             {
-              "id": "wasm-bindgen 0.2.100",
+              "id": "wasm-bindgen 0.2.105",
               "target": "wasm_bindgen"
             },
             {
@@ -3403,6 +3413,113 @@
         "MIT"
       ],
       "license_file": "LICENSE-APACHE"
+    },
+    "ed25519 2.2.3": {
+      "name": "ed25519",
+      "version": "2.2.3",
+      "package_url": "https://github.com/RustCrypto/signatures/tree/master/ed25519",
+      "repository": {
+        "Http": {
+          "url": "https://static.crates.io/crates/ed25519/2.2.3/download",
+          "sha256": "115531babc129696a58c64a4fef0a8bf9e9698629fb97e9e40767d235cfbcd53"
+        }
+      },
+      "targets": [
+        {
+          "Library": {
+            "crate_name": "ed25519",
+            "crate_root": "src/lib.rs",
+            "srcs": {
+              "allow_empty": true,
+              "include": [
+                "**/*.rs"
+              ]
+            }
+          }
+        }
+      ],
+      "library_target_name": "ed25519",
+      "common_attrs": {
+        "compile_data_glob": [
+          "**"
+        ],
+        "deps": {
+          "common": [
+            {
+              "id": "signature 2.2.0",
+              "target": "signature"
+            }
+          ],
+          "selects": {}
+        },
+        "edition": "2021",
+        "version": "2.2.3"
+      },
+      "license": "Apache-2.0 OR MIT",
+      "license_ids": [
+        "Apache-2.0",
+        "MIT"
+      ],
+      "license_file": "LICENSE-APACHE"
+    },
+    "ed25519-dalek 2.2.0": {
+      "name": "ed25519-dalek",
+      "version": "2.2.0",
+      "package_url": "https://github.com/dalek-cryptography/curve25519-dalek/tree/main/ed25519-dalek",
+      "repository": {
+        "Http": {
+          "url": "https://static.crates.io/crates/ed25519-dalek/2.2.0/download",
+          "sha256": "70e796c081cee67dc755e1a36a0a172b897fab85fc3f6bc48307991f64e4eca9"
+        }
+      },
+      "targets": [
+        {
+          "Library": {
+            "crate_name": "ed25519_dalek",
+            "crate_root": "src/lib.rs",
+            "srcs": {
+              "allow_empty": true,
+              "include": [
+                "**/*.rs"
+              ]
+            }
+          }
+        }
+      ],
+      "library_target_name": "ed25519_dalek",
+      "common_attrs": {
+        "compile_data_glob": [
+          "**"
+        ],
+        "deps": {
+          "common": [
+            {
+              "id": "curve25519-dalek 4.1.3",
+              "target": "curve25519_dalek"
+            },
+            {
+              "id": "ed25519 2.2.3",
+              "target": "ed25519"
+            },
+            {
+              "id": "sha2 0.10.9",
+              "target": "sha2"
+            },
+            {
+              "id": "subtle 2.6.1",
+              "target": "subtle"
+            }
+          ],
+          "selects": {}
+        },
+        "edition": "2021",
+        "version": "2.2.0"
+      },
+      "license": "BSD-3-Clause",
+      "license_ids": [
+        "BSD-3-Clause"
+      ],
+      "license_file": "LICENSE"
     },
     "either 1.13.0": {
       "name": "either",
@@ -4095,11 +4212,11 @@
             ],
             "wasm32-unknown-unknown": [
               {
-                "id": "js-sys 0.3.77",
+                "id": "js-sys 0.3.82",
                 "target": "js_sys"
               },
               {
-                "id": "wasm-bindgen 0.2.100",
+                "id": "wasm-bindgen 0.2.105",
                 "target": "wasm_bindgen"
               }
             ]
@@ -4904,14 +5021,14 @@
       ],
       "license_file": "LICENSE-APACHE"
     },
-    "js-sys 0.3.77": {
+    "js-sys 0.3.82": {
       "name": "js-sys",
-      "version": "0.3.77",
-      "package_url": "https://github.com/rustwasm/wasm-bindgen/tree/master/crates/js-sys",
+      "version": "0.3.82",
+      "package_url": "https://github.com/wasm-bindgen/wasm-bindgen/tree/master/crates/js-sys",
       "repository": {
         "Http": {
-          "url": "https://static.crates.io/crates/js-sys/0.3.77/download",
-          "sha256": "1cfaf33c695fc6e08064efbc1f72ec937429614f25eef83af942d0e227c3a28f"
+          "url": "https://static.crates.io/crates/js-sys/0.3.82/download",
+          "sha256": "b011eec8cc36da2aab2d5cff675ec18454fad408585853910a202391cf9f8e65"
         }
       },
       "targets": [
@@ -4947,16 +5064,66 @@
               "target": "once_cell"
             },
             {
-              "id": "wasm-bindgen 0.2.100",
+              "id": "wasm-bindgen 0.2.105",
               "target": "wasm_bindgen"
             }
           ],
           "selects": {}
         },
         "edition": "2021",
-        "version": "0.3.77"
+        "version": "0.3.82"
       },
       "license": "MIT OR Apache-2.0",
+      "license_ids": [
+        "Apache-2.0",
+        "MIT"
+      ],
+      "license_file": "LICENSE-APACHE"
+    },
+    "keccak 0.1.6": {
+      "name": "keccak",
+      "version": "0.1.6",
+      "package_url": "https://github.com/RustCrypto/sponges/tree/master/keccak",
+      "repository": {
+        "Http": {
+          "url": "https://static.crates.io/crates/keccak/0.1.6/download",
+          "sha256": "cb26cec98cce3a3d96cbb7bced3c4b16e3d13f27ec56dbd62cbc8f39cfb9d653"
+        }
+      },
+      "targets": [
+        {
+          "Library": {
+            "crate_name": "keccak",
+            "crate_root": "src/lib.rs",
+            "srcs": {
+              "allow_empty": true,
+              "include": [
+                "**/*.rs"
+              ]
+            }
+          }
+        }
+      ],
+      "library_target_name": "keccak",
+      "common_attrs": {
+        "compile_data_glob": [
+          "**"
+        ],
+        "deps": {
+          "common": [],
+          "selects": {
+            "cfg(target_arch = \"aarch64\")": [
+              {
+                "id": "cpufeatures 0.2.13",
+                "target": "cpufeatures"
+              }
+            ]
+          }
+        },
+        "edition": "2018",
+        "version": "0.1.6"
+      },
+      "license": "Apache-2.0 OR MIT",
       "license_ids": [
         "Apache-2.0",
         "MIT"
@@ -6940,14 +7107,14 @@
       ],
       "license_file": "LICENSE-APACHE"
     },
-    "prost 0.13.5": {
+    "prost 0.14.3": {
       "name": "prost",
-      "version": "0.13.5",
+      "version": "0.14.3",
       "package_url": "https://github.com/tokio-rs/prost",
       "repository": {
         "Http": {
-          "url": "https://static.crates.io/crates/prost/0.13.5/download",
-          "sha256": "2796faa41db3ec313a31f7624d9286acf277b52de526150b7e69f3debf891ee5"
+          "url": "https://static.crates.io/crates/prost/0.14.3/download",
+          "sha256": "d2ea70524a2f82d518bce41317d0fae74151505651af45faf1ffbd6fd33f0568"
         }
       },
       "targets": [
@@ -6972,14 +7139,14 @@
         "deps": {
           "common": [
             {
-              "id": "bytes 1.7.1",
+              "id": "bytes 1.11.1",
               "target": "bytes"
             }
           ],
           "selects": {}
         },
         "edition": "2021",
-        "version": "0.13.5"
+        "version": "0.14.3"
       },
       "license": "Apache-2.0",
       "license_ids": [
@@ -8476,6 +8643,58 @@
       ],
       "license_file": "LICENSE-APACHE"
     },
+    "sha3 0.10.8": {
+      "name": "sha3",
+      "version": "0.10.8",
+      "package_url": "https://github.com/RustCrypto/hashes",
+      "repository": {
+        "Http": {
+          "url": "https://static.crates.io/crates/sha3/0.10.8/download",
+          "sha256": "75872d278a8f37ef87fa0ddbda7802605cb18344497949862c0d4dcb291eba60"
+        }
+      },
+      "targets": [
+        {
+          "Library": {
+            "crate_name": "sha3",
+            "crate_root": "src/lib.rs",
+            "srcs": {
+              "allow_empty": true,
+              "include": [
+                "**/*.rs"
+              ]
+            }
+          }
+        }
+      ],
+      "library_target_name": "sha3",
+      "common_attrs": {
+        "compile_data_glob": [
+          "**"
+        ],
+        "deps": {
+          "common": [
+            {
+              "id": "digest 0.10.7",
+              "target": "digest"
+            },
+            {
+              "id": "keccak 0.1.6",
+              "target": "keccak"
+            }
+          ],
+          "selects": {}
+        },
+        "edition": "2018",
+        "version": "0.10.8"
+      },
+      "license": "MIT OR Apache-2.0",
+      "license_ids": [
+        "Apache-2.0",
+        "MIT"
+      ],
+      "license_file": "LICENSE-APACHE"
+    },
     "signature 2.2.0": {
       "name": "signature",
       "version": "2.2.0",
@@ -8645,114 +8864,6 @@
         },
         "edition": "2018",
         "version": "1.13.2"
-      },
-      "license": "MIT OR Apache-2.0",
-      "license_ids": [
-        "Apache-2.0",
-        "MIT"
-      ],
-      "license_file": "LICENSE-APACHE"
-    },
-    "snafu 0.8.4": {
-      "name": "snafu",
-      "version": "0.8.4",
-      "package_url": "https://github.com/shepmaster/snafu",
-      "repository": {
-        "Http": {
-          "url": "https://static.crates.io/crates/snafu/0.8.4/download",
-          "sha256": "2b835cb902660db3415a672d862905e791e54d306c6e8189168c7f3d9ae1c79d"
-        }
-      },
-      "targets": [
-        {
-          "Library": {
-            "crate_name": "snafu",
-            "crate_root": "src/lib.rs",
-            "srcs": {
-              "allow_empty": true,
-              "include": [
-                "**/*.rs"
-              ]
-            }
-          }
-        }
-      ],
-      "library_target_name": "snafu",
-      "common_attrs": {
-        "compile_data_glob": [
-          "**"
-        ],
-        "edition": "2018",
-        "proc_macro_deps": {
-          "common": [
-            {
-              "id": "snafu-derive 0.8.4",
-              "target": "snafu_derive"
-            }
-          ],
-          "selects": {}
-        },
-        "version": "0.8.4"
-      },
-      "license": "MIT OR Apache-2.0",
-      "license_ids": [
-        "Apache-2.0",
-        "MIT"
-      ],
-      "license_file": "LICENSE-APACHE"
-    },
-    "snafu-derive 0.8.4": {
-      "name": "snafu-derive",
-      "version": "0.8.4",
-      "package_url": "https://github.com/shepmaster/snafu",
-      "repository": {
-        "Http": {
-          "url": "https://static.crates.io/crates/snafu-derive/0.8.4/download",
-          "sha256": "38d1e02fca405f6280643174a50c942219f0bbf4dbf7d480f1dd864d6f211ae5"
-        }
-      },
-      "targets": [
-        {
-          "ProcMacro": {
-            "crate_name": "snafu_derive",
-            "crate_root": "src/lib.rs",
-            "srcs": {
-              "allow_empty": true,
-              "include": [
-                "**/*.rs"
-              ]
-            }
-          }
-        }
-      ],
-      "library_target_name": "snafu_derive",
-      "common_attrs": {
-        "compile_data_glob": [
-          "**"
-        ],
-        "deps": {
-          "common": [
-            {
-              "id": "heck 0.5.0",
-              "target": "heck"
-            },
-            {
-              "id": "proc-macro2 1.0.96",
-              "target": "proc_macro2"
-            },
-            {
-              "id": "quote 1.0.43",
-              "target": "quote"
-            },
-            {
-              "id": "syn 2.0.104",
-              "target": "syn"
-            }
-          ],
-          "selects": {}
-        },
-        "edition": "2018",
-        "version": "0.8.4"
       },
       "license": "MIT OR Apache-2.0",
       "license_ids": [
@@ -9051,14 +9162,14 @@
       ],
       "license_file": "LICENSE"
     },
-    "strum 0.26.3": {
+    "strum 0.27.2": {
       "name": "strum",
-      "version": "0.26.3",
+      "version": "0.27.2",
       "package_url": "https://github.com/Peternator7/strum",
       "repository": {
         "Http": {
-          "url": "https://static.crates.io/crates/strum/0.26.3/download",
-          "sha256": "8fec0f0aef304996cf250b31b5a10dee7980c85da9d759361292b8bca5a18f06"
+          "url": "https://static.crates.io/crates/strum/0.27.2/download",
+          "sha256": "af23d6f6c1a224baef9d3f61e287d2761385a5b88fdab4eb4c6f11aeb54c4bcf"
         }
       },
       "targets": [
@@ -9087,17 +9198,17 @@
           ],
           "selects": {}
         },
-        "edition": "2018",
+        "edition": "2021",
         "proc_macro_deps": {
           "common": [
             {
-              "id": "strum_macros 0.26.4",
+              "id": "strum_macros 0.27.2",
               "target": "strum_macros"
             }
           ],
           "selects": {}
         },
-        "version": "0.26.3"
+        "version": "0.27.2"
       },
       "license": "MIT",
       "license_ids": [
@@ -9105,14 +9216,14 @@
       ],
       "license_file": "LICENSE"
     },
-    "strum_macros 0.26.4": {
+    "strum_macros 0.27.2": {
       "name": "strum_macros",
-      "version": "0.26.4",
+      "version": "0.27.2",
       "package_url": "https://github.com/Peternator7/strum",
       "repository": {
         "Http": {
-          "url": "https://static.crates.io/crates/strum_macros/0.26.4/download",
-          "sha256": "4c6bee85a5a24955dc440386795aa378cd9cf82acd5f764469152d2270e581be"
+          "url": "https://static.crates.io/crates/strum_macros/0.27.2/download",
+          "sha256": "7695ce3845ea4b33927c055a39dc438a45b059f7c1b3d91d38d10355fb8cbca7"
         }
       },
       "targets": [
@@ -9155,17 +9266,8 @@
           ],
           "selects": {}
         },
-        "edition": "2018",
-        "proc_macro_deps": {
-          "common": [
-            {
-              "id": "rustversion 1.0.17",
-              "target": "rustversion"
-            }
-          ],
-          "selects": {}
-        },
-        "version": "0.26.4"
+        "edition": "2021",
+        "version": "0.27.2"
       },
       "license": "MIT",
       "license_ids": [
@@ -9986,9 +10088,11 @@
       "version": "0.12.0",
       "package_url": "https://github.com/rcore-os/virtio-drivers",
       "repository": {
-        "Http": {
-          "url": "https://static.crates.io/crates/virtio-drivers/0.12.0/download",
-          "sha256": "a7a6012590bf8cc11f57abb1b5a8470e2366353bf352386b48650a87b5538204"
+        "Git": {
+          "remote": "https://github.com/rcore-os/virtio-drivers.git",
+          "commitish": {
+            "Rev": "dd8772498d581ae8d5644806c0072d3dc6f94118"
+          }
         }
       },
       "targets": [
@@ -10143,14 +10247,14 @@
       ],
       "license_file": "LICENSE-APACHE"
     },
-    "wasm-bindgen 0.2.100": {
+    "wasm-bindgen 0.2.105": {
       "name": "wasm-bindgen",
-      "version": "0.2.100",
-      "package_url": "https://github.com/rustwasm/wasm-bindgen",
+      "version": "0.2.105",
+      "package_url": "https://github.com/wasm-bindgen/wasm-bindgen",
       "repository": {
         "Http": {
-          "url": "https://static.crates.io/crates/wasm-bindgen/0.2.100/download",
-          "sha256": "1edc8929d7499fc4e8f0be2262a241556cfc54a0bea223790e71446f2aab1ef5"
+          "url": "https://static.crates.io/crates/wasm-bindgen/0.2.105/download",
+          "sha256": "da95793dfc411fbbd93f5be7715b0578ec61fe87cb1a42b12eb625caa5c5ea60"
         }
       },
       "targets": [
@@ -10187,8 +10291,6 @@
         "crate_features": {
           "common": [
             "default",
-            "msrv",
-            "rustversion",
             "std"
           ],
           "selects": {}
@@ -10204,8 +10306,12 @@
               "target": "once_cell"
             },
             {
-              "id": "wasm-bindgen 0.2.100",
+              "id": "wasm-bindgen 0.2.105",
               "target": "build_script_build"
+            },
+            {
+              "id": "wasm-bindgen-shared 0.2.105",
+              "target": "wasm_bindgen_shared"
             }
           ],
           "selects": {}
@@ -10214,17 +10320,13 @@
         "proc_macro_deps": {
           "common": [
             {
-              "id": "rustversion 1.0.17",
-              "target": "rustversion"
-            },
-            {
-              "id": "wasm-bindgen-macro 0.2.100",
+              "id": "wasm-bindgen-macro 0.2.105",
               "target": "wasm_bindgen_macro"
             }
           ],
           "selects": {}
         },
-        "version": "0.2.100"
+        "version": "0.2.105"
       },
       "build_script_attrs": {
         "compile_data_glob": [
@@ -10235,75 +10337,26 @@
         ],
         "data_glob": [
           "**"
-        ]
-      },
-      "license": "MIT OR Apache-2.0",
-      "license_ids": [
-        "Apache-2.0",
-        "MIT"
-      ],
-      "license_file": "LICENSE-APACHE"
-    },
-    "wasm-bindgen-backend 0.2.100": {
-      "name": "wasm-bindgen-backend",
-      "version": "0.2.100",
-      "package_url": "https://github.com/rustwasm/wasm-bindgen/tree/master/crates/backend",
-      "repository": {
-        "Http": {
-          "url": "https://static.crates.io/crates/wasm-bindgen-backend/0.2.100/download",
-          "sha256": "2f0a0651a5c2bc21487bde11ee802ccaf4c51935d0d3d42a6101f98161700bc6"
-        }
-      },
-      "targets": [
-        {
-          "Library": {
-            "crate_name": "wasm_bindgen_backend",
-            "crate_root": "src/lib.rs",
-            "srcs": {
-              "allow_empty": true,
-              "include": [
-                "**/*.rs"
-              ]
-            }
-          }
-        }
-      ],
-      "library_target_name": "wasm_bindgen_backend",
-      "common_attrs": {
-        "compile_data_glob": [
-          "**"
         ],
-        "deps": {
+        "link_deps": {
           "common": [
             {
-              "id": "bumpalo 3.19.0",
-              "target": "bumpalo"
-            },
-            {
-              "id": "log 0.4.29",
-              "target": "log"
-            },
-            {
-              "id": "proc-macro2 1.0.96",
-              "target": "proc_macro2"
-            },
-            {
-              "id": "quote 1.0.43",
-              "target": "quote"
-            },
-            {
-              "id": "syn 2.0.104",
-              "target": "syn"
-            },
-            {
-              "id": "wasm-bindgen-shared 0.2.100",
+              "id": "wasm-bindgen-shared 0.2.105",
               "target": "wasm_bindgen_shared"
             }
           ],
           "selects": {}
         },
-        "edition": "2021",
-        "version": "0.2.100"
+        "proc_macro_deps": {
+          "common": [
+            {
+              "id": "rustversion 1.0.17",
+              "target": "rustversion",
+              "alias": "rustversion_compat"
+            }
+          ],
+          "selects": {}
+        }
       },
       "license": "MIT OR Apache-2.0",
       "license_ids": [
@@ -10312,14 +10365,14 @@
       ],
       "license_file": "LICENSE-APACHE"
     },
-    "wasm-bindgen-macro 0.2.100": {
+    "wasm-bindgen-macro 0.2.105": {
       "name": "wasm-bindgen-macro",
-      "version": "0.2.100",
-      "package_url": "https://github.com/rustwasm/wasm-bindgen/tree/master/crates/macro",
+      "version": "0.2.105",
+      "package_url": "https://github.com/wasm-bindgen/wasm-bindgen/tree/master/crates/macro",
       "repository": {
         "Http": {
-          "url": "https://static.crates.io/crates/wasm-bindgen-macro/0.2.100/download",
-          "sha256": "7fe63fc6d09ed3792bd0897b314f53de8e16568c2b3f7982f468c0bf9bd0b407"
+          "url": "https://static.crates.io/crates/wasm-bindgen-macro/0.2.105/download",
+          "sha256": "04264334509e04a7bf8690f2384ef5265f05143a4bff3889ab7a3269adab59c2"
         }
       },
       "targets": [
@@ -10348,14 +10401,14 @@
               "target": "quote"
             },
             {
-              "id": "wasm-bindgen-macro-support 0.2.100",
+              "id": "wasm-bindgen-macro-support 0.2.105",
               "target": "wasm_bindgen_macro_support"
             }
           ],
           "selects": {}
         },
         "edition": "2021",
-        "version": "0.2.100"
+        "version": "0.2.105"
       },
       "license": "MIT OR Apache-2.0",
       "license_ids": [
@@ -10364,14 +10417,14 @@
       ],
       "license_file": "LICENSE-APACHE"
     },
-    "wasm-bindgen-macro-support 0.2.100": {
+    "wasm-bindgen-macro-support 0.2.105": {
       "name": "wasm-bindgen-macro-support",
-      "version": "0.2.100",
-      "package_url": "https://github.com/rustwasm/wasm-bindgen/tree/master/crates/macro-support",
+      "version": "0.2.105",
+      "package_url": "https://github.com/wasm-bindgen/wasm-bindgen/tree/master/crates/macro-support",
       "repository": {
         "Http": {
-          "url": "https://static.crates.io/crates/wasm-bindgen-macro-support/0.2.100/download",
-          "sha256": "8ae87ea40c9f689fc23f209965b6fb8a99ad69aeeb0231408be24920604395de"
+          "url": "https://static.crates.io/crates/wasm-bindgen-macro-support/0.2.105/download",
+          "sha256": "420bc339d9f322e562942d52e115d57e950d12d88983a14c79b86859ee6c7ebc"
         }
       },
       "targets": [
@@ -10396,6 +10449,10 @@
         "deps": {
           "common": [
             {
+              "id": "bumpalo 3.19.0",
+              "target": "bumpalo"
+            },
+            {
               "id": "proc-macro2 1.0.96",
               "target": "proc_macro2"
             },
@@ -10408,18 +10465,14 @@
               "target": "syn"
             },
             {
-              "id": "wasm-bindgen-backend 0.2.100",
-              "target": "wasm_bindgen_backend"
-            },
-            {
-              "id": "wasm-bindgen-shared 0.2.100",
+              "id": "wasm-bindgen-shared 0.2.105",
               "target": "wasm_bindgen_shared"
             }
           ],
           "selects": {}
         },
         "edition": "2021",
-        "version": "0.2.100"
+        "version": "0.2.105"
       },
       "license": "MIT OR Apache-2.0",
       "license_ids": [
@@ -10428,14 +10481,14 @@
       ],
       "license_file": "LICENSE-APACHE"
     },
-    "wasm-bindgen-shared 0.2.100": {
+    "wasm-bindgen-shared 0.2.105": {
       "name": "wasm-bindgen-shared",
-      "version": "0.2.100",
-      "package_url": "https://github.com/rustwasm/wasm-bindgen/tree/master/crates/shared",
+      "version": "0.2.105",
+      "package_url": "https://github.com/wasm-bindgen/wasm-bindgen/tree/master/crates/shared",
       "repository": {
         "Http": {
-          "url": "https://static.crates.io/crates/wasm-bindgen-shared/0.2.100/download",
-          "sha256": "1a05d73b933a847d6cccdda8f838a22ff101ad9bf93e33684f39c1f5f0eece3d"
+          "url": "https://static.crates.io/crates/wasm-bindgen-shared/0.2.105/download",
+          "sha256": "76f218a38c84bcb33c25ec7059b07847d465ce0e0a76b995e134a45adcb6af76"
         }
       },
       "targets": [
@@ -10476,14 +10529,14 @@
               "target": "unicode_ident"
             },
             {
-              "id": "wasm-bindgen-shared 0.2.100",
+              "id": "wasm-bindgen-shared 0.2.105",
               "target": "build_script_build"
             }
           ],
           "selects": {}
         },
         "edition": "2021",
-        "version": "0.2.100"
+        "version": "0.2.105"
       },
       "build_script_attrs": {
         "compile_data_glob": [
@@ -11623,6 +11676,9 @@
       "x86_64-unknown-linux-gnu",
       "x86_64-unknown-none"
     ],
+    "cfg(target_arch = \"aarch64\")": [
+      "aarch64-apple-darwin"
+    ],
     "cfg(target_arch = \"spirv\")": [],
     "cfg(target_arch = \"x86_64\")": [
       "x86_64-unknown-linux-gnu",
@@ -11656,15 +11712,16 @@
     "base64 0.21.7",
     "bitflags 2.10.0",
     "bitvec 1.0.1",
-    "bytes 1.7.1",
+    "bytes 1.11.1",
     "chrono 0.4.41",
     "ciborium 0.2.2",
     "const-oid 0.9.6",
     "coset 0.3.8",
-    "curve25519-dalek 4.1.3",
     "derive_builder 0.20.2",
     "ecdsa 0.16.9",
+    "ed25519-dalek 2.2.0",
     "elf 0.7.4",
+    "embedded-io 0.6.1",
     "getrandom 0.2.15",
     "goblin 0.8.2",
     "hashbrown 0.14.5",
@@ -11685,7 +11742,7 @@
     "p384 0.13.0",
     "pkcs8 0.10.2",
     "primeorder 0.13.6",
-    "prost 0.13.5",
+    "prost 0.14.3",
     "rand 0.8.5",
     "rand_chacha 0.3.1",
     "rand_core 0.6.4",
@@ -11696,17 +11753,16 @@
     "serde 1.0.219",
     "serde_json 1.0.125",
     "sha2 0.10.9",
-    "signature 2.2.0",
+    "sha3 0.10.8",
     "slog 2.7.0",
-    "snafu 0.8.4",
     "spin 0.9.8",
     "spinning_top 0.3.0",
     "static_assertions 1.1.0",
-    "strum 0.26.3",
+    "strum 0.27.2",
     "thiserror 2.0.12",
     "uart_16550 0.3.1",
     "virtio-drivers 0.12.0",
-    "wasm-bindgen 0.2.100",
+    "wasm-bindgen 0.2.105",
     "wasmi 0.31.2",
     "x509-cert 0.2.5",
     "x509-verify 0.4.8",

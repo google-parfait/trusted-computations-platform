@@ -20,8 +20,6 @@ cargo_build_script(
     srcs = ["build.rs"],
     build_script_env = {
         "PROTOC": "$(execpath @com_google_protobuf//:protoc)",
-        "DESCRIPTOR_PROTO": "$(location @com_google_protobuf//:descriptor_proto_srcs)",
-        "DIGEST_PROTO": "$(location @oak//proto:digest.proto)",
     },
     data = glob(["src/*.proto"]) + [
         "@com_google_protobuf//:descriptor_proto_srcs",
@@ -44,7 +42,8 @@ cargo_build_script(
     deps = [
         "@oak//micro_rpc_build",
         "@oak_crates_index//:anyhow",
-        "@oak_crates_index//:tonic-build",
+        "@oak_crates_index//:tonic-prost-build",
+        "@rules_rust//tools/runfiles",
     ],
 )
 
@@ -66,7 +65,10 @@ rust_library(
         "@oak//oak_proto_rust",
         "@oak_crates_index//:prost",
     ] + select({
-        "@platforms//os:linux": ["@oak_crates_index//:tonic"],
+        "@platforms//os:linux": [
+            "@oak_crates_index//:tonic",
+            "@oak_crates_index//:tonic-prost",
+        ],
         "//conditions:default": [],
     }),
 )

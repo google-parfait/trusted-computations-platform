@@ -381,11 +381,11 @@ impl CommunicationState {
 
     fn make_tick(&mut self) {
         match &self.handshake_state {
-            HandshakeState::Failed(mut ticks_since_failed) => {
+            &HandshakeState::Failed(mut ticks_since_failed) => {
                 ticks_since_failed += 1;
                 self.handshake_state = HandshakeState::Failed(ticks_since_failed);
             }
-            HandshakeState::Initiated(mut ticks_since_initiated) => {
+            &HandshakeState::Initiated(mut ticks_since_initiated) => {
                 ticks_since_initiated += 1;
                 if ticks_since_initiated >= self.handshake_initiated_tick_timeout {
                     info!(self.logger, "Handshake timed out in state Initiated.");

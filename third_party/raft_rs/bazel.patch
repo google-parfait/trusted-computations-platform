@@ -1,12 +1,13 @@
 --- /dev/null
 +++ BUILD
-@@ -0,0 +1,19 @@
+@@ -0,0 +1,20 @@
 +load("@rules_rust//rust:defs.bzl", "rust_library")
 +
 +rust_library(
 +    name = "raft",
 +    srcs = glob(["src/**/*.rs"]),
 +    crate_features = ["prost-codec"],
++    edition = "2021",
 +    proc_macro_deps = ["@oak_crates_index//:getset"],
 +    visibility = ["//visibility:public"],
 +    deps = [

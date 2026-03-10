@@ -7,7 +7,7 @@ module(
 )
 
 bazel_dep(name = "rules_python", version = "1.7.0-rc4")
-bazel_dep(name = "rules_rust", version = "0.67.0")
+bazel_dep(name = "rules_rust", version = "0.68.1")
 bazel_dep(name = "protobuf", version = "33.1", repo_name = "com_google_protobuf")
 archive_override(
     # Patches protobuf to make the Rust libraries visible. See

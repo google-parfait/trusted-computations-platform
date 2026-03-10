@@ -23,15 +23,17 @@ http_archive(
 
 http_archive(
     name = "oak",
-    integrity = "sha256-WHDrpSMKtd1NdzCvT7odZKseG0qqnPNfWCiw0CkmHXY=",
+    integrity = "sha256-EOnX0A/Ef7swiOVjZAtBK1XUGkwuAD7b82/zn/Wk5hw=",
     patches = ["//third_party/oak:session_binder.patch"],
-    strip_prefix = "oak-cb4ce74ed6e9e38f05def5af67207517fe4663a2",
-    url = "https://github.com/project-oak/oak/archive/cb4ce74ed6e9e38f05def5af67207517fe4663a2.tar.gz",
+    strip_prefix = "oak-645240f9826eeedb8e57ab07cbe36c2070b900cc",
+    url = "https://github.com/project-oak/oak/archive/645240f9826eeedb8e57ab07cbe36c2070b900cc.tar.gz",
 )
 
-load("@oak//bazel:repositories.bzl", "oak_toolchain_repositories")
+load("@oak//bazel/tools/umoci:umoci_toolchain.bzl", "umoci_toolchain_repo")
 
-oak_toolchain_repositories()
+umoci_toolchain_repo(name = "umoci")
+
+register_toolchains("@umoci//:umoci_toolchain")
 
 load("@oak//bazel/crates:patched_crates.bzl", "load_patched_crates")
 

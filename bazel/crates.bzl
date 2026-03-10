@@ -25,6 +25,11 @@ _COMMON_PACKAGES = {
         version = "0.8.3",
         default_features = False,
     ),
+    "rand": crate.spec(
+        version = "0.8.5",
+        default_features = False,
+        features = ["alloc", "small_rng", "getrandom"],
+    ),
     "slog": crate.spec(
         version = "2.2.0",
         default_features = False,
@@ -42,6 +47,18 @@ TCP_PACKAGES = _COMMON_PACKAGES | {
     "googletest": crate.spec(
         version = "0.11.0",
     ),
+    "opentelemetry-otlp": crate.spec(
+        # Remove the reqwest-blocking-client feature to avoid depending on the
+        # ring crate, which doesn't compile with our toolchain.
+        default_features = False,
+        features = [
+            "grpc-tonic",
+            "logs",
+            "metrics",
+            "trace",
+        ],
+        version = "0.31.0",
+    ),
     "slog-term": crate.spec(
         version = "2.9.0",
     ),
@@ -49,15 +66,10 @@ TCP_PACKAGES = _COMMON_PACKAGES | {
         # Remove TLS features added by Oak to avoid depending on the ring crate,
         # which doesn't compile with our toolchain.
         features = ["gzip"],
-        version = "0.12.0",
+        version = "0.14.3",
     ),
 }
 
 # Crates used for no_std builds.
 TCP_NO_STD_PACKAGES = _COMMON_PACKAGES | {
-    "rand": crate.spec(
-        version = "0.8.5",
-        default_features = False,
-        features = ["alloc", "small_rng", "getrandom"],
-    ),
 }

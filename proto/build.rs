@@ -13,19 +13,12 @@
 // limitations under the License.
 
 fn main() -> anyhow::Result<()> {
-    let protos = ["src/endpoint.proto"];
+    let protos = ["src/endpoint.proto".into()];
+    let r = runfiles::Runfiles::create().unwrap();
     let includes = [
-        "src".to_string(),
-        std::env::var("DESCRIPTOR_PROTO")
-            .unwrap()
-            .strip_suffix("/google/protobuf/descriptor.proto")
-            .unwrap()
-            .to_string(),
-        std::env::var("DIGEST_PROTO")
-            .unwrap()
-            .strip_suffix("/proto/digest.proto")
-            .unwrap()
-            .to_string(),
+        "src".into(),
+        runfiles::rlocation!(r, "com_google_protobuf/src").unwrap(),
+        runfiles::rlocation!(r, "oak").unwrap(),
     ];
 
     micro_rpc_build::compile(
@@ -53,7 +46,7 @@ fn main() -> anyhow::Result<()> {
 
     let tonic_dir = std::path::Path::new(&std::env::var("OUT_DIR")?).join("tonic");
     std::fs::create_dir(&tonic_dir)?;
-    tonic_build::configure()
+    tonic_prost_build::configure()
         .build_client(false)
         .server_mod_attribute(".", "#[cfg(feature = \"tonic\")]")
         .out_dir(tonic_dir)
