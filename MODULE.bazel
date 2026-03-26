@@ -1,37 +1,87 @@
-"Trusted Computations Platform"
+# Copyright 2026 The Trusted Computations Platform Authors.
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
 
-module(
-    name = "trusted_computations_platform",
-    version = "0.0.0",
-    compatibility_level = 1,
-)
+module(name = "trusted_computations_platform")
 
+# Dependencies when TCP is used as a library.
+# go/keep-sorted start
+bazel_dep(name = "aspect_bazel_lib", version = "2.21.2")
+bazel_dep(name = "bazel_skylib", version = "1.8.2")
+bazel_dep(name = "oak")
+bazel_dep(name = "platforms", version = "1.0.0")
+bazel_dep(name = "protobuf", version = "33.1", repo_name = "com_google_protobuf")
+bazel_dep(name = "rules_oci", version = "2.2.6")
+bazel_dep(name = "rules_pkg", version = "1.1.0")
+bazel_dep(name = "rules_proto", version = "7.1.0")
 bazel_dep(name = "rules_python", version = "1.7.0-rc4")
 bazel_dep(name = "rules_rust", version = "0.68.1")
-bazel_dep(name = "protobuf", version = "33.1", repo_name = "com_google_protobuf")
+# go/keep-sorted end
+
+tcp_deps = use_extension("//bazel:extensions.bzl", "tcp_deps")
+use_repo(tcp_deps, "raft_rs")
+
+aliased_crates_repository = use_extension("@oak//bazel/crates:extensions.bzl", "aliased_crates_repository")
+use_repo(aliased_crates_repository, "oak_crates_index")
+
+# Dependencies needed only for tests or building containers in this workspace.
+# go/keep-sorted start
+bazel_dep(name = "confidential-federated-compute-sysroot", dev_dependency = True)
+bazel_dep(name = "gcc_toolchain", version = "0.9.0", dev_dependency = True)
+bazel_dep(name = "grpc", version = "1.80.0-pre1", dev_dependency = True)
+bazel_dep(name = "secure_aggregation", dev_dependency = True)
+bazel_dep(name = "shell-encryption", dev_dependency = True)
+bazel_dep(name = "toolchains_llvm", version = "1.6.0", dev_dependency = True)
+# go/keep-sorted end
+
+tcp_dev_deps = use_extension("//bazel:extensions.bzl", "tcp_dev_deps", dev_dependency = True)
+use_repo(tcp_dev_deps, "bazel_toolchains")
+
+# Module overrides.
+# go/keep-sorted start block=yes newline_separated=yes ignore_prefixes=archive_override,single_version_override
 archive_override(
-    # Patches protobuf to make the Rust libraries visible. See
-    # https://github.com/protocolbuffers/protobuf/issues/23866.
+    module_name = "confidential-federated-compute-sysroot",
+    # Build provenance available at https://search.sigstore.dev/?hash=<sha256>,
+    # where <sha256> is base16 encoded, not base64 as required by `integrity`.
+    integrity = "sha256-hsz56iNgI37K0BYzqG1WbtFuE32vmGMg75HsKV6l9nk=",
+    urls = ["https://github.com/google-parfait/confidential-federated-compute/releases/download/sysroot-20260311/sysroot.tar.xz"],
+)
+
+single_version_override(
+    module_name = "gcc_toolchain",
+    patches = ["//third_party/gcc_toolchain:target_compatible_with.patch"],
+)
+
+archive_override(
+    module_name = "oak",
+    integrity = "sha256-jjUzyg3EQw0wNllRRmtRuZTAlXPllSmkKJHRD13jEXM=",
+    patches = [
+        "//third_party/oak:module.patch",
+        "//third_party/oak:session_binder.patch",
+    ],
+    strip_prefix = "oak-dd8e629ee6e198153d86fec3f55645a8330f6b66",
+    urls = ["https://github.com/project-oak/oak/archive/dd8e629ee6e198153d86fec3f55645a8330f6b66.tar.gz"],
+)
+
+# Patches protobuf to make the Rust libraries visible. See
+# https://github.com/protocolbuffers/protobuf/issues/23866.
+archive_override(
     module_name = "protobuf",
     integrity = "sha256-F4n12LZfTcM249HtTdCAw3iK35iU7Ei61GTtjK3cS4Y=",
     strip_prefix = "protobuf-9151e03956a34b795ca0d58e19d8a9991904b459",
     urls = ["https://github.com/google/protobuf/archive/9151e03956a34b795ca0d58e19d8a9991904b459.zip"],
 )
 
-bazel_dep(name = "rules_pkg", version = "1.1.0")
-bazel_dep(name = "aspect_bazel_lib", version = "2.21.2")
-bazel_dep(name = "rules_proto", version = "7.1.0")
-bazel_dep(name = "bazel_skylib", version = "1.8.2")
-bazel_dep(name = "rules_oci", version = "2.2.6")
-bazel_dep(name = "platforms", version = "1.0.0")
-
-python = use_extension("@rules_python//python/extensions:python.bzl", "python")
-python.defaults(python_version = "3.10")
-python.toolchain(python_version = "3.10")
-use_repo(python, "python_3_10")
-
-# Willow and dependencies.
-bazel_dep(name = "secure_aggregation", version = "0.0.0")
 archive_override(
     module_name = "secure_aggregation",
     integrity = "sha256-SXk5sRDHWUCqivOvs01YrqZ2sF3s7PBUiP79je58mH4=",
@@ -39,7 +89,6 @@ archive_override(
     urls = ["https://github.com/google/secure-aggregation/archive/4fedb7521362987956d34a69da6e9408d85685ec.zip"],
 )
 
-bazel_dep(name = "shell-encryption", version = "0.0.0")
 archive_override(
     module_name = "shell-encryption",
     integrity = "sha256-fR28P87WkRNGlF38tO/cMz9mrt6g/+LF8jhK4eeAows=",
@@ -48,3 +97,39 @@ archive_override(
         "https://github.com/google/shell-encryption/archive/8607279e72f79efc51077f2b4f982a6a6296774e.zip",
     ],
 )
+# go/keep-sorted end
+
+gcc_toolchains = use_extension("@gcc_toolchain//toolchain:module_extensions.bzl", "gcc_toolchains", dev_dependency = True)
+gcc_toolchains.toolchain(
+    name = "gcc_toolchain_x86_64_unknown_none",
+    extra_ldflags = ["-nostdlib"],
+    target_arch = "x86_64",
+    target_compatible_with = [
+        "@platforms//cpu:{target_arch}",
+        "@platforms//os:none",
+    ],
+)
+use_repo(gcc_toolchains, "gcc_toolchain_x86_64_unknown_none")
+
+llvm = use_extension("@toolchains_llvm//toolchain/extensions:llvm.bzl", "llvm", dev_dependency = True)
+llvm.toolchain(
+    name = "llvm_toolchain",
+    llvm_version = "14.0.0",
+)
+llvm.sysroot(
+    name = "llvm_toolchain",
+    label = "@confidential-federated-compute-sysroot//:sysroot",
+    targets = ["linux-x86_64"],
+)
+use_repo(llvm, "llvm_toolchain")
+
+register_toolchains(
+    "@gcc_toolchain_x86_64_unknown_none//:cc_toolchain",
+    "@llvm_toolchain//:all",
+    dev_dependency = True,
+)
+
+python = use_extension("@rules_python//python/extensions:python.bzl", "python", dev_dependency = True)
+python.defaults(python_version = "3.10")
+python.toolchain(python_version = "3.10")
+use_repo(python, "python_3_10")

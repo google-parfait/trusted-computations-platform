@@ -12,9 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-load("@oak//bazel:defs.bzl", "oci_runtime_bundle")
-load("@rules_oci//oci:defs.bzl", "oci_image")
-load("@rules_pkg//pkg:tar.bzl", "pkg_tar")
+load("@oak//oak_containers/app_base:defs.bzl", "app_bundle")
 load("@rules_rust//rust:defs.bzl", "rust_binary")
 
 rust_binary(
@@ -34,21 +32,8 @@ rust_binary(
     ],
 )
 
-pkg_tar(
-    name = "tar",
-    srcs = [":main"],
-    package_dir = "/usr/local/bin",
-)
-
-oci_image(
-    name = "image",
-    base = "@distroless_cc_debian12",
-    entrypoint = ["/usr/local/bin/main"],
-    tars = [":tar"],
-)
-
-oci_runtime_bundle(
+app_bundle(
     name = "bundle",
-    image = ":image",
+    binary = ":main",
     visibility = ["//:__pkg__"],
 )

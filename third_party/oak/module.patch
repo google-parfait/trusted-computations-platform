@@ -1,0 +1,66 @@
+# Add additional crates used by TCP and its dependencies. Since crate_universe
+# doesn't share crates between modules, we instead add them to Oak's module
+# with a patch (https://github.com/bazelbuild/rules_rust/issues/3157).
+--- MODULE.bazel
++++ MODULE.bazel
+@@ -434,2 +434,39 @@
+ # Crate Specifications and Annotations
+ # -------------------------------------
++crate.spec(
++    package = "aes-gcm-siv",
++    repositories = ALL_REPOSITORIES,
++    version = "0.11.1",
++)
++crate.spec(
++    default_features = False,
++    package = "ahash",
++    repositories = ALL_REPOSITORIES,
++    version = "0.8.3",
++)
++crate.spec(
++    package = "getset",
++    repositories = ALL_STD,
++    version = "0.1.1",
++)
++crate.spec(
++    default_features = False,
++    package = "slog",
++    repositories = ALL_REPOSITORIES,
++    version = "2.2.0",
++)
++crate.spec(
++    package = "slog-term",
++    repositories = ALL_STD,
++    version = "2.9.0",
++)
++crate.spec(
++    package = "spin",
++    repositories = ALL_REPOSITORIES,
++    version = "0.9.8",
++)
++crate.spec(
++    package = "time-macros",
++    repositories = ALL_STD,
++    version = "<0.2.26",  # 0.2.26 requires rustc >= 1.88
++)
+@@ -757,7 +794,7 @@
+ crate.spec(
+     default_features = True,
+     features = [],
+     package = "googletest",
+     repositories = ALL_STD,
+-    version = "0.14.2",
++    version = "0.11.0",
+ )
+@@ -1203,7 +1240,7 @@
+ crate.spec(
+-    default_features = True,
++    default_features = False,
+-    features = [],
++    features = ["alloc", "small_rng", "getrandom"],
+     package = "rand",
+-    repositories = ALL_STD,
++    repositories = ALL_REPOSITORIES,
+-    version = "0.9.0",
++    version = "0.8.5",
+ )
