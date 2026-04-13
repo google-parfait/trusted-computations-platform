@@ -65,17 +65,15 @@ pub struct DecryptorActor {
 }
 
 const MAX_NUMBER_OF_DECRYPTORS: i64 = 1;
-// The maximum number of key pairs that the actor can store. This is a safeguard to prevent
-// unbounded memory growth in case of a large number of key generation requests or a large
-// number of unconsumed keys.
+// The maximum number of key pairs that the actor can store. This is a safeguard
+// to prevent unbounded memory growth in case of a large number of key
+// generation requests or a large number of unconsumed keys.
 const MAX_NUMBER_OF_KEY_PAIRS: i32 = 1000;
 
 impl DecryptorActor {
     pub fn new() -> Self {
         let skip = BinaryReferenceValue {
-            r#type: Some(binary_reference_value::Type::Skip(
-                SkipVerification::default(),
-            )),
+            r#type: Some(binary_reference_value::Type::Skip(SkipVerification::default())),
         };
         Self::new_with_reference_values(ReferenceValues {
             r#type: Some(reference_values::Type::OakRestrictedKernel(
@@ -110,18 +108,11 @@ impl DecryptorActor {
     }
 
     pub fn new_with_reference_values(reference_values: ReferenceValues) -> Self {
-        DecryptorActor {
-            reference_values,
-            context: None,
-            key_pairs: BTreeMap::new(),
-        }
+        DecryptorActor { reference_values, context: None, key_pairs: BTreeMap::new() }
     }
 
     fn get_context(&mut self) -> &mut dyn ActorContext {
-        self.context
-            .as_mut()
-            .expect("Context is initialized")
-            .as_mut()
+        self.context.as_mut().expect("Context is initialized").as_mut()
     }
 
     fn process_generate_key_command(
@@ -131,12 +122,7 @@ impl DecryptorActor {
     ) -> Result<CommandOutcome, ActorError> {
         let key_id: Vec<u8> = generate_key_request.key_id;
         if self.key_pairs.contains_key(&key_id) {
-            let public_key_share = self
-                .key_pairs
-                .get(&key_id)
-                .unwrap()
-                .public_key_share
-                .clone();
+            let public_key_share = self.key_pairs.get(&key_id).unwrap().public_key_share.clone();
             let mut key = KeyProto::default();
             key.set_key_id(key_id.clone());
             key.set_key_material(public_key_share.to_vec());
@@ -150,12 +136,8 @@ impl DecryptorActor {
             )));
         }
 
-        let highest_sequential_order: i32 = self
-            .key_pairs
-            .values()
-            .map(|kp| kp.sequential_order)
-            .max()
-            .unwrap_or(0);
+        let highest_sequential_order: i32 =
+            self.key_pairs.values().map(|kp| kp.sequential_order).max().unwrap_or(0);
 
         let key_pair = self.create_public_key_share(key_id.clone(), highest_sequential_order + 1);
 
@@ -182,22 +164,18 @@ impl DecryptorActor {
         let key_pair = self.get_key_pair(&key_id);
 
         if key_pair == None {
+            let escaped_key_id =
+                key_id.iter().map(|&b| format!("\\x{:02x}", b)).collect::<String>();
             return self.command_err(
                 correlation_id,
                 StatusCode::FailedPrecondition as i32,
-                format!(
-                    "Key pair not found for given {} key id",
-                    String::from_utf8(key_id.to_vec()).expect("Invalid UTF-8")
-                ),
+                format!("Key pair not found for given key id: {}", escaped_key_id),
             );
         }
 
         let decryptor_state = &key_pair.unwrap().decryptor_state.to_vec();
-        let decryption_response = self.decrypt(
-            key_id.clone().into(),
-            request.into(),
-            decryptor_state.clone().into(),
-        );
+        let decryption_response =
+            self.decrypt(key_id.clone().into(), request.into(), decryptor_state.clone().into());
 
         match decryption_response {
             Ok(response) => {
@@ -227,10 +205,10 @@ impl DecryptorActor {
         let decryptor_state: Bytes = generate_key_event.private_key_share.into();
         let sequential_order: i32 = generate_key_event.sequential_order;
 
-        // If the number of key pairs has reached the maximum, remove the oldest one (the one
-        // with the smallest sequential order) to make room for the new key pair. This is done
-        // here instead of in the command processing function to ensure that the key pair is
-        // removed from all replicas.
+        // If the number of key pairs has reached the maximum, remove the oldest one
+        // (the one with the smallest sequential order) to make room for the new
+        // key pair. This is done here instead of in the command processing
+        // function to ensure that the key pair is removed from all replicas.
         if (self.key_pairs.len() as i32) == MAX_NUMBER_OF_KEY_PAIRS {
             let key_to_remove = self
                 .key_pairs
@@ -326,9 +304,8 @@ impl DecryptorActor {
         let request_proto = PartialDecryptionRequestProto::parse(&request_bytes).unwrap();
         let request = PartialDecryptionRequest::from_proto(request_proto, &decryptor).unwrap();
 
-        let partial_decryption = decryptor
-            .handle_partial_decryption_request(request, &decryptor_state)
-            .unwrap();
+        let partial_decryption =
+            decryptor.handle_partial_decryption_request(request, &decryptor_state).unwrap();
         let partial_decryption_proto = partial_decryption.to_proto(&decryptor).unwrap();
 
         return Ok(partial_decryption_proto.serialize().unwrap().into());
@@ -343,10 +320,7 @@ impl DecryptorActor {
         return Ok(CommandOutcome::with_command(ActorCommand::with_header(
             correlation_id,
             &DecryptorResponse {
-                msg: Some(decryptor_response::Msg::Error(Status {
-                    code: code,
-                    message: message,
-                })),
+                msg: Some(decryptor_response::Msg::Error(Status { code: code, message: message })),
             },
         )));
     }
@@ -360,21 +334,15 @@ impl DecryptorActor {
         return Ok(EventOutcome::with_command(ActorCommand::with_header(
             correlation_id,
             &DecryptorResponse {
-                msg: Some(decryptor_response::Msg::Error(Status {
-                    code: code,
-                    message: message,
-                })),
+                msg: Some(decryptor_response::Msg::Error(Status { code: code, message: message })),
             },
         )));
     }
 
     fn create_willow_v1_decryptor(&self, key_id: Vec<u8>) -> WillowV1Decryptor<ShellVahe> {
         let vahe = Rc::new(
-            ShellVahe::new(
-                create_shell_ahe_config(MAX_NUMBER_OF_DECRYPTORS).unwrap(),
-                &key_id,
-            )
-            .unwrap(),
+            ShellVahe::new(create_shell_ahe_config(MAX_NUMBER_OF_DECRYPTORS).unwrap(), &key_id)
+                .unwrap(),
         );
         WillowV1Decryptor::new_with_randomly_generated_seed(Rc::clone(&vahe)).unwrap()
     }
@@ -390,9 +358,7 @@ impl Actor for DecryptorActor {
     fn on_shutdown(&mut self) {}
 
     fn on_save_snapshot(&mut self) -> Result<Bytes, ActorError> {
-        let mut snapshot = DecryptorSnapshot {
-            key_pairs: Vec::<SnapshotKeyPair>::new(),
-        };
+        let mut snapshot = DecryptorSnapshot { key_pairs: Vec::<SnapshotKeyPair>::new() };
 
         for (key_id, key_pair) in &self.key_pairs {
             snapshot.key_pairs.push(SnapshotKeyPair {
