@@ -18,6 +18,7 @@ load("@rules_rust//rust:defs.bzl", "rust_binary")
 rust_binary(
     name = "main",
     srcs = glob(["src/*.rs"]),
+    rustc_flags = ["-Cpanic=abort"],
     deps = [
         "//apps/willow/decryptor/actor:willow_decryptor_service",
         "//proto:tcp_proto",
