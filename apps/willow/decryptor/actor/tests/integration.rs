@@ -244,16 +244,11 @@ mod test {
             WillowV1Decryptor::new_with_randomly_generated_seed(Rc::clone(&vahe)).unwrap();
 
         // Create server.
-        let server = WillowV1Server {
-            kahe: Rc::clone(&kahe),
-            vahe: Rc::clone(&vahe),
-        };
+        let server = WillowV1Server { kahe: Rc::clone(&kahe), vahe: Rc::clone(&vahe) };
         let mut server_state = ServerState::default();
 
         // Create verifier.
-        let verifier = WillowV1Verifier {
-            vahe: Rc::clone(&vahe),
-        };
+        let verifier = WillowV1Verifier { vahe: Rc::clone(&vahe) };
         let mut verifier_state = VerifierState::default();
 
         let public_key_share_proto =
@@ -286,17 +281,11 @@ mod test {
         let (ciphertext_contribution, decryption_request_contribution) =
             server.split_client_message(client_message).unwrap();
 
-        verifier
-            .verify_and_include(decryption_request_contribution, &mut verifier_state)
-            .unwrap();
-        server
-            .handle_ciphertext_contribution(ciphertext_contribution, &mut server_state)
-            .unwrap();
+        verifier.verify_and_include(decryption_request_contribution, &mut verifier_state).unwrap();
+        server.handle_ciphertext_contribution(ciphertext_contribution, &mut server_state).unwrap();
 
         // Verifier creates the partial decryption request.
-        let pd_ct = verifier
-            .create_partial_decryption_request(verifier_state)
-            .unwrap();
+        let pd_ct = verifier.create_partial_decryption_request(verifier_state).unwrap();
         let pd_ct_proto = pd_ct.to_proto(&verifier).unwrap();
         let pd_ct_bytes = pd_ct_proto.serialize().unwrap().into();
 
@@ -332,9 +321,7 @@ mod test {
             PartialDecryptionResponse::from_proto(pd_proto, &decryptor).unwrap();
 
         // Server handles the partial decryption.
-        server
-            .handle_partial_decryption(pd, &mut server_state)
-            .unwrap();
+        server.handle_partial_decryption(pd, &mut server_state).unwrap();
 
         // Server recovers the aggregation result.
         let aggregation_result = server.recover_aggregation_result(&server_state).unwrap();
@@ -416,16 +403,11 @@ mod test {
                 .unwrap();
 
         // Create server.
-        let server = WillowV1Server {
-            kahe: Rc::clone(&kahe),
-            vahe: Rc::clone(&vahe),
-        };
+        let server = WillowV1Server { kahe: Rc::clone(&kahe), vahe: Rc::clone(&vahe) };
         let mut server_state = ServerState::default();
 
         // Create verifier.
-        let verifier = WillowV1Verifier {
-            vahe: Rc::clone(&vahe),
-        };
+        let verifier = WillowV1Verifier { vahe: Rc::clone(&vahe) };
         let mut verifier_state = VerifierState::default();
 
         let public_key_share_proto =
@@ -458,17 +440,11 @@ mod test {
         let (ciphertext_contribution, decryption_request_contribution) =
             server.split_client_message(client_message).unwrap();
 
-        verifier
-            .verify_and_include(decryption_request_contribution, &mut verifier_state)
-            .unwrap();
-        server
-            .handle_ciphertext_contribution(ciphertext_contribution, &mut server_state)
-            .unwrap();
+        verifier.verify_and_include(decryption_request_contribution, &mut verifier_state).unwrap();
+        server.handle_ciphertext_contribution(ciphertext_contribution, &mut server_state).unwrap();
 
         // Verifier creates the partial decryption request.
-        let pd_ct = verifier
-            .create_partial_decryption_request(verifier_state)
-            .unwrap();
+        let pd_ct = verifier.create_partial_decryption_request(verifier_state).unwrap();
         let pd_ct_proto = pd_ct.to_proto(&verifier).unwrap();
         let pd_ct_bytes = pd_ct_proto.serialize().unwrap().into();
 
@@ -499,7 +475,7 @@ mod test {
         assert_eq!(error_code, 9);
         assert_eq!(
             error_message,
-            format!("Key pair not found for given {} key id", key_id)
+            "Key pair not found for given key id: \\x75\\x6e\\x6b\\x6e\\x6f\\x77\\x6e\\x20\\x6b\\x65\\x79\\x20\\x69\\x64"
         );
     }
 
@@ -573,16 +549,11 @@ mod test {
                 .unwrap();
 
         // Create server.
-        let server = WillowV1Server {
-            kahe: Rc::clone(&kahe),
-            vahe: Rc::clone(&vahe),
-        };
+        let server = WillowV1Server { kahe: Rc::clone(&kahe), vahe: Rc::clone(&vahe) };
         let mut server_state = ServerState::default();
 
         // Create verifier.
-        let verifier = WillowV1Verifier {
-            vahe: Rc::clone(&vahe),
-        };
+        let verifier = WillowV1Verifier { vahe: Rc::clone(&vahe) };
         let mut verifier_state = VerifierState::default();
 
         let public_key_share_proto =
@@ -615,17 +586,11 @@ mod test {
         let (ciphertext_contribution, decryption_request_contribution) =
             server.split_client_message(client_message).unwrap();
 
-        verifier
-            .verify_and_include(decryption_request_contribution, &mut verifier_state)
-            .unwrap();
-        server
-            .handle_ciphertext_contribution(ciphertext_contribution, &mut server_state)
-            .unwrap();
+        verifier.verify_and_include(decryption_request_contribution, &mut verifier_state).unwrap();
+        server.handle_ciphertext_contribution(ciphertext_contribution, &mut server_state).unwrap();
 
         // Verifier creates the partial decryption request.
-        let pd_ct = verifier
-            .create_partial_decryption_request(verifier_state)
-            .unwrap();
+        let pd_ct = verifier.create_partial_decryption_request(verifier_state).unwrap();
         let pd_ct_proto = pd_ct.to_proto(&verifier).unwrap();
         let pd_ct_bytes = pd_ct_proto.serialize().unwrap().into();
 
@@ -674,7 +639,7 @@ mod test {
         assert_eq!(error_code, 9);
         assert_eq!(
             error_message,
-            format!("Key pair not found for given {} key id", key_id)
+            "Key pair not found for given key id: \\x6b\\x65\\x79\\x5f\\x69\\x64"
         );
     }
 }
