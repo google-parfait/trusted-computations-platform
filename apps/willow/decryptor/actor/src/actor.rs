@@ -25,7 +25,8 @@ use decryptor_traits::SecureAggregationDecryptor;
 use key_rust_proto::Key as KeyProto;
 use messages::PartialDecryptionRequest;
 use messages_rust_proto::{
-    DecryptorStateProto, PartialDecryptionRequest as PartialDecryptionRequestProto,
+    DecryptorState as DecryptorStateProto,
+    PartialDecryptionRequest as PartialDecryptionRequestProto,
 };
 use micro_rpc::StatusCode;
 use oak_proto_rust::oak::attestation::v1::{
@@ -298,15 +299,16 @@ impl DecryptorActor {
         let decryptor = self.create_willow_v1_decryptor(key_id);
 
         let decryptor_state_proto = DecryptorStateProto::parse(&decryptor_state_bytes).unwrap();
-        let decryptor_state =
+        let mut decryptor_state =
             DecryptorState::from_proto(decryptor_state_proto, &decryptor).unwrap();
 
         let request_proto = PartialDecryptionRequestProto::parse(&request_bytes).unwrap();
         let request = PartialDecryptionRequest::from_proto(request_proto, &decryptor).unwrap();
 
         let partial_decryption =
-            decryptor.handle_partial_decryption_request(request, &decryptor_state).unwrap();
-        let partial_decryption_proto = partial_decryption.to_proto(&decryptor).unwrap();
+            decryptor.handle_partial_decryption_request(request, &mut decryptor_state).unwrap();
+        let partial_decryption_proto =
+            partial_decryption.to_proto((&decryptor, decryptor_state.kahe.as_deref())).unwrap();
 
         return Ok(partial_decryption_proto.serialize().unwrap().into());
     }

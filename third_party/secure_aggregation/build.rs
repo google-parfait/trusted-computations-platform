@@ -28,20 +28,16 @@ fn main() {
             shell_encryption_proto_dir.join("shell_encryption/serialization.proto"),
             shell_encryption_proto_dir.join("shell_encryption/rns/rns_serialization.proto"),
             proto_dir.join("willow/proto/shell/ciphertexts.proto"),
+            proto_dir.join("willow/proto/willow/aggregation_config.proto"),
             proto_dir.join("willow/proto/willow/decryptor.proto"),
             proto_dir.join("willow/proto/willow/key.proto"),
             proto_dir.join("willow/proto/willow/messages.proto"),
             proto_dir.join("willow/proto/zk/proofs.proto"),
         ],
         &[
-            shell_encryption_proto_dir
-                .into_os_string()
-                .to_str()
-                .unwrap(),
+            shell_encryption_proto_dir.into_os_string().to_str().unwrap(),
             proto_dir.into_os_string().to_str().unwrap(),
         ],
-        micro_rpc_build::CompileOptions {
-            ..Default::default()
-        },
+        micro_rpc_build::CompileOptions { ..Default::default() },
     );
 }

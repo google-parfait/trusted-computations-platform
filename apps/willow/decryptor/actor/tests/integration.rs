@@ -317,8 +317,8 @@ mod test {
         assert!(pd_bytes.is_some());
 
         let pd_proto = PartialDecryptionResponseProto::parse(&pd_bytes.unwrap()).unwrap();
-        let pd: PartialDecryptionResponse<ShellVahe> =
-            PartialDecryptionResponse::from_proto(pd_proto, &decryptor).unwrap();
+        let pd: PartialDecryptionResponse<ShellKahe, ShellVahe> =
+            PartialDecryptionResponse::from_proto(pd_proto, &server).unwrap();
 
         // Server handles the partial decryption.
         server.handle_partial_decryption(pd, &mut server_state).unwrap();

@@ -540,6 +540,34 @@
         ]
       }
     },
+    "@@oak+//bazel/crates:extensions.bzl%load_patched_crates": {
+      "general": {
+        "bzlTransitiveDigest": "3+0DgDVmmSQV+ZNN6HOuI85MQWAauTAvmUFO4LHlGgs=",
+        "usagesDigest": "VcSAnitWnaY32ilvigcD6d+v+o2ERjwRWyIsCHppfR4=",
+        "recordedFileInputs": {},
+        "recordedDirentsInputs": {},
+        "envVariables": {},
+        "generatedRepoSpecs": {
+          "prost_types_oak_patched": {
+            "repoRuleId": "@@bazel_tools//tools/build_defs/repo:http.bzl%http_archive",
+            "attributes": {
+              "build_file_content": "\nload(\"@rules_rust//rust:defs.bzl\", \"rust_library\")\n\npackage(\n    default_visibility = [\"//visibility:public\"],\n)\n\nrust_library(\n    name = \"prost\",\n    compile_data = [\"prost-0.14.3/prost/README.md\"],\n    srcs = glob([\"prost-0.14.3/prost/src/**\"]),\n    deps = [\"@oak_crates_index//:bytes\"],\n    proc_macro_deps = [\"@oak_crates_index//:prost-derive\"],\n    crate_features =[\"derive\", \"prost-derive\"],\n)\n\nrust_library(\n    name = \"prost-types\",\n    srcs = glob([\"prost-0.14.3/prost-types/src/*\"]),\n    proc_macro_deps = [\n        \"@oak_crates_index//:prost-derive\",\n    ],\n    deps = [\n        \"@oak_crates_index//:prost\",\n    ],\n)\n        ",
+              "integrity": "sha256-+mG3Il4QDcYUVhQIOXFDx6e6B7Y8heWFhvTnJ4fzxeU",
+              "urls": [
+                "https://github.com/tokio-rs/prost/archive/refs/tags/v0.14.3.tar.gz"
+              ]
+            }
+          }
+        },
+        "recordedRepoMappingEntries": [
+          [
+            "oak+",
+            "bazel_tools",
+            "bazel_tools"
+          ]
+        ]
+      }
+    },
     "@@oak+//bazel/rust:extensions.bzl%rust_toolchains": {
       "general": {
         "bzlTransitiveDigest": "GljO/PMcpInFnLw2mpPfpE2r1mf92UHyJRmMCactjtM=",

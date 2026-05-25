@@ -11,6 +11,7 @@ cargo_build_script(
     },
     data = [
         "@secure_aggregation//willow/proto/shell:ciphertexts.proto",
+        "@secure_aggregation//willow/proto/willow:aggregation_config.proto",
         "@secure_aggregation//willow/proto/willow:decryptor.proto",
         "@secure_aggregation//willow/proto/willow:key.proto",
         "@secure_aggregation//willow/proto/willow:messages.proto",
