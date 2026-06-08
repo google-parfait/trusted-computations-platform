@@ -57,6 +57,8 @@ struct KeyPair {
     public_key_share: Bytes,
     decryptor_state: Bytes,
     sequential_order: i32,
+    session_tag: String,
+    created_timestamp: Option<prost_types::Timestamp>,
 }
 
 pub struct DecryptorActor {
@@ -121,16 +123,30 @@ impl DecryptorActor {
         correlation_id: u64,
         generate_key_request: GenerateKeyRequest,
     ) -> Result<CommandOutcome, ActorError> {
-        let key_id: Vec<u8> = generate_key_request.key_id;
+        let key_id: Vec<u8> = if generate_key_request.key_id.is_empty() {
+            rand::random::<[u8; 16]>().to_vec()
+        } else {
+            generate_key_request.key_id
+        };
         if self.key_pairs.contains_key(&key_id) {
-            let public_key_share = self.key_pairs.get(&key_id).unwrap().public_key_share.clone();
+            let key_pair = self.key_pairs.get(&key_id).unwrap();
+            let public_key_share = key_pair.public_key_share.clone();
             let mut key = KeyProto::default();
             key.set_key_id(key_id.clone());
             key.set_key_material(public_key_share.to_vec());
+            key.set_session_tag(key_pair.session_tag.clone());
+            if let Some(ref ts) = key_pair.created_timestamp {
+                let mut protobuf_ts = ::timestamp_proto::Timestamp::new();
+                protobuf_ts.set_seconds(ts.seconds);
+                protobuf_ts.set_nanos(ts.nanos);
+                key.set_timestamp(protobuf_ts);
+            }
+
             return Ok(CommandOutcome::with_command(ActorCommand::with_header(
                 correlation_id,
                 &DecryptorResponse {
                     msg: Some(decryptor_response::Msg::GenerateKey(GenerateKeyResponse {
+                        key_id: key_id.clone(),
                         public_key: key.serialize().unwrap().into(),
                     })),
                 },
@@ -140,7 +156,12 @@ impl DecryptorActor {
         let highest_sequential_order: i32 =
             self.key_pairs.values().map(|kp| kp.sequential_order).max().unwrap_or(0);
 
-        let key_pair = self.create_public_key_share(key_id.clone(), highest_sequential_order + 1);
+        let key_pair = self.create_public_key_share(
+            key_id.clone(),
+            highest_sequential_order + 1,
+            generate_key_request.session_tag.clone(),
+            generate_key_request.created_timestamp.clone(),
+        );
 
         return Ok(CommandOutcome::with_event(ActorEvent::with_proto(
             correlation_id,
@@ -150,6 +171,8 @@ impl DecryptorActor {
                     private_key_share: key_pair.decryptor_state.to_vec(),
                     sequential_order: key_pair.sequential_order,
                     key_id: key_id.into(),
+                    session_tag: generate_key_request.session_tag,
+                    created_timestamp: generate_key_request.created_timestamp,
                 })),
             },
         )));
@@ -220,12 +243,17 @@ impl DecryptorActor {
             key_to_remove.and_then(|k| self.key_pairs.remove(&k));
         }
 
+        let session_tag = generate_key_event.session_tag.clone();
+        let created_timestamp = generate_key_event.created_timestamp.clone();
+
         self.key_pairs.insert(
             generate_key_event.key_id.clone().into(),
             KeyPair {
                 public_key_share: public_key_share.clone(),
                 decryptor_state: decryptor_state,
                 sequential_order: sequential_order,
+                session_tag,
+                created_timestamp,
             },
         );
 
@@ -233,10 +261,19 @@ impl DecryptorActor {
             let mut key = KeyProto::default();
             key.set_key_id(generate_key_event.key_id.clone());
             key.set_key_material(public_key_share.to_vec());
+            key.set_session_tag(generate_key_event.session_tag.clone());
+            if let Some(ref ts) = generate_key_event.created_timestamp {
+                let mut protobuf_ts = ::timestamp_proto::Timestamp::new();
+                protobuf_ts.set_seconds(ts.seconds);
+                protobuf_ts.set_nanos(ts.nanos);
+                key.set_timestamp(protobuf_ts);
+            }
+
             return Ok(EventOutcome::with_command(ActorCommand::with_header(
                 correlation_id,
                 &DecryptorResponse {
                     msg: Some(decryptor_response::Msg::GenerateKey(GenerateKeyResponse {
+                        key_id: generate_key_event.key_id,
                         public_key: key.serialize().unwrap().into(),
                     })),
                 },
@@ -268,7 +305,13 @@ impl DecryptorActor {
         Ok(EventOutcome::with_none())
     }
 
-    fn create_public_key_share(&self, key_id: Vec<u8>, sequential_order: i32) -> KeyPair {
+    fn create_public_key_share(
+        &self,
+        key_id: Vec<u8>,
+        sequential_order: i32,
+        session_tag: String,
+        created_timestamp: Option<prost_types::Timestamp>,
+    ) -> KeyPair {
         let mut decryptor_state = DecryptorState::default();
         let decryptor = self.create_willow_v1_decryptor(key_id);
 
@@ -283,6 +326,8 @@ impl DecryptorActor {
             public_key_share: public_key_share_proto.serialize().unwrap().into(),
             decryptor_state: decryptor_state_proto.serialize().unwrap().into(),
             sequential_order: sequential_order,
+            session_tag,
+            created_timestamp,
         };
     }
 
@@ -368,6 +413,8 @@ impl Actor for DecryptorActor {
                 private_key_share: key_pair.decryptor_state.clone(),
                 key_id: key_id.clone().into(),
                 sequential_order: key_pair.sequential_order,
+                session_tag: key_pair.session_tag.clone(),
+                created_timestamp: key_pair.created_timestamp.clone(),
             });
         }
 
@@ -388,6 +435,8 @@ impl Actor for DecryptorActor {
                     public_key_share: key_pair.public_key_share,
                     decryptor_state: key_pair.private_key_share,
                     sequential_order: key_pair.sequential_order,
+                    session_tag: key_pair.session_tag,
+                    created_timestamp: key_pair.created_timestamp,
                 },
             );
         }

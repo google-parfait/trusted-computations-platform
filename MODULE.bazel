@@ -94,9 +94,9 @@ archive_override(
 
 archive_override(
     module_name = "secure_aggregation",
-    integrity = "sha256-2U4pJEPqb09QQwhglA6X8dglQz5tfpHI8msIIrNSsdM=",
-    strip_prefix = "secure-aggregation-fef891d27fef53633a04503dbd9f4c8f0977bce0",
-    urls = ["https://github.com/google/secure-aggregation/archive/fef891d27fef53633a04503dbd9f4c8f0977bce0.zip"],
+    integrity = "sha256-Ehp+TjZ6ZkJynFQBedQYV2+a1TKgZefWfEdTuxzgnzc=",
+    strip_prefix = "secure-aggregation-cc8e884495ae95561f1029ee38c2fb6dcd385e71",
+    urls = ["https://github.com/google/secure-aggregation/archive/cc8e884495ae95561f1029ee38c2fb6dcd385e71.zip"],
 )
 
 archive_override(

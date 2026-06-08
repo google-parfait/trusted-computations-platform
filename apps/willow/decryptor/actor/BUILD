@@ -12,6 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+load("@com_google_protobuf//rust:defs.bzl", "rust_cc_proto_library")
 load("@rules_rust//cargo:defs.bzl", "cargo_build_script")
 load("@rules_rust//rust:defs.bzl", "rust_library", "rust_test")
 
@@ -26,12 +27,23 @@ cargo_build_script(
         "@com_google_protobuf//:well_known_type_protos",
     ],
     tools = ["@com_google_protobuf//:protoc"],
-    deps = ["@oak//micro_rpc_build"],
+    deps = [
+        "@oak//micro_rpc_build",
+        "@rules_rust//tools/runfiles",
+    ],
+)
+
+rust_cc_proto_library(
+    name = "timestamp_rust_proto",
+    deps = ["@com_google_protobuf//:timestamp_proto"],
 )
 
 rust_library(
     name = "willow_decryptor_service",
     srcs = glob(["src/*.rs"]),
+    aliases = {
+        "@com_google_protobuf//:timestamp_proto": "timestamp_proto",
+    },
     crate_features = select({
         "@platforms//os:linux": [
             "testing",
@@ -45,6 +57,7 @@ rust_library(
     ],
     deps = [
         ":build",
+        ":timestamp_rust_proto",
         "//proto:tcp_proto",
         "//runtime:tcp_runtime",
         "//third_party/secure_aggregation",
@@ -56,6 +69,7 @@ rust_library(
         "@oak_crates_index//:hashbrown",
         "@oak_crates_index//:prost",
         "@oak_crates_index//:prost-types",
+        "@oak_crates_index//:rand",
         "@oak_crates_index//:slog",
         "@secure_aggregation//willow/api:aggregation_config",
         "@secure_aggregation//willow/api:proto_serialization_traits",
@@ -96,6 +110,7 @@ rust_test(
         "@oak_crates_index//:googletest",
         "@oak_crates_index//:mockall",
         "@oak_crates_index//:prost",
+        "@oak_crates_index//:prost-types",
         "@secure_aggregation//willow/api:aggregation_config",
         "@secure_aggregation//willow/api:proto_serialization_traits",
         "@secure_aggregation//willow/crypto:ahe_traits",

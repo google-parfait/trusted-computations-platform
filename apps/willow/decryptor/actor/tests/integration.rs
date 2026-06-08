@@ -73,9 +73,15 @@ mod test {
         assert!(cluster.leader_id() == 1);
 
         let key_id: Vec<u8> = "key_id".into();
+        let expected_session_tag = "test_session_tag".to_string();
+        let expected_created_timestamp = prost_types::Timestamp { seconds: 123456789, nanos: 456 };
+
         let decryptor_generate_key_request = DecryptorRequest {
             msg: Some(decryptor_request::Msg::GenerateKey(GenerateKeyRequest {
                 key_id: key_id.clone(),
+                session_tag: expected_session_tag.clone(),
+                created_timestamp: Some(expected_created_timestamp.clone()),
+                expiration_timestamp: None,
             })),
         };
 
@@ -100,6 +106,65 @@ mod test {
         let key = KeyProto::parse(&public_key.unwrap()).unwrap();
         assert_eq!(key.key_id(), key_id);
         assert!(!key.key_material().is_empty());
+        assert_eq!(key.session_tag().to_str().unwrap(), expected_session_tag);
+        assert!(key.has_timestamp());
+        let ts = key.timestamp();
+        assert_eq!(ts.seconds(), expected_created_timestamp.seconds);
+        assert_eq!(ts.nanos(), expected_created_timestamp.nanos);
+    }
+
+    #[test]
+    fn test_generate_key_optional_id() {
+        let mut cluster = FakeCluster::new(Bytes::new());
+
+        cluster.start_node(1, true, DecryptorActor::new());
+        cluster.advance_until_elected_leader(None);
+        assert!(cluster.leader_id() == 1);
+
+        let expected_session_tag = "test_session_tag".to_string();
+        let expected_created_timestamp = prost_types::Timestamp { seconds: 123456789, nanos: 456 };
+
+        let decryptor_generate_key_request = DecryptorRequest {
+            msg: Some(decryptor_request::Msg::GenerateKey(GenerateKeyRequest {
+                key_id: vec![],
+                session_tag: expected_session_tag.clone(),
+                created_timestamp: Some(expected_created_timestamp.clone()),
+                expiration_timestamp: None,
+            })),
+        };
+
+        cluster.send_app_message(
+            cluster.leader_id(),
+            1,
+            decryptor_generate_key_request.encode_to_vec().into(),
+            Bytes::new(),
+        );
+
+        let decyrptor_generate_key_response = advance_until_response(&mut cluster);
+        let (returned_key_id, public_key) = decyrptor_generate_key_response
+            .msg
+            .and_then(|msg| {
+                if let decryptor_response::Msg::GenerateKey(generate_key_response) = msg {
+                    Some((
+                        generate_key_response.key_id.clone(),
+                        generate_key_response.public_key.clone(),
+                    ))
+                } else {
+                    None
+                }
+            })
+            .unwrap();
+
+        assert_eq!(returned_key_id.len(), 16);
+
+        let key = KeyProto::parse(&public_key).unwrap();
+        assert_eq!(key.key_id(), returned_key_id);
+        assert!(!key.key_material().is_empty());
+        assert_eq!(key.session_tag().to_str().unwrap(), expected_session_tag);
+        assert!(key.has_timestamp());
+        let ts = key.timestamp();
+        assert_eq!(ts.seconds(), expected_created_timestamp.seconds);
+        assert_eq!(ts.nanos(), expected_created_timestamp.nanos);
     }
 
     #[test]
@@ -114,6 +179,9 @@ mod test {
         let decryptor_generate_key_request = DecryptorRequest {
             msg: Some(decryptor_request::Msg::GenerateKey(GenerateKeyRequest {
                 key_id: key_id.clone(),
+                session_tag: "session_tag".to_string(),
+                created_timestamp: None,
+                expiration_timestamp: None,
             })),
         };
 
@@ -142,6 +210,9 @@ mod test {
         let decryptor_generate_key_request = DecryptorRequest {
             msg: Some(decryptor_request::Msg::GenerateKey(GenerateKeyRequest {
                 key_id: key_id.clone(),
+                session_tag: "session_tag".to_string(),
+                created_timestamp: None,
+                expiration_timestamp: None,
             })),
         };
 
@@ -183,6 +254,9 @@ mod test {
         let decryptor_generate_key_request = DecryptorRequest {
             msg: Some(decryptor_request::Msg::GenerateKey(GenerateKeyRequest {
                 key_id: key_id.into(),
+                session_tag: "session_tag".to_string(),
+                created_timestamp: None,
+                expiration_timestamp: None,
             })),
         };
 
@@ -295,6 +369,7 @@ mod test {
                 decryption_request: pd_ct_bytes,
                 public_key: "".into(), // Deprecated
                 key_id: key_id.into(),
+                session_tag: "session_tag".to_string(),
             })),
         };
 
@@ -346,6 +421,9 @@ mod test {
         let decryptor_generate_key_request = DecryptorRequest {
             msg: Some(decryptor_request::Msg::GenerateKey(GenerateKeyRequest {
                 key_id: key_id.into(),
+                session_tag: "session_tag".to_string(),
+                created_timestamp: None,
+                expiration_timestamp: None,
             })),
         };
 
@@ -455,6 +533,7 @@ mod test {
                 decryption_request: pd_ct_bytes,
                 public_key: "".into(), // Deprecated
                 key_id: key_id.into(),
+                session_tag: "session_tag".to_string(),
             })),
         };
 
@@ -492,6 +571,9 @@ mod test {
         let decryptor_generate_key_request = DecryptorRequest {
             msg: Some(decryptor_request::Msg::GenerateKey(GenerateKeyRequest {
                 key_id: key_id.into(),
+                session_tag: "session_tag".to_string(),
+                created_timestamp: None,
+                expiration_timestamp: None,
             })),
         };
 
@@ -600,6 +682,7 @@ mod test {
                 decryption_request: pd_ct_bytes,
                 public_key: "".into(), // Deprecated
                 key_id: key_id.into(),
+                session_tag: "session_tag".to_string(),
             })),
         };
 

@@ -15,9 +15,12 @@
 use std::io::Result;
 
 fn main() -> Result<()> {
+    let r = runfiles::Runfiles::create().unwrap();
+    let protobuf_proto_dir = runfiles::rlocation!(r, "com_google_protobuf/src").unwrap();
+
     micro_rpc_build::compile(
         &["proto/willow_decryptor.proto"],
-        &["proto"],
+        &[std::path::PathBuf::from("proto"), protobuf_proto_dir],
         micro_rpc_build::CompileOptions {
             bytes: vec![".apps.willow.decryptor.service.SnapshotKeyPair".to_string()],
             ..Default::default()

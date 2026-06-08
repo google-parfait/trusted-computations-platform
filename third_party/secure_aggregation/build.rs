@@ -23,6 +23,9 @@ fn main() {
         .strip_suffix("/shell_encryption/serialization.proto")
         .unwrap()
         .into();
+    let r = runfiles::Runfiles::create().unwrap();
+    let protobuf_proto_dir = runfiles::rlocation!(r, "com_google_protobuf/src").unwrap();
+
     micro_rpc_build::compile(
         &[
             shell_encryption_proto_dir.join("shell_encryption/serialization.proto"),
@@ -34,10 +37,7 @@ fn main() {
             proto_dir.join("willow/proto/willow/messages.proto"),
             proto_dir.join("willow/proto/zk/proofs.proto"),
         ],
-        &[
-            shell_encryption_proto_dir.into_os_string().to_str().unwrap(),
-            proto_dir.into_os_string().to_str().unwrap(),
-        ],
+        &[shell_encryption_proto_dir, proto_dir, protobuf_proto_dir],
         micro_rpc_build::CompileOptions { ..Default::default() },
     );
 }

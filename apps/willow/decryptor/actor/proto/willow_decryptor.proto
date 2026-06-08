@@ -16,6 +16,8 @@ syntax = "proto3";
 
 package apps.willow.decryptor.service;
 
+import "google/protobuf/timestamp.proto";
+
 // Container of events triggered by Decryptor commands
 message DecryptorEvent {
   oneof event {
@@ -30,6 +32,8 @@ message GenerateKeyEvent {
   bytes private_key_share = 2;
   bytes key_id = 3;
   int32 sequential_order = 4;
+  string session_tag = 5;
+  google.protobuf.Timestamp created_timestamp = 6;
 }
 
 // Decryptor event fired while processing Decrypt commands
@@ -49,4 +53,6 @@ message SnapshotKeyPair {
   bytes private_key_share = 2;
   bytes key_id = 3;
   int32 sequential_order = 4;
+  string session_tag = 5;
+  google.protobuf.Timestamp created_timestamp = 6;
 }

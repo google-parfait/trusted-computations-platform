@@ -10,6 +10,8 @@ cargo_build_script(
         "SHELL_ENCRYPTION_PROTO": "$(location @shell-encryption//shell_encryption:serialization.proto)",
     },
     data = [
+        "@com_google_protobuf//:descriptor_proto_srcs",
+        "@com_google_protobuf//:well_known_type_protos",
         "@secure_aggregation//willow/proto/shell:ciphertexts.proto",
         "@secure_aggregation//willow/proto/willow:aggregation_config.proto",
         "@secure_aggregation//willow/proto/willow:decryptor.proto",
@@ -20,7 +22,10 @@ cargo_build_script(
         "@shell-encryption//shell_encryption/rns:rns_serialization.proto",
     ],
     tools = ["@com_google_protobuf//:protoc"],
-    deps = ["@oak//micro_rpc_build"],
+    deps = [
+        "@oak//micro_rpc_build",
+        "@rules_rust//tools/runfiles",
+    ],
 )
 
 rust_library(
