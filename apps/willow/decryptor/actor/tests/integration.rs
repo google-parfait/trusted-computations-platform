@@ -725,4 +725,178 @@ mod test {
             "Key pair not found for given key id: \\x6b\\x65\\x79\\x5f\\x69\\x64"
         );
     }
+
+    #[test]
+    fn test_list_keys() {
+        let mut cluster = FakeCluster::new(Bytes::new());
+
+        cluster.start_node(1, true, DecryptorActor::new());
+        cluster.advance_until_elected_leader(None);
+        assert!(cluster.leader_id() == 1);
+
+        let key_id_1: Vec<u8> = "key_id_1".into();
+        let key_id_2: Vec<u8> = "key_id_2".into();
+        let key_id_3: Vec<u8> = "key_id_3".into();
+
+        // 1. Generate key 1 with session_tag_1 (timestamp: 200)
+        let generate_key_request_1 = DecryptorRequest {
+            msg: Some(decryptor_request::Msg::GenerateKey(GenerateKeyRequest {
+                key_id: key_id_1.clone(),
+                session_tag: "session_tag_1".to_string(),
+                created_timestamp: Some(prost_types::Timestamp { seconds: 200, nanos: 0 }),
+                expiration_timestamp: None,
+            })),
+        };
+        cluster.send_app_message(
+            cluster.leader_id(),
+            1,
+            generate_key_request_1.encode_to_vec().into(),
+            Bytes::new(),
+        );
+        let response_1 = advance_until_response(&mut cluster);
+        let key_1_bytes = match response_1.msg {
+            Some(decryptor_response::Msg::GenerateKey(resp)) => resp.public_key,
+            _ => panic!("Expected GenerateKeyResponse"),
+        };
+
+        // 2. Generate key 2 with session_tag_1 (timestamp: 100)
+        let generate_key_request_2 = DecryptorRequest {
+            msg: Some(decryptor_request::Msg::GenerateKey(GenerateKeyRequest {
+                key_id: key_id_2.clone(),
+                session_tag: "session_tag_1".to_string(),
+                created_timestamp: Some(prost_types::Timestamp { seconds: 100, nanos: 0 }),
+                expiration_timestamp: None,
+            })),
+        };
+        cluster.send_app_message(
+            cluster.leader_id(),
+            2,
+            generate_key_request_2.encode_to_vec().into(),
+            Bytes::new(),
+        );
+        let response_2 = advance_until_response(&mut cluster);
+        let key_2_bytes = match response_2.msg {
+            Some(decryptor_response::Msg::GenerateKey(resp)) => resp.public_key,
+            _ => panic!("Expected GenerateKeyResponse"),
+        };
+
+        // 3. Generate key 3 with session_tag_2
+        let generate_key_request_3 = DecryptorRequest {
+            msg: Some(decryptor_request::Msg::GenerateKey(GenerateKeyRequest {
+                key_id: key_id_3.clone(),
+                session_tag: "session_tag_2".to_string(),
+                created_timestamp: None,
+                expiration_timestamp: None,
+            })),
+        };
+        cluster.send_app_message(
+            cluster.leader_id(),
+            3,
+            generate_key_request_3.encode_to_vec().into(),
+            Bytes::new(),
+        );
+        let response_3 = advance_until_response(&mut cluster);
+        let key_3_bytes = match response_3.msg {
+            Some(decryptor_response::Msg::GenerateKey(resp)) => resp.public_key,
+            _ => panic!("Expected GenerateKeyResponse"),
+        };
+
+        // 4. List keys for session_tag_1
+        let list_keys_request_1 = DecryptorRequest {
+            msg: Some(decryptor_request::Msg::ListKeys(ListKeysRequest {
+                session_tag: "session_tag_1".to_string(),
+            })),
+        };
+        cluster.send_app_message(
+            cluster.leader_id(),
+            4,
+            list_keys_request_1.encode_to_vec().into(),
+            Bytes::new(),
+        );
+        let response_list_1 = advance_until_response(&mut cluster);
+        let public_keys_1 = match response_list_1.msg {
+            Some(decryptor_response::Msg::ListKeys(resp)) => resp.public_keys,
+            _ => panic!("Expected ListKeysResponse"),
+        };
+        assert_eq!(public_keys_1.len(), 2);
+        // Assert sorting order: key 2 (timestamp 100) must be first, key 1 (timestamp
+        // 200) second.
+        assert_eq!(public_keys_1[0], key_2_bytes);
+        assert_eq!(public_keys_1[1], key_1_bytes);
+
+        // 5. List keys for session_tag_2
+        let list_keys_request_2 = DecryptorRequest {
+            msg: Some(decryptor_request::Msg::ListKeys(ListKeysRequest {
+                session_tag: "session_tag_2".to_string(),
+            })),
+        };
+        cluster.send_app_message(
+            cluster.leader_id(),
+            5,
+            list_keys_request_2.encode_to_vec().into(),
+            Bytes::new(),
+        );
+        let response_list_2 = advance_until_response(&mut cluster);
+        let public_keys_2 = match response_list_2.msg {
+            Some(decryptor_response::Msg::ListKeys(resp)) => resp.public_keys,
+            _ => panic!("Expected ListKeysResponse"),
+        };
+        assert_eq!(public_keys_2.len(), 1);
+        assert_eq!(public_keys_2[0], key_3_bytes);
+    }
+
+    #[test]
+    fn test_list_keys_unknown_session_tag_returns_empty() {
+        let mut cluster = FakeCluster::new(Bytes::new());
+
+        cluster.start_node(1, true, DecryptorActor::new());
+        cluster.advance_until_elected_leader(None);
+        assert!(cluster.leader_id() == 1);
+
+        let list_keys_request = DecryptorRequest {
+            msg: Some(decryptor_request::Msg::ListKeys(ListKeysRequest {
+                session_tag: "unknown_session_tag".to_string(),
+            })),
+        };
+        cluster.send_app_message(
+            cluster.leader_id(),
+            1,
+            list_keys_request.encode_to_vec().into(),
+            Bytes::new(),
+        );
+        let response = advance_until_response(&mut cluster);
+        let public_keys = match response.msg {
+            Some(decryptor_response::Msg::ListKeys(resp)) => resp.public_keys,
+            _ => panic!("Expected ListKeysResponse"),
+        };
+        assert!(public_keys.is_empty());
+    }
+
+    #[test]
+    fn test_list_keys_empty_session_tag_returns_error() {
+        let mut cluster = FakeCluster::new(Bytes::new());
+
+        cluster.start_node(1, true, DecryptorActor::new());
+        cluster.advance_until_elected_leader(None);
+        assert!(cluster.leader_id() == 1);
+
+        let list_keys_request = DecryptorRequest {
+            msg: Some(decryptor_request::Msg::ListKeys(ListKeysRequest {
+                session_tag: "".to_string(),
+            })),
+        };
+        cluster.send_app_message(
+            cluster.leader_id(),
+            1,
+            list_keys_request.encode_to_vec().into(),
+            Bytes::new(),
+        );
+        let response = advance_until_response(&mut cluster);
+        let (error_code, error_message) = match response.msg {
+            Some(decryptor_response::Msg::Error(error)) => (error.code, error.message),
+            _ => panic!("Expected Error Response"),
+        };
+        assert_eq!(error_code, 3); // StatusCode::InvalidArgument
+        assert_eq!(error_message, "Session tag cannot be empty");
+    }
 }

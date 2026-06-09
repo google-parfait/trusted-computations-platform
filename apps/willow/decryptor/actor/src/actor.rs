@@ -40,7 +40,8 @@ use proto_serialization_traits::{FromProto, ToProto};
 use protobuf::prelude::*;
 use secure_aggregation::proto::{
     decryptor_request, decryptor_response, DecryptRequest, DecryptResponse, DecryptorRequest,
-    DecryptorResponse, GenerateKeyRequest, GenerateKeyResponse, Status,
+    DecryptorResponse, GenerateKeyRequest, GenerateKeyResponse, ListKeysRequest, ListKeysResponse,
+    Status,
 };
 use shell_parameters::create_shell_ahe_config;
 use shell_vahe::ShellVahe;
@@ -217,6 +218,50 @@ impl DecryptorActor {
                 return self.command_err(correlation_id, status.code, status.message);
             }
         }
+    }
+
+    fn process_list_keys_command(
+        &mut self,
+        correlation_id: u64,
+        list_keys_request: ListKeysRequest,
+    ) -> Result<CommandOutcome, ActorError> {
+        let session_tag = list_keys_request.session_tag;
+        if session_tag.is_empty() {
+            return self.command_err(
+                correlation_id,
+                StatusCode::InvalidArgument as i32,
+                "Session tag cannot be empty".to_string(),
+            );
+        }
+
+        let mut matching_keys: Vec<(&Vec<u8>, &KeyPair)> =
+            self.key_pairs.iter().filter(|(_, kp)| kp.session_tag == session_tag).collect();
+
+        // Sort by created_timestamp. None values will be placed at the beginning.
+        matching_keys
+            .sort_by_key(|(_, kp)| kp.created_timestamp.as_ref().map(|ts| (ts.seconds, ts.nanos)));
+
+        let mut public_keys = Vec::new();
+        for (key_id, key_pair) in matching_keys {
+            let mut key = KeyProto::default();
+            key.set_key_id(key_id.clone());
+            key.set_key_material(key_pair.public_key_share.to_vec());
+            key.set_session_tag(key_pair.session_tag.clone());
+            if let Some(ref ts) = key_pair.created_timestamp {
+                let mut protobuf_ts = ::timestamp_proto::Timestamp::new();
+                protobuf_ts.set_seconds(ts.seconds);
+                protobuf_ts.set_nanos(ts.nanos);
+                key.set_timestamp(protobuf_ts);
+            }
+            public_keys.push(key.serialize().unwrap().into());
+        }
+
+        Ok(CommandOutcome::with_command(ActorCommand::with_header(
+            correlation_id,
+            &DecryptorResponse {
+                msg: Some(decryptor_response::Msg::ListKeys(ListKeysResponse { public_keys })),
+            },
+        )))
     }
 
     fn process_generate_key_event(
@@ -490,6 +535,9 @@ impl Actor for DecryptorActor {
             Some(decryptor_request::Msg::Decrypt(decrypt_request)) => {
                 return self.process_decrypt_command(command.correlation_id, decrypt_request);
             }
+            Some(decryptor_request::Msg::ListKeys(list_keys_request)) => {
+                return self.process_list_keys_command(command.correlation_id, list_keys_request);
+            }
             _ => {
                 warn!(
                     self.get_context().logger(),
@@ -557,6 +605,7 @@ fn request_name(request: &DecryptorRequest) -> &'static str {
     match request.msg {
         Some(decryptor_request::Msg::GenerateKey(_)) => "GenerateKey",
         Some(decryptor_request::Msg::Decrypt(_)) => "Decrypt",
+        Some(decryptor_request::Msg::ListKeys(_)) => "ListKeys",
         _ => "Unknown",
     }
 }
