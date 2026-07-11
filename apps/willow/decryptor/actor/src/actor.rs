@@ -124,31 +124,28 @@ impl DecryptorActor {
         correlation_id: u64,
         generate_key_request: GenerateKeyRequest,
     ) -> Result<CommandOutcome, ActorError> {
-        let key_id: Vec<u8> = if generate_key_request.key_id.is_empty() {
-            rand::random::<[u8; 16]>().to_vec()
-        } else {
+        let key_id: Vec<u8> = if !generate_key_request.key_id.is_empty() {
             generate_key_request.key_id
+        } else {
+            rand::random::<[u8; 16]>().to_vec()
         };
-        if self.key_pairs.contains_key(&key_id) {
-            let key_pair = self.key_pairs.get(&key_id).unwrap();
-            let public_key_share = key_pair.public_key_share.clone();
-            let mut key = KeyProto::default();
-            key.set_key_id(key_id.clone());
-            key.set_key_material(public_key_share.to_vec());
-            key.set_session_tag(key_pair.session_tag.clone());
-            if let Some(ref ts) = key_pair.created_timestamp {
-                let mut protobuf_ts = ::timestamp_proto::Timestamp::new();
-                protobuf_ts.set_seconds(ts.seconds);
-                protobuf_ts.set_nanos(ts.nanos);
-                key.set_timestamp(protobuf_ts);
-            }
+
+        // If a key with the given key id already exists, just return it and avoid
+        // creating a new one.
+        if let Some(key_pair) = self.key_pairs.get(&key_id) {
+            let public_key = Self::serialize_key_proto(
+                &key_id,
+                &key_pair.public_key_share,
+                &key_pair.session_tag,
+                key_pair.created_timestamp.as_ref(),
+            );
 
             return Ok(CommandOutcome::with_command(ActorCommand::with_header(
                 correlation_id,
                 &DecryptorResponse {
                     msg: Some(decryptor_response::Msg::GenerateKey(GenerateKeyResponse {
                         key_id: key_id.clone(),
-                        public_key: key.serialize().unwrap().into(),
+                        public_key,
                     })),
                 },
             )));
@@ -164,7 +161,7 @@ impl DecryptorActor {
             generate_key_request.created_timestamp.clone(),
         );
 
-        return Ok(CommandOutcome::with_event(ActorEvent::with_proto(
+        Ok(CommandOutcome::with_event(ActorEvent::with_proto(
             correlation_id,
             &DecryptorEvent {
                 event: Some(decryptor_event::Event::GenerateKeyEvent(GenerateKeyEvent {
@@ -176,7 +173,7 @@ impl DecryptorActor {
                     created_timestamp: generate_key_request.created_timestamp,
                 })),
             },
-        )));
+        )))
     }
 
     fn process_decrypt_command(
@@ -186,9 +183,7 @@ impl DecryptorActor {
     ) -> Result<CommandOutcome, ActorError> {
         let request = decrypt_request.decryption_request;
         let key_id: Vec<u8> = decrypt_request.key_id;
-        let key_pair = self.get_key_pair(&key_id);
-
-        if key_pair == None {
+        let Some(key_pair) = self.get_key_pair(&key_id) else {
             let escaped_key_id =
                 key_id.iter().map(|&b| format!("\\x{:02x}", b)).collect::<String>();
             return self.command_err(
@@ -196,27 +191,22 @@ impl DecryptorActor {
                 StatusCode::FailedPrecondition as i32,
                 format!("Key pair not found for given key id: {}", escaped_key_id),
             );
-        }
+        };
 
-        let decryptor_state = &key_pair.unwrap().decryptor_state.to_vec();
         let decryption_response =
-            self.decrypt(key_id.clone().into(), request.into(), decryptor_state.clone().into());
+            self.decrypt(key_id.clone(), request.into(), key_pair.decryptor_state.clone());
 
         match decryption_response {
-            Ok(response) => {
-                return Ok(CommandOutcome::with_event(ActorEvent::with_proto(
-                    correlation_id,
-                    &DecryptorEvent {
-                        event: Some(decryptor_event::Event::DecryptEvent(DecryptEvent {
-                            key_id: key_id.into(),
-                            decryption_response: response.to_vec(),
-                        })),
-                    },
-                )));
-            }
-            Err(status) => {
-                return self.command_err(correlation_id, status.code, status.message);
-            }
+            Ok(response) => Ok(CommandOutcome::with_event(ActorEvent::with_proto(
+                correlation_id,
+                &DecryptorEvent {
+                    event: Some(decryptor_event::Event::DecryptEvent(DecryptEvent {
+                        key_id: key_id.into(),
+                        decryption_response: response.to_vec(),
+                    })),
+                },
+            ))),
+            Err(status) => self.command_err(correlation_id, status.code, status.message),
         }
     }
 
@@ -234,26 +224,26 @@ impl DecryptorActor {
             );
         }
 
+        // Note: Finding matching keys is iterative and scans through all keys.
+        // Performance should be OK for now, but we may consider revising this in the
+        // future.
         let mut matching_keys: Vec<(&Vec<u8>, &KeyPair)> =
             self.key_pairs.iter().filter(|(_, kp)| kp.session_tag == session_tag).collect();
 
-        // Sort by created_timestamp. None values will be placed at the beginning.
+        // Sort by `created_timestamp` in ascending order (oldest keys first, newest
+        // last). `None` values are considered smaller than `Some` and will be
+        // placed at the beginning.
         matching_keys
             .sort_by_key(|(_, kp)| kp.created_timestamp.as_ref().map(|ts| (ts.seconds, ts.nanos)));
 
         let mut public_keys = Vec::new();
         for (key_id, key_pair) in matching_keys {
-            let mut key = KeyProto::default();
-            key.set_key_id(key_id.clone());
-            key.set_key_material(key_pair.public_key_share.to_vec());
-            key.set_session_tag(key_pair.session_tag.clone());
-            if let Some(ref ts) = key_pair.created_timestamp {
-                let mut protobuf_ts = ::timestamp_proto::Timestamp::new();
-                protobuf_ts.set_seconds(ts.seconds);
-                protobuf_ts.set_nanos(ts.nanos);
-                key.set_timestamp(protobuf_ts);
-            }
-            public_keys.push(key.serialize().unwrap().into());
+            public_keys.push(Self::serialize_key_proto(
+                key_id,
+                &key_pair.public_key_share,
+                &key_pair.session_tag,
+                key_pair.created_timestamp.as_ref(),
+            ));
         }
 
         Ok(CommandOutcome::with_command(ActorCommand::with_header(
@@ -295,35 +285,31 @@ impl DecryptorActor {
             generate_key_event.key_id.clone().into(),
             KeyPair {
                 public_key_share: public_key_share.clone(),
-                decryptor_state: decryptor_state,
-                sequential_order: sequential_order,
+                decryptor_state,
+                sequential_order,
                 session_tag,
                 created_timestamp,
             },
         );
 
         if context.owned {
-            let mut key = KeyProto::default();
-            key.set_key_id(generate_key_event.key_id.clone());
-            key.set_key_material(public_key_share.to_vec());
-            key.set_session_tag(generate_key_event.session_tag.clone());
-            if let Some(ref ts) = generate_key_event.created_timestamp {
-                let mut protobuf_ts = ::timestamp_proto::Timestamp::new();
-                protobuf_ts.set_seconds(ts.seconds);
-                protobuf_ts.set_nanos(ts.nanos);
-                key.set_timestamp(protobuf_ts);
-            }
+            let public_key = Self::serialize_key_proto(
+                &generate_key_event.key_id,
+                &public_key_share,
+                &generate_key_event.session_tag,
+                generate_key_event.created_timestamp.as_ref(),
+            );
 
             return Ok(EventOutcome::with_command(ActorCommand::with_header(
                 correlation_id,
                 &DecryptorResponse {
                     msg: Some(decryptor_response::Msg::GenerateKey(GenerateKeyResponse {
                         key_id: generate_key_event.key_id,
-                        public_key: key.serialize().unwrap().into(),
+                        public_key,
                     })),
                 },
             )));
-        };
+        }
 
         Ok(EventOutcome::with_none())
     }
@@ -334,6 +320,9 @@ impl DecryptorActor {
         correlation_id: u64,
         decrypt_event: DecryptEvent,
     ) -> Result<EventOutcome, ActorError> {
+        // Keys are removed immediately after decryption on all replicas to prevent
+        // re-use. This is the only reason why Decrypt currently needs to trigger an
+        // event.
         self.key_pairs.remove(&decrypt_event.key_id[..]);
 
         if context.owned {
@@ -367,17 +356,17 @@ impl DecryptorActor {
             .unwrap();
         let decryptor_state_proto = decryptor_state.to_proto(&decryptor).unwrap();
 
-        return KeyPair {
+        KeyPair {
             public_key_share: public_key_share_proto.serialize().unwrap().into(),
             decryptor_state: decryptor_state_proto.serialize().unwrap().into(),
-            sequential_order: sequential_order,
+            sequential_order,
             session_tag,
             created_timestamp,
-        };
+        }
     }
 
     fn get_key_pair(&self, key_id: &Vec<u8>) -> Option<&KeyPair> {
-        return self.key_pairs.get(key_id);
+        self.key_pairs.get(key_id)
     }
 
     fn decrypt(
@@ -400,7 +389,7 @@ impl DecryptorActor {
         let partial_decryption_proto =
             partial_decryption.to_proto((&decryptor, decryptor_state.kahe.as_deref())).unwrap();
 
-        return Ok(partial_decryption_proto.serialize().unwrap().into());
+        Ok(partial_decryption_proto.serialize().unwrap().into())
     }
 
     fn command_err(
@@ -409,12 +398,12 @@ impl DecryptorActor {
         code: i32,
         message: String,
     ) -> Result<CommandOutcome, ActorError> {
-        return Ok(CommandOutcome::with_command(ActorCommand::with_header(
+        Ok(CommandOutcome::with_command(ActorCommand::with_header(
             correlation_id,
             &DecryptorResponse {
-                msg: Some(decryptor_response::Msg::Error(Status { code: code, message: message })),
+                msg: Some(decryptor_response::Msg::Error(Status { code, message })),
             },
-        )));
+        )))
     }
 
     fn event_err(
@@ -423,12 +412,12 @@ impl DecryptorActor {
         code: i32,
         message: String,
     ) -> Result<EventOutcome, ActorError> {
-        return Ok(EventOutcome::with_command(ActorCommand::with_header(
+        Ok(EventOutcome::with_command(ActorCommand::with_header(
             correlation_id,
             &DecryptorResponse {
-                msg: Some(decryptor_response::Msg::Error(Status { code: code, message: message })),
+                msg: Some(decryptor_response::Msg::Error(Status { code, message })),
             },
-        )));
+        )))
     }
 
     fn create_willow_v1_decryptor(&self, key_id: Vec<u8>) -> WillowV1Decryptor<ShellVahe> {
@@ -437,6 +426,25 @@ impl DecryptorActor {
                 .unwrap(),
         );
         WillowV1Decryptor::new_with_randomly_generated_seed(Rc::clone(&vahe)).unwrap()
+    }
+
+    fn serialize_key_proto(
+        key_id: &[u8],
+        public_key_share: &[u8],
+        session_tag: &str,
+        created_timestamp: Option<&prost_types::Timestamp>,
+    ) -> Vec<u8> {
+        let mut key = KeyProto::default();
+        key.set_key_id(key_id.to_vec());
+        key.set_key_material(public_key_share.to_vec());
+        key.set_session_tag(session_tag.to_string());
+        if let Some(ts) = created_timestamp {
+            let mut protobuf_ts = ::timestamp_proto::Timestamp::new();
+            protobuf_ts.set_seconds(ts.seconds);
+            protobuf_ts.set_nanos(ts.nanos);
+            key.set_timestamp(protobuf_ts);
+        }
+        key.serialize().unwrap()
     }
 }
 
@@ -493,10 +501,9 @@ impl Actor for DecryptorActor {
         &mut self,
         command: Option<ActorCommand>,
     ) -> Result<CommandOutcome, ActorError> {
-        if command.is_none() {
+        let Some(command) = command else {
             return Ok(CommandOutcome::with_none());
-        }
-        let command = command.unwrap();
+        };
 
         let decryptor_request =
             DecryptorRequest::decode(command.header.clone()).map_err(|error| {
@@ -558,10 +565,7 @@ impl Actor for DecryptorActor {
         event: ActorEvent,
     ) -> Result<EventOutcome, ActorError> {
         let decryptor_event = DecryptorEvent::decode(event.contents).map_err(|error| {
-            warn!(
-                self.get_context().logger(),
-                "DecryptorActor: request cannot be parsed: {}", error
-            );
+            warn!(self.get_context().logger(), "DecryptorActor: event cannot be parsed: {}", error);
             ActorError::Internal
         })?;
 
@@ -613,6 +617,7 @@ fn request_name(request: &DecryptorRequest) -> &'static str {
 fn event_name(request: &DecryptorEvent) -> &'static str {
     match request.event {
         Some(decryptor_event::Event::GenerateKeyEvent(_)) => "GenerateKey",
+        Some(decryptor_event::Event::DecryptEvent(_)) => "Decrypt",
         _ => "Unknown",
     }
 }

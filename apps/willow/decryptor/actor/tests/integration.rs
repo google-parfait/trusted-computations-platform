@@ -64,46 +64,78 @@ mod test {
         decrytpor_response.unwrap()
     }
 
-    #[test]
-    fn test_generate_key() {
+    fn setup_test_cluster() -> FakeCluster<DecryptorActor> {
         let mut cluster = FakeCluster::new(Bytes::new());
-
         cluster.start_node(1, true, DecryptorActor::new());
         cluster.advance_until_elected_leader(None);
-        assert!(cluster.leader_id() == 1);
+        assert_eq!(cluster.leader_id(), 1);
+        cluster
+    }
+
+    fn send_request(
+        cluster: &mut FakeCluster<DecryptorActor>,
+        correlation_id: u64,
+        msg: decryptor_request::Msg,
+    ) -> DecryptorResponse {
+        let request = DecryptorRequest { msg: Some(msg) };
+        cluster.send_app_message(
+            cluster.leader_id(),
+            correlation_id,
+            request.encode_to_vec().into(),
+            Bytes::new(),
+        );
+        advance_until_response(cluster)
+    }
+
+    fn expect_generate_key_response(response: DecryptorResponse) -> GenerateKeyResponse {
+        match response.msg {
+            Some(decryptor_response::Msg::GenerateKey(resp)) => resp,
+            other => panic!("Expected GenerateKeyResponse, got {:?}", other),
+        }
+    }
+
+    fn expect_decrypt_response(response: DecryptorResponse) -> DecryptResponse {
+        match response.msg {
+            Some(decryptor_response::Msg::Decrypt(resp)) => resp,
+            other => panic!("Expected DecryptResponse, got {:?}", other),
+        }
+    }
+
+    fn expect_list_keys_response(response: DecryptorResponse) -> ListKeysResponse {
+        match response.msg {
+            Some(decryptor_response::Msg::ListKeys(resp)) => resp,
+            other => panic!("Expected ListKeysResponse, got {:?}", other),
+        }
+    }
+
+    fn expect_error_response(response: DecryptorResponse) -> Status {
+        match response.msg {
+            Some(decryptor_response::Msg::Error(status)) => status,
+            other => panic!("Expected Error response, got {:?}", other),
+        }
+    }
+
+    #[test]
+    fn test_generate_key() {
+        let mut cluster = setup_test_cluster();
 
         let key_id: Vec<u8> = "key_id".into();
         let expected_session_tag = "test_session_tag".to_string();
         let expected_created_timestamp = prost_types::Timestamp { seconds: 123456789, nanos: 456 };
 
-        let decryptor_generate_key_request = DecryptorRequest {
-            msg: Some(decryptor_request::Msg::GenerateKey(GenerateKeyRequest {
+        let response = send_request(
+            &mut cluster,
+            1,
+            decryptor_request::Msg::GenerateKey(GenerateKeyRequest {
                 key_id: key_id.clone(),
                 session_tag: expected_session_tag.clone(),
                 created_timestamp: Some(expected_created_timestamp.clone()),
                 expiration_timestamp: None,
-            })),
-        };
-
-        cluster.send_app_message(
-            cluster.leader_id(),
-            1,
-            decryptor_generate_key_request.encode_to_vec().into(),
-            Bytes::new(),
+            }),
         );
 
-        let decyrptor_generate_key_response = advance_until_response(&mut cluster);
-        let public_key: Option<Bytes> = decyrptor_generate_key_response.msg.and_then(|msg| {
-            if let decryptor_response::Msg::GenerateKey(generate_key_response) = msg {
-                Some(generate_key_response.public_key.clone().into())
-            } else {
-                None
-            }
-        });
-
-        assert!(public_key.is_some());
-
-        let key = KeyProto::parse(&public_key.unwrap()).unwrap();
+        let gen_resp = expect_generate_key_response(response);
+        let key = KeyProto::parse(&gen_resp.public_key).unwrap();
         assert_eq!(key.key_id(), key_id);
         assert!(!key.key_material().is_empty());
         assert_eq!(key.session_tag().to_str().unwrap(), expected_session_tag);
@@ -115,50 +147,27 @@ mod test {
 
     #[test]
     fn test_generate_key_optional_id() {
-        let mut cluster = FakeCluster::new(Bytes::new());
-
-        cluster.start_node(1, true, DecryptorActor::new());
-        cluster.advance_until_elected_leader(None);
-        assert!(cluster.leader_id() == 1);
+        let mut cluster = setup_test_cluster();
 
         let expected_session_tag = "test_session_tag".to_string();
         let expected_created_timestamp = prost_types::Timestamp { seconds: 123456789, nanos: 456 };
 
-        let decryptor_generate_key_request = DecryptorRequest {
-            msg: Some(decryptor_request::Msg::GenerateKey(GenerateKeyRequest {
+        let response = send_request(
+            &mut cluster,
+            1,
+            decryptor_request::Msg::GenerateKey(GenerateKeyRequest {
                 key_id: vec![],
                 session_tag: expected_session_tag.clone(),
                 created_timestamp: Some(expected_created_timestamp.clone()),
                 expiration_timestamp: None,
-            })),
-        };
-
-        cluster.send_app_message(
-            cluster.leader_id(),
-            1,
-            decryptor_generate_key_request.encode_to_vec().into(),
-            Bytes::new(),
+            }),
         );
 
-        let decyrptor_generate_key_response = advance_until_response(&mut cluster);
-        let (returned_key_id, public_key) = decyrptor_generate_key_response
-            .msg
-            .and_then(|msg| {
-                if let decryptor_response::Msg::GenerateKey(generate_key_response) = msg {
-                    Some((
-                        generate_key_response.key_id.clone(),
-                        generate_key_response.public_key.clone(),
-                    ))
-                } else {
-                    None
-                }
-            })
-            .unwrap();
+        let gen_resp = expect_generate_key_response(response);
+        assert_eq!(gen_resp.key_id.len(), 16);
 
-        assert_eq!(returned_key_id.len(), 16);
-
-        let key = KeyProto::parse(&public_key).unwrap();
-        assert_eq!(key.key_id(), returned_key_id);
+        let key = KeyProto::parse(&gen_resp.public_key).unwrap();
+        assert_eq!(key.key_id(), gen_resp.key_id);
         assert!(!key.key_material().is_empty());
         assert_eq!(key.session_tag().to_str().unwrap(), expected_session_tag);
         assert!(key.has_timestamp());
@@ -169,72 +178,38 @@ mod test {
 
     #[test]
     fn test_generate_key_already_exists_returns_same_key() {
-        let mut cluster = FakeCluster::new(Bytes::new());
-
-        cluster.start_node(1, true, DecryptorActor::new());
-        cluster.advance_until_elected_leader(None);
-        assert!(cluster.leader_id() == 1);
+        let mut cluster = setup_test_cluster();
 
         let key_id: Vec<u8> = "key_id".into();
-        let decryptor_generate_key_request = DecryptorRequest {
-            msg: Some(decryptor_request::Msg::GenerateKey(GenerateKeyRequest {
+        let resp_1 = send_request(
+            &mut cluster,
+            1,
+            decryptor_request::Msg::GenerateKey(GenerateKeyRequest {
                 key_id: key_id.clone(),
                 session_tag: "session_tag".to_string(),
                 created_timestamp: None,
                 expiration_timestamp: None,
-            })),
-        };
-
-        cluster.send_app_message(
-            cluster.leader_id(),
-            1,
-            decryptor_generate_key_request.encode_to_vec().into(),
-            Bytes::new(),
+            }),
         );
 
-        let decyrptor_generate_key_response = advance_until_response(&mut cluster);
-        let public_key: Option<Bytes> = decyrptor_generate_key_response.msg.and_then(|msg| {
-            if let decryptor_response::Msg::GenerateKey(generate_key_response) = msg {
-                Some(generate_key_response.public_key.clone().into())
-            } else {
-                None
-            }
-        });
-
-        assert!(public_key.is_some());
-
-        let key_1 = KeyProto::parse(&public_key.unwrap()).unwrap();
+        let gen_resp_1 = expect_generate_key_response(resp_1);
+        let key_1 = KeyProto::parse(&gen_resp_1.public_key).unwrap();
         assert_eq!(key_1.key_id(), key_id);
         assert!(!key_1.key_material().is_empty());
 
-        let decryptor_generate_key_request = DecryptorRequest {
-            msg: Some(decryptor_request::Msg::GenerateKey(GenerateKeyRequest {
+        let resp_2 = send_request(
+            &mut cluster,
+            1,
+            decryptor_request::Msg::GenerateKey(GenerateKeyRequest {
                 key_id: key_id.clone(),
                 session_tag: "session_tag".to_string(),
                 created_timestamp: None,
                 expiration_timestamp: None,
-            })),
-        };
-
-        cluster.send_app_message(
-            cluster.leader_id(),
-            1,
-            decryptor_generate_key_request.encode_to_vec().into(),
-            Bytes::new(),
+            }),
         );
 
-        let decyrptor_generate_key_response = advance_until_response(&mut cluster);
-        let public_key_2: Option<Bytes> = decyrptor_generate_key_response.msg.and_then(|msg| {
-            if let decryptor_response::Msg::GenerateKey(generate_key_response) = msg {
-                Some(generate_key_response.public_key.clone().into())
-            } else {
-                None
-            }
-        });
-
-        assert!(public_key_2.is_some());
-
-        let key_2 = KeyProto::parse(&public_key_2.unwrap()).unwrap();
+        let gen_resp_2 = expect_generate_key_response(resp_2);
+        let key_2 = KeyProto::parse(&gen_resp_2.public_key).unwrap();
         assert_eq!(key_2.key_id(), key_id);
         assert!(!key_2.key_material().is_empty());
 
@@ -244,41 +219,22 @@ mod test {
     #[test]
     fn test_generate_key_and_decrypt() {
         // Step 1: Generate Key
-        let mut cluster = FakeCluster::new(Bytes::new());
-
-        cluster.start_node(1, true, DecryptorActor::new());
-        cluster.advance_until_elected_leader(None);
-        assert!(cluster.leader_id() == 1);
+        let mut cluster = setup_test_cluster();
 
         let key_id = "key_id";
-        let decryptor_generate_key_request = DecryptorRequest {
-            msg: Some(decryptor_request::Msg::GenerateKey(GenerateKeyRequest {
+        let resp = send_request(
+            &mut cluster,
+            1,
+            decryptor_request::Msg::GenerateKey(GenerateKeyRequest {
                 key_id: key_id.into(),
                 session_tag: "session_tag".to_string(),
                 created_timestamp: None,
                 expiration_timestamp: None,
-            })),
-        };
-
-        cluster.send_app_message(
-            cluster.leader_id(),
-            1,
-            decryptor_generate_key_request.encode_to_vec().into(),
-            Bytes::new(),
+            }),
         );
 
-        let decyrptor_generate_key_response = advance_until_response(&mut cluster);
-        let public_key: Option<Bytes> = decyrptor_generate_key_response.msg.and_then(|msg| {
-            if let decryptor_response::Msg::GenerateKey(generate_key_response) = msg {
-                Some(generate_key_response.public_key.clone().into())
-            } else {
-                None
-            }
-        });
-
-        assert!(public_key.is_some());
-
-        let key = KeyProto::parse(&public_key.unwrap()).unwrap();
+        let gen_resp = expect_generate_key_response(resp);
+        let key = KeyProto::parse(&gen_resp.public_key).unwrap();
         let public_key_share_bytes = key.key_material();
 
         // Step 2: Encrypt a message using the public key
@@ -364,34 +320,20 @@ mod test {
         let pd_ct_bytes = pd_ct_proto.serialize().unwrap().into();
 
         // Step 3: Decrypt the message
-        let decryptor_decrypt_request = DecryptorRequest {
-            msg: Some(decryptor_request::Msg::Decrypt(DecryptRequest {
+        let resp = send_request(
+            &mut cluster,
+            2,
+            decryptor_request::Msg::Decrypt(DecryptRequest {
                 decryption_request: pd_ct_bytes,
                 public_key: "".into(), // Deprecated
                 key_id: key_id.into(),
                 session_tag: "session_tag".to_string(),
-            })),
-        };
-
-        cluster.send_app_message(
-            cluster.leader_id(),
-            2,
-            decryptor_decrypt_request.encode_to_vec().into(),
-            Bytes::new(),
+            }),
         );
 
-        let decryptor_decrypt_response = advance_until_response(&mut cluster);
-        let pd_bytes: Option<Bytes> = decryptor_decrypt_response.msg.and_then(|msg| {
-            if let decryptor_response::Msg::Decrypt(decrypt_response) = msg {
-                Some(decrypt_response.decryption_response.clone().into())
-            } else {
-                None
-            }
-        });
-
-        assert!(pd_bytes.is_some());
-
-        let pd_proto = PartialDecryptionResponseProto::parse(&pd_bytes.unwrap()).unwrap();
+        let decrypt_resp = expect_decrypt_response(resp);
+        let pd_proto =
+            PartialDecryptionResponseProto::parse(&decrypt_resp.decryption_response).unwrap();
         let pd: PartialDecryptionResponse<ShellKahe, ShellVahe> =
             PartialDecryptionResponse::from_proto(pd_proto, &server).unwrap();
 
@@ -411,41 +353,22 @@ mod test {
     #[test]
     fn test_decrypt_invalid_key_id() {
         // Step 1: Generate Key
-        let mut cluster = FakeCluster::new(Bytes::new());
-
-        cluster.start_node(1, true, DecryptorActor::new());
-        cluster.advance_until_elected_leader(None);
-        assert!(cluster.leader_id() == 1);
+        let mut cluster = setup_test_cluster();
 
         let key_id = "key_id";
-        let decryptor_generate_key_request = DecryptorRequest {
-            msg: Some(decryptor_request::Msg::GenerateKey(GenerateKeyRequest {
+        let resp = send_request(
+            &mut cluster,
+            1,
+            decryptor_request::Msg::GenerateKey(GenerateKeyRequest {
                 key_id: key_id.into(),
                 session_tag: "session_tag".to_string(),
                 created_timestamp: None,
                 expiration_timestamp: None,
-            })),
-        };
-
-        cluster.send_app_message(
-            cluster.leader_id(),
-            1,
-            decryptor_generate_key_request.encode_to_vec().into(),
-            Bytes::new(),
+            }),
         );
 
-        let decyrptor_generate_key_response = advance_until_response(&mut cluster);
-        let public_key: Option<Bytes> = decyrptor_generate_key_response.msg.and_then(|msg| {
-            if let decryptor_response::Msg::GenerateKey(generate_key_response) = msg {
-                Some(generate_key_response.public_key.clone().into())
-            } else {
-                None
-            }
-        });
-
-        assert!(public_key.is_some());
-
-        let key = KeyProto::parse(&public_key.unwrap()).unwrap();
+        let gen_resp = expect_generate_key_response(resp);
+        let key = KeyProto::parse(&gen_resp.public_key).unwrap();
         let public_key_share_bytes = key.key_material();
 
         // Step 2: Encrypt a message using the public key
@@ -528,28 +451,19 @@ mod test {
 
         // Step 3: Attempt to Decrypt the message with invalid key id
         let key_id = "unknown key id";
-        let decryptor_decrypt_request = DecryptorRequest {
-            msg: Some(decryptor_request::Msg::Decrypt(DecryptRequest {
+        let resp = send_request(
+            &mut cluster,
+            2,
+            decryptor_request::Msg::Decrypt(DecryptRequest {
                 decryption_request: pd_ct_bytes,
                 public_key: "".into(), // Deprecated
                 key_id: key_id.into(),
                 session_tag: "session_tag".to_string(),
-            })),
-        };
-
-        cluster.send_app_message(
-            cluster.leader_id(),
-            2,
-            decryptor_decrypt_request.encode_to_vec().into(),
-            Bytes::new(),
+            }),
         );
 
-        let decryptor_decrypt_response = advance_until_response(&mut cluster);
-        let (error_code, error_message) = match decryptor_decrypt_response.msg {
-            Some(decryptor_response::Msg::Error(error)) => (error.code, error.message),
-            Some(_) => (0, "".to_string()),
-            None => (0, "".to_string()),
-        };
+        let status = expect_error_response(resp);
+        let (error_code, error_message) = (status.code, status.message);
 
         assert_eq!(error_code, 9);
         assert_eq!(
@@ -561,41 +475,22 @@ mod test {
     #[test]
     fn test_attempt_at_second_decryption_fails() {
         // Step 1: Generate Key
-        let mut cluster = FakeCluster::new(Bytes::new());
-
-        cluster.start_node(1, true, DecryptorActor::new());
-        cluster.advance_until_elected_leader(None);
-        assert!(cluster.leader_id() == 1);
+        let mut cluster = setup_test_cluster();
 
         let key_id = "key_id";
-        let decryptor_generate_key_request = DecryptorRequest {
-            msg: Some(decryptor_request::Msg::GenerateKey(GenerateKeyRequest {
+        let resp = send_request(
+            &mut cluster,
+            1,
+            decryptor_request::Msg::GenerateKey(GenerateKeyRequest {
                 key_id: key_id.into(),
                 session_tag: "session_tag".to_string(),
                 created_timestamp: None,
                 expiration_timestamp: None,
-            })),
-        };
-
-        cluster.send_app_message(
-            cluster.leader_id(),
-            1,
-            decryptor_generate_key_request.encode_to_vec().into(),
-            Bytes::new(),
+            }),
         );
 
-        let decyrptor_generate_key_response = advance_until_response(&mut cluster);
-        let public_key: Option<Bytes> = decyrptor_generate_key_response.msg.and_then(|msg| {
-            if let decryptor_response::Msg::GenerateKey(generate_key_response) = msg {
-                Some(generate_key_response.public_key.clone().into())
-            } else {
-                None
-            }
-        });
-
-        assert!(public_key.is_some());
-
-        let key = KeyProto::parse(&public_key.unwrap()).unwrap();
+        let gen_resp = expect_generate_key_response(resp);
+        let key = KeyProto::parse(&gen_resp.public_key).unwrap();
         let public_key_share_bytes = key.key_material();
 
         // Step 2: Encrypt a message using the public key
@@ -677,47 +572,20 @@ mod test {
         let pd_ct_bytes = pd_ct_proto.serialize().unwrap().into();
 
         // Step 3: Decrypt the message
-        let decryptor_decrypt_request = DecryptorRequest {
-            msg: Some(decryptor_request::Msg::Decrypt(DecryptRequest {
-                decryption_request: pd_ct_bytes,
-                public_key: "".into(), // Deprecated
-                key_id: key_id.into(),
-                session_tag: "session_tag".to_string(),
-            })),
-        };
-
-        cluster.send_app_message(
-            cluster.leader_id(),
-            2,
-            decryptor_decrypt_request.encode_to_vec().into(),
-            Bytes::new(),
-        );
-
-        let decryptor_decrypt_response = advance_until_response(&mut cluster);
-        let pd_bytes: Option<Bytes> = decryptor_decrypt_response.msg.and_then(|msg| {
-            if let decryptor_response::Msg::Decrypt(decrypt_response) = msg {
-                Some(decrypt_response.decryption_response.clone().into())
-            } else {
-                None
-            }
+        let decrypt_msg = decryptor_request::Msg::Decrypt(DecryptRequest {
+            decryption_request: pd_ct_bytes,
+            public_key: "".into(), // Deprecated
+            key_id: key_id.into(),
+            session_tag: "session_tag".to_string(),
         });
 
-        assert!(pd_bytes.is_some());
+        let resp_1 = send_request(&mut cluster, 2, decrypt_msg.clone());
+        let _decrypt_resp = expect_decrypt_response(resp_1);
 
         // Step 4: Send second decryption request which should fail
-        cluster.send_app_message(
-            cluster.leader_id(),
-            2,
-            decryptor_decrypt_request.encode_to_vec().into(),
-            Bytes::new(),
-        );
-
-        let decryptor_decrypt_response = advance_until_response(&mut cluster);
-        let (error_code, error_message) = match decryptor_decrypt_response.msg {
-            Some(decryptor_response::Msg::Error(error)) => (error.code, error.message),
-            Some(_) => (0, "".to_string()),
-            None => (0, "".to_string()),
-        };
+        let resp_2 = send_request(&mut cluster, 2, decrypt_msg);
+        let status = expect_error_response(resp_2);
+        let (error_code, error_message) = (status.code, status.message);
 
         assert_eq!(error_code, 9);
         assert_eq!(
@@ -728,96 +596,60 @@ mod test {
 
     #[test]
     fn test_list_keys() {
-        let mut cluster = FakeCluster::new(Bytes::new());
-
-        cluster.start_node(1, true, DecryptorActor::new());
-        cluster.advance_until_elected_leader(None);
-        assert!(cluster.leader_id() == 1);
+        let mut cluster = setup_test_cluster();
 
         let key_id_1: Vec<u8> = "key_id_1".into();
         let key_id_2: Vec<u8> = "key_id_2".into();
         let key_id_3: Vec<u8> = "key_id_3".into();
 
         // 1. Generate key 1 with session_tag_1 (timestamp: 200)
-        let generate_key_request_1 = DecryptorRequest {
-            msg: Some(decryptor_request::Msg::GenerateKey(GenerateKeyRequest {
+        let resp_1 = send_request(
+            &mut cluster,
+            1,
+            decryptor_request::Msg::GenerateKey(GenerateKeyRequest {
                 key_id: key_id_1.clone(),
                 session_tag: "session_tag_1".to_string(),
                 created_timestamp: Some(prost_types::Timestamp { seconds: 200, nanos: 0 }),
                 expiration_timestamp: None,
-            })),
-        };
-        cluster.send_app_message(
-            cluster.leader_id(),
-            1,
-            generate_key_request_1.encode_to_vec().into(),
-            Bytes::new(),
+            }),
         );
-        let response_1 = advance_until_response(&mut cluster);
-        let key_1_bytes = match response_1.msg {
-            Some(decryptor_response::Msg::GenerateKey(resp)) => resp.public_key,
-            _ => panic!("Expected GenerateKeyResponse"),
-        };
+        let key_1_bytes = expect_generate_key_response(resp_1).public_key;
 
         // 2. Generate key 2 with session_tag_1 (timestamp: 100)
-        let generate_key_request_2 = DecryptorRequest {
-            msg: Some(decryptor_request::Msg::GenerateKey(GenerateKeyRequest {
+        let resp_2 = send_request(
+            &mut cluster,
+            2,
+            decryptor_request::Msg::GenerateKey(GenerateKeyRequest {
                 key_id: key_id_2.clone(),
                 session_tag: "session_tag_1".to_string(),
                 created_timestamp: Some(prost_types::Timestamp { seconds: 100, nanos: 0 }),
                 expiration_timestamp: None,
-            })),
-        };
-        cluster.send_app_message(
-            cluster.leader_id(),
-            2,
-            generate_key_request_2.encode_to_vec().into(),
-            Bytes::new(),
+            }),
         );
-        let response_2 = advance_until_response(&mut cluster);
-        let key_2_bytes = match response_2.msg {
-            Some(decryptor_response::Msg::GenerateKey(resp)) => resp.public_key,
-            _ => panic!("Expected GenerateKeyResponse"),
-        };
+        let key_2_bytes = expect_generate_key_response(resp_2).public_key;
 
         // 3. Generate key 3 with session_tag_2
-        let generate_key_request_3 = DecryptorRequest {
-            msg: Some(decryptor_request::Msg::GenerateKey(GenerateKeyRequest {
+        let resp_3 = send_request(
+            &mut cluster,
+            3,
+            decryptor_request::Msg::GenerateKey(GenerateKeyRequest {
                 key_id: key_id_3.clone(),
                 session_tag: "session_tag_2".to_string(),
                 created_timestamp: None,
                 expiration_timestamp: None,
-            })),
-        };
-        cluster.send_app_message(
-            cluster.leader_id(),
-            3,
-            generate_key_request_3.encode_to_vec().into(),
-            Bytes::new(),
+            }),
         );
-        let response_3 = advance_until_response(&mut cluster);
-        let key_3_bytes = match response_3.msg {
-            Some(decryptor_response::Msg::GenerateKey(resp)) => resp.public_key,
-            _ => panic!("Expected GenerateKeyResponse"),
-        };
+        let key_3_bytes = expect_generate_key_response(resp_3).public_key;
 
         // 4. List keys for session_tag_1
-        let list_keys_request_1 = DecryptorRequest {
-            msg: Some(decryptor_request::Msg::ListKeys(ListKeysRequest {
-                session_tag: "session_tag_1".to_string(),
-            })),
-        };
-        cluster.send_app_message(
-            cluster.leader_id(),
+        let resp_list_1 = send_request(
+            &mut cluster,
             4,
-            list_keys_request_1.encode_to_vec().into(),
-            Bytes::new(),
+            decryptor_request::Msg::ListKeys(ListKeysRequest {
+                session_tag: "session_tag_1".to_string(),
+            }),
         );
-        let response_list_1 = advance_until_response(&mut cluster);
-        let public_keys_1 = match response_list_1.msg {
-            Some(decryptor_response::Msg::ListKeys(resp)) => resp.public_keys,
-            _ => panic!("Expected ListKeysResponse"),
-        };
+        let public_keys_1 = expect_list_keys_response(resp_list_1).public_keys;
         assert_eq!(public_keys_1.len(), 2);
         // Assert sorting order: key 2 (timestamp 100) must be first, key 1 (timestamp
         // 200) second.
@@ -825,78 +657,44 @@ mod test {
         assert_eq!(public_keys_1[1], key_1_bytes);
 
         // 5. List keys for session_tag_2
-        let list_keys_request_2 = DecryptorRequest {
-            msg: Some(decryptor_request::Msg::ListKeys(ListKeysRequest {
-                session_tag: "session_tag_2".to_string(),
-            })),
-        };
-        cluster.send_app_message(
-            cluster.leader_id(),
+        let resp_list_2 = send_request(
+            &mut cluster,
             5,
-            list_keys_request_2.encode_to_vec().into(),
-            Bytes::new(),
+            decryptor_request::Msg::ListKeys(ListKeysRequest {
+                session_tag: "session_tag_2".to_string(),
+            }),
         );
-        let response_list_2 = advance_until_response(&mut cluster);
-        let public_keys_2 = match response_list_2.msg {
-            Some(decryptor_response::Msg::ListKeys(resp)) => resp.public_keys,
-            _ => panic!("Expected ListKeysResponse"),
-        };
+        let public_keys_2 = expect_list_keys_response(resp_list_2).public_keys;
         assert_eq!(public_keys_2.len(), 1);
         assert_eq!(public_keys_2[0], key_3_bytes);
     }
 
     #[test]
     fn test_list_keys_unknown_session_tag_returns_empty() {
-        let mut cluster = FakeCluster::new(Bytes::new());
+        let mut cluster = setup_test_cluster();
 
-        cluster.start_node(1, true, DecryptorActor::new());
-        cluster.advance_until_elected_leader(None);
-        assert!(cluster.leader_id() == 1);
-
-        let list_keys_request = DecryptorRequest {
-            msg: Some(decryptor_request::Msg::ListKeys(ListKeysRequest {
-                session_tag: "unknown_session_tag".to_string(),
-            })),
-        };
-        cluster.send_app_message(
-            cluster.leader_id(),
+        let resp = send_request(
+            &mut cluster,
             1,
-            list_keys_request.encode_to_vec().into(),
-            Bytes::new(),
+            decryptor_request::Msg::ListKeys(ListKeysRequest {
+                session_tag: "unknown_session_tag".to_string(),
+            }),
         );
-        let response = advance_until_response(&mut cluster);
-        let public_keys = match response.msg {
-            Some(decryptor_response::Msg::ListKeys(resp)) => resp.public_keys,
-            _ => panic!("Expected ListKeysResponse"),
-        };
+        let public_keys = expect_list_keys_response(resp).public_keys;
         assert!(public_keys.is_empty());
     }
 
     #[test]
     fn test_list_keys_empty_session_tag_returns_error() {
-        let mut cluster = FakeCluster::new(Bytes::new());
+        let mut cluster = setup_test_cluster();
 
-        cluster.start_node(1, true, DecryptorActor::new());
-        cluster.advance_until_elected_leader(None);
-        assert!(cluster.leader_id() == 1);
-
-        let list_keys_request = DecryptorRequest {
-            msg: Some(decryptor_request::Msg::ListKeys(ListKeysRequest {
-                session_tag: "".to_string(),
-            })),
-        };
-        cluster.send_app_message(
-            cluster.leader_id(),
+        let resp = send_request(
+            &mut cluster,
             1,
-            list_keys_request.encode_to_vec().into(),
-            Bytes::new(),
+            decryptor_request::Msg::ListKeys(ListKeysRequest { session_tag: "".to_string() }),
         );
-        let response = advance_until_response(&mut cluster);
-        let (error_code, error_message) = match response.msg {
-            Some(decryptor_response::Msg::Error(error)) => (error.code, error.message),
-            _ => panic!("Expected Error Response"),
-        };
-        assert_eq!(error_code, 3); // StatusCode::InvalidArgument
-        assert_eq!(error_message, "Session tag cannot be empty");
+        let status = expect_error_response(resp);
+        assert_eq!(status.code, 3); // StatusCode::InvalidArgument
+        assert_eq!(status.message, "Session tag cannot be empty");
     }
 }
