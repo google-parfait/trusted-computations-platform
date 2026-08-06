@@ -29,7 +29,6 @@ rust_binary(
         "@oak_crates_index//:log",
         "@oak_crates_index//:tokio",
         "@oak_crates_index//:tonic",
-        "@secure_aggregation//willow/protocol:willow_v1_decryptor",
     ],
 )
 

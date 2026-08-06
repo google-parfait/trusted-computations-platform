@@ -19,20 +19,24 @@ extern crate willow_decryptor_service;
 
 mod test {
 
+    use accumulator_traits::CiphertextAccumulator;
     use aggregation_config::AggregationConfig;
     use ahe_traits::AheBase;
-    use client_traits::SecureAggregationClient;
+    use client_traits::Client;
+    use default_accumulator::{CiphertextAccumulatorState, DefaultCiphertextAccumulator};
+    use default_client::DefaultClient;
+    use default_verifier::{DefaultVerifier, VerifierState};
     use kahe_traits::KaheBase;
     use key_rust_proto::Key as KeyProto;
-    use messages::{DecryptorPublicKeyShare, PartialDecryptionResponse};
+    use messages::{DecryptorPublicKey, FinalizedPartialDecryption, PartialDecryptionResponse};
     use messages_rust_proto::PartialDecryptionResponse as PartialDecryptionResponseProto;
     use prost::bytes::Bytes;
     use prost::Message;
+    use prost_types::Timestamp;
     use proto_serialization_traits::{FromProto, ToProto};
     use protobuf::prelude::*;
     use secure_aggregation::proto::*;
-    use server_traits::SecureAggregationServer;
-    use shell_ciphertexts_rust_proto::ShellAhePublicKeyShare;
+    use shell_ciphertexts_rust_proto::ShellAhePublicKey;
     use shell_kahe::ShellKahe;
     use shell_parameters::{create_shell_ahe_config, create_shell_kahe_config};
     use shell_vahe::ShellVahe;
@@ -40,12 +44,9 @@ mod test {
     use std::rc::Rc;
     use tcp_integration::harness::*;
     use tcp_proto::runtime::endpoint::out_message;
-    use verifier_traits::SecureAggregationVerifier;
+    use vahe_traits::HasVahe;
+    use verifier_traits::Verifier;
     use willow_decryptor_service::actor::DecryptorActor;
-    use willow_v1_client::WillowV1Client;
-    use willow_v1_decryptor::WillowV1Decryptor;
-    use willow_v1_server::{ServerState, WillowV1Server};
-    use willow_v1_verifier::{VerifierState, WillowV1Verifier};
 
     fn advance_until_response(cluster: &mut FakeCluster<DecryptorActor>) -> DecryptorResponse {
         let mut decrytpor_response: Option<DecryptorResponse> = None;
@@ -121,7 +122,7 @@ mod test {
 
         let key_id: Vec<u8> = "key_id".into();
         let expected_session_tag = "test_session_tag".to_string();
-        let expected_created_timestamp = prost_types::Timestamp { seconds: 123456789, nanos: 456 };
+        let expected_created_timestamp = Timestamp { seconds: 123456789, nanos: 456 };
 
         let response = send_request(
             &mut cluster,
@@ -150,7 +151,7 @@ mod test {
         let mut cluster = setup_test_cluster();
 
         let expected_session_tag = "test_session_tag".to_string();
-        let expected_created_timestamp = prost_types::Timestamp { seconds: 123456789, nanos: 456 };
+        let expected_created_timestamp = Timestamp { seconds: 123456789, nanos: 456 };
 
         let response = send_request(
             &mut cluster,
@@ -235,7 +236,7 @@ mod test {
 
         let gen_resp = expect_generate_key_response(resp);
         let key = KeyProto::parse(&gen_resp.public_key).unwrap();
-        let public_key_share_bytes = key.key_material();
+        let public_key_bytes = key.key_material();
 
         // Step 2: Encrypt a message using the public key
         let default_id = String::from("default");
@@ -266,34 +267,21 @@ mod test {
 
         // Create client.
         let client =
-            WillowV1Client::new_with_randomly_generated_seed(Rc::clone(&kahe), Rc::clone(&vahe))
+            DefaultClient::new_with_randomly_generated_seed(Rc::clone(&kahe), Rc::clone(&vahe))
                 .unwrap();
 
-        // Create decryptor
-        let decryptor =
-            WillowV1Decryptor::new_with_randomly_generated_seed(Rc::clone(&vahe)).unwrap();
-
-        // Create server.
-        let server = WillowV1Server { kahe: Rc::clone(&kahe), vahe: Rc::clone(&vahe) };
-        let mut server_state = ServerState::default();
+        // Create accumulator.
+        let accumulator =
+            DefaultCiphertextAccumulator { kahe: Rc::clone(&kahe), vahe: Rc::clone(&vahe) };
+        let mut accumulator_state = CiphertextAccumulatorState::default();
 
         // Create verifier.
-        let verifier = WillowV1Verifier { vahe: Rc::clone(&vahe) };
+        let verifier = DefaultVerifier { vahe: Rc::clone(&vahe) };
         let mut verifier_state = VerifierState::default();
 
-        let public_key_share_proto =
-            ShellAhePublicKeyShare::parse(&public_key_share_bytes).unwrap();
-        let public_key_share: DecryptorPublicKeyShare<ShellVahe> =
-            DecryptorPublicKeyShare::<ShellVahe>::from_proto(
-                public_key_share_proto,
-                &decryptor.vahe.as_ref(),
-            )
-            .unwrap();
-
-        server
-            .handle_decryptor_public_key_share(public_key_share, "Decryptor 0", &mut server_state)
-            .unwrap();
-        let public_key = server.create_decryptor_public_key(&server_state).unwrap();
+        let public_key_proto = ShellAhePublicKey::parse(&public_key_bytes).unwrap();
+        let public_key: DecryptorPublicKey<ShellVahe> =
+            DecryptorPublicKey::<ShellVahe>::from_proto(public_key_proto, verifier.vahe()).unwrap();
 
         let client_plaintext = HashMap::from([(
             default_id.clone(),
@@ -309,10 +297,12 @@ mod test {
             .unwrap();
 
         let (ciphertext_contribution, decryption_request_contribution) =
-            server.split_client_message(client_message).unwrap();
+            accumulator.split_client_message(client_message).unwrap();
 
         verifier.verify_and_include(decryption_request_contribution, &mut verifier_state).unwrap();
-        server.handle_ciphertext_contribution(ciphertext_contribution, &mut server_state).unwrap();
+        accumulator
+            .accumulate_ciphertext_contribution(ciphertext_contribution, &mut accumulator_state)
+            .unwrap();
 
         // Verifier creates the partial decryption request.
         let pd_ct = verifier.create_partial_decryption_request(verifier_state).unwrap();
@@ -328,20 +318,20 @@ mod test {
                 public_key: "".into(), // Deprecated
                 key_id: key_id.into(),
                 session_tag: "session_tag".to_string(),
+                current_timestamp: None,
             }),
         );
 
         let decrypt_resp = expect_decrypt_response(resp);
         let pd_proto =
             PartialDecryptionResponseProto::parse(&decrypt_resp.decryption_response).unwrap();
-        let pd: PartialDecryptionResponse<ShellKahe, ShellVahe> =
-            PartialDecryptionResponse::from_proto(pd_proto, &server).unwrap();
+        let pd = PartialDecryptionResponse::from_proto(pd_proto, &accumulator).unwrap();
 
-        // Server handles the partial decryption.
-        server.handle_partial_decryption(pd, &mut server_state).unwrap();
-
-        // Server recovers the aggregation result.
-        let aggregation_result = server.recover_aggregation_result(&server_state).unwrap();
+        // Accumulator recovers the aggregation result.
+        let finalized_pd =
+            FinalizedPartialDecryption { partial_decryption_sum: pd.partial_decryption };
+        let aggregation_result =
+            accumulator.recover_aggregation_result(&accumulator_state, &finalized_pd).unwrap();
 
         let client_plaintext_length = client_plaintext.get(default_id.as_str()).unwrap().len();
         assert_eq!(
@@ -369,7 +359,7 @@ mod test {
 
         let gen_resp = expect_generate_key_response(resp);
         let key = KeyProto::parse(&gen_resp.public_key).unwrap();
-        let public_key_share_bytes = key.key_material();
+        let public_key_bytes = key.key_material();
 
         // Step 2: Encrypt a message using the public key
         let default_id = String::from("default");
@@ -400,30 +390,21 @@ mod test {
 
         // Create client.
         let client =
-            WillowV1Client::new_with_randomly_generated_seed(Rc::clone(&kahe), Rc::clone(&vahe))
+            DefaultClient::new_with_randomly_generated_seed(Rc::clone(&kahe), Rc::clone(&vahe))
                 .unwrap();
 
-        // Create server.
-        let server = WillowV1Server { kahe: Rc::clone(&kahe), vahe: Rc::clone(&vahe) };
-        let mut server_state = ServerState::default();
+        // Create accumulator.
+        let accumulator =
+            DefaultCiphertextAccumulator { kahe: Rc::clone(&kahe), vahe: Rc::clone(&vahe) };
+        let mut accumulator_state = CiphertextAccumulatorState::default();
 
         // Create verifier.
-        let verifier = WillowV1Verifier { vahe: Rc::clone(&vahe) };
+        let verifier = DefaultVerifier { vahe: Rc::clone(&vahe) };
         let mut verifier_state = VerifierState::default();
 
-        let public_key_share_proto =
-            ShellAhePublicKeyShare::parse(&public_key_share_bytes).unwrap();
-        let public_key_share: DecryptorPublicKeyShare<ShellVahe> =
-            DecryptorPublicKeyShare::<ShellVahe>::from_proto(
-                public_key_share_proto,
-                &server.vahe.as_ref(),
-            )
-            .unwrap();
-
-        server
-            .handle_decryptor_public_key_share(public_key_share, "Decryptor 0", &mut server_state)
-            .unwrap();
-        let public_key = server.create_decryptor_public_key(&server_state).unwrap();
+        let public_key_proto = ShellAhePublicKey::parse(&public_key_bytes).unwrap();
+        let public_key: DecryptorPublicKey<ShellVahe> =
+            DecryptorPublicKey::<ShellVahe>::from_proto(public_key_proto, verifier.vahe()).unwrap();
 
         let client_plaintext = HashMap::from([(
             default_id.clone(),
@@ -439,10 +420,12 @@ mod test {
             .unwrap();
 
         let (ciphertext_contribution, decryption_request_contribution) =
-            server.split_client_message(client_message).unwrap();
+            accumulator.split_client_message(client_message).unwrap();
 
         verifier.verify_and_include(decryption_request_contribution, &mut verifier_state).unwrap();
-        server.handle_ciphertext_contribution(ciphertext_contribution, &mut server_state).unwrap();
+        accumulator
+            .accumulate_ciphertext_contribution(ciphertext_contribution, &mut accumulator_state)
+            .unwrap();
 
         // Verifier creates the partial decryption request.
         let pd_ct = verifier.create_partial_decryption_request(verifier_state).unwrap();
@@ -459,6 +442,7 @@ mod test {
                 public_key: "".into(), // Deprecated
                 key_id: key_id.into(),
                 session_tag: "session_tag".to_string(),
+                current_timestamp: None,
             }),
         );
 
@@ -491,7 +475,7 @@ mod test {
 
         let gen_resp = expect_generate_key_response(resp);
         let key = KeyProto::parse(&gen_resp.public_key).unwrap();
-        let public_key_share_bytes = key.key_material();
+        let public_key_bytes = key.key_material();
 
         // Step 2: Encrypt a message using the public key
         let default_id = String::from("default");
@@ -522,30 +506,21 @@ mod test {
 
         // Create client.
         let client =
-            WillowV1Client::new_with_randomly_generated_seed(Rc::clone(&kahe), Rc::clone(&vahe))
+            DefaultClient::new_with_randomly_generated_seed(Rc::clone(&kahe), Rc::clone(&vahe))
                 .unwrap();
 
-        // Create server.
-        let server = WillowV1Server { kahe: Rc::clone(&kahe), vahe: Rc::clone(&vahe) };
-        let mut server_state = ServerState::default();
+        // Create accumulator.
+        let accumulator =
+            DefaultCiphertextAccumulator { kahe: Rc::clone(&kahe), vahe: Rc::clone(&vahe) };
+        let mut accumulator_state = CiphertextAccumulatorState::default();
 
         // Create verifier.
-        let verifier = WillowV1Verifier { vahe: Rc::clone(&vahe) };
+        let verifier = DefaultVerifier { vahe: Rc::clone(&vahe) };
         let mut verifier_state = VerifierState::default();
 
-        let public_key_share_proto =
-            ShellAhePublicKeyShare::parse(&public_key_share_bytes).unwrap();
-        let public_key_share: DecryptorPublicKeyShare<ShellVahe> =
-            DecryptorPublicKeyShare::<ShellVahe>::from_proto(
-                public_key_share_proto,
-                &server.vahe.as_ref(),
-            )
-            .unwrap();
-
-        server
-            .handle_decryptor_public_key_share(public_key_share, "Decryptor 0", &mut server_state)
-            .unwrap();
-        let public_key = server.create_decryptor_public_key(&server_state).unwrap();
+        let public_key_proto = ShellAhePublicKey::parse(&public_key_bytes).unwrap();
+        let public_key: DecryptorPublicKey<ShellVahe> =
+            DecryptorPublicKey::<ShellVahe>::from_proto(public_key_proto, verifier.vahe()).unwrap();
 
         let client_plaintext = HashMap::from([(
             default_id.clone(),
@@ -561,10 +536,12 @@ mod test {
             .unwrap();
 
         let (ciphertext_contribution, decryption_request_contribution) =
-            server.split_client_message(client_message).unwrap();
+            accumulator.split_client_message(client_message).unwrap();
 
         verifier.verify_and_include(decryption_request_contribution, &mut verifier_state).unwrap();
-        server.handle_ciphertext_contribution(ciphertext_contribution, &mut server_state).unwrap();
+        accumulator
+            .accumulate_ciphertext_contribution(ciphertext_contribution, &mut accumulator_state)
+            .unwrap();
 
         // Verifier creates the partial decryption request.
         let pd_ct = verifier.create_partial_decryption_request(verifier_state).unwrap();
@@ -577,6 +554,7 @@ mod test {
             public_key: "".into(), // Deprecated
             key_id: key_id.into(),
             session_tag: "session_tag".to_string(),
+            current_timestamp: None,
         });
 
         let resp_1 = send_request(&mut cluster, 2, decrypt_msg.clone());
@@ -609,7 +587,7 @@ mod test {
             decryptor_request::Msg::GenerateKey(GenerateKeyRequest {
                 key_id: key_id_1.clone(),
                 session_tag: "session_tag_1".to_string(),
-                created_timestamp: Some(prost_types::Timestamp { seconds: 200, nanos: 0 }),
+                created_timestamp: Some(Timestamp { seconds: 200, nanos: 0 }),
                 expiration_timestamp: None,
             }),
         );
@@ -622,7 +600,7 @@ mod test {
             decryptor_request::Msg::GenerateKey(GenerateKeyRequest {
                 key_id: key_id_2.clone(),
                 session_tag: "session_tag_1".to_string(),
-                created_timestamp: Some(prost_types::Timestamp { seconds: 100, nanos: 0 }),
+                created_timestamp: Some(Timestamp { seconds: 100, nanos: 0 }),
                 expiration_timestamp: None,
             }),
         );
@@ -647,6 +625,7 @@ mod test {
             4,
             decryptor_request::Msg::ListKeys(ListKeysRequest {
                 session_tag: "session_tag_1".to_string(),
+                current_timestamp: None,
             }),
         );
         let public_keys_1 = expect_list_keys_response(resp_list_1).public_keys;
@@ -662,6 +641,7 @@ mod test {
             5,
             decryptor_request::Msg::ListKeys(ListKeysRequest {
                 session_tag: "session_tag_2".to_string(),
+                current_timestamp: None,
             }),
         );
         let public_keys_2 = expect_list_keys_response(resp_list_2).public_keys;
@@ -678,6 +658,7 @@ mod test {
             1,
             decryptor_request::Msg::ListKeys(ListKeysRequest {
                 session_tag: "unknown_session_tag".to_string(),
+                current_timestamp: None,
             }),
         );
         let public_keys = expect_list_keys_response(resp).public_keys;
@@ -691,7 +672,10 @@ mod test {
         let resp = send_request(
             &mut cluster,
             1,
-            decryptor_request::Msg::ListKeys(ListKeysRequest { session_tag: "".to_string() }),
+            decryptor_request::Msg::ListKeys(ListKeysRequest {
+                session_tag: "".to_string(),
+                current_timestamp: None,
+            }),
         );
         let status = expect_error_response(resp);
         assert_eq!(status.code, 3); // StatusCode::InvalidArgument

@@ -27,47 +27,41 @@ use willow_decryptor_service::actor::DecryptorActor;
 
 fn get_reference_values() -> ReferenceValues {
     let skip = BinaryReferenceValue {
-        r#type: Some(binary_reference_value::Type::Skip(
-            SkipVerification::default(),
-        )),
+        r#type: Some(binary_reference_value::Type::Skip(SkipVerification::default())),
     };
     ReferenceValues {
-        r#type: Some(reference_values::Type::OakContainers(
-            OakContainersReferenceValues {
-                root_layer: Some(RootLayerReferenceValues {
-                    insecure: Some(InsecureReferenceValues::default()),
-                    ..Default::default()
+        r#type: Some(reference_values::Type::OakContainers(OakContainersReferenceValues {
+            root_layer: Some(RootLayerReferenceValues {
+                insecure: Some(InsecureReferenceValues::default()),
+                ..Default::default()
+            }),
+            kernel_layer: Some(KernelLayerReferenceValues {
+                kernel: Some(KernelBinaryReferenceValue {
+                    r#type: Some(kernel_binary_reference_value::Type::Skip(
+                        SkipVerification::default(),
+                    )),
                 }),
-                kernel_layer: Some(KernelLayerReferenceValues {
-                    kernel: Some(KernelBinaryReferenceValue {
-                        r#type: Some(kernel_binary_reference_value::Type::Skip(
-                            SkipVerification::default(),
-                        )),
-                    }),
-                    kernel_cmd_line_text: Some(TextReferenceValue {
-                        r#type: Some(text_reference_value::Type::Skip(SkipVerification::default())),
-                    }),
-                    init_ram_fs: Some(skip.clone()),
-                    memory_map: Some(skip.clone()),
-                    acpi: Some(skip.clone()),
-                    ..Default::default()
+                kernel_cmd_line_text: Some(TextReferenceValue {
+                    r#type: Some(text_reference_value::Type::Skip(SkipVerification::default())),
                 }),
-                system_layer: Some(SystemLayerReferenceValues {
-                    system_image: Some(skip.clone()),
-                }),
-                container_layer: Some(ContainerLayerReferenceValues {
-                    binary: Some(skip.clone()),
-                    configuration: Some(skip.clone()),
-                }),
-            },
-        )),
+                init_ram_fs: Some(skip.clone()),
+                memory_map: Some(skip.clone()),
+                acpi: Some(skip.clone()),
+                ..Default::default()
+            }),
+            system_layer: Some(SystemLayerReferenceValues { system_image: Some(skip.clone()) }),
+            container_layer: Some(ContainerLayerReferenceValues {
+                binary: Some(skip.clone()),
+                configuration: Some(skip.clone()),
+            }),
+        })),
     }
 }
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
-    // Only log warnings and errors to reduce the risk of accidentally leaking execution
-    // information through debug logs.
+    // Only log warnings and errors to reduce the risk of accidentally leaking
+    // execution information through debug logs.
     log::set_max_level(log::LevelFilter::Warn);
 
     let channel = oak_sdk_containers::default_orchestrator_channel()
@@ -80,14 +74,11 @@ async fn main() -> anyhow::Result<()> {
         .context("failed to get endorsed evidence")?
         .evidence
         .ok_or_else(|| anyhow!("EndorsedEvidence.evidence not set"))?;
-    let service = TonicApplicationService::new(channel, evidence, /*logger=*/ None, || {
+    let service = TonicApplicationService::new(channel, evidence, /* logger= */ None, || {
         DecryptorActor::new_with_reference_values(get_reference_values())
     });
 
-    orchestrator_client
-        .notify_app_ready()
-        .await
-        .context("failed to notify that app is ready")?;
+    orchestrator_client.notify_app_ready().await.context("failed to notify that app is ready")?;
     tonic::transport::Server::builder()
         .add_service(EndpointServiceServer::new(service))
         .serve("[::]:8080".parse()?)

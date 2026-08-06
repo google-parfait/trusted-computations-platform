@@ -21,7 +21,7 @@ use alloc::collections::BTreeMap;
 use alloc::format;
 use alloc::string::{String, ToString};
 use alloc::{boxed::Box, vec::Vec};
-use decryptor_traits::SecureAggregationDecryptor;
+use decryptor::DecryptorState;
 use key_rust_proto::Key as KeyProto;
 use messages::PartialDecryptionRequest;
 use messages_rust_proto::{
@@ -45,17 +45,18 @@ use secure_aggregation::proto::{
 };
 use shell_parameters::create_shell_ahe_config;
 use shell_vahe::ShellVahe;
+use single_decryptor::SingleDecryptor;
 use slog::{debug, warn};
 use std::rc::Rc;
 use tcp_runtime::model::{
     Actor, ActorCommand, ActorContext, ActorError, ActorEvent, ActorEventContext, CommandOutcome,
     EventOutcome,
 };
-use willow_v1_decryptor::{DecryptorState, WillowV1Decryptor};
+use vahe_traits::HasVahe;
 
 #[derive(PartialEq)]
 struct KeyPair {
-    public_key_share: Bytes,
+    public_key: Bytes,
     decryptor_state: Bytes,
     sequential_order: i32,
     session_tag: String,
@@ -135,7 +136,7 @@ impl DecryptorActor {
         if let Some(key_pair) = self.key_pairs.get(&key_id) {
             let public_key = Self::serialize_key_proto(
                 &key_id,
-                &key_pair.public_key_share,
+                &key_pair.public_key,
                 &key_pair.session_tag,
                 key_pair.created_timestamp.as_ref(),
             );
@@ -154,7 +155,7 @@ impl DecryptorActor {
         let highest_sequential_order: i32 =
             self.key_pairs.values().map(|kp| kp.sequential_order).max().unwrap_or(0);
 
-        let key_pair = self.create_public_key_share(
+        let key_pair = self.create_key_pair(
             key_id.clone(),
             highest_sequential_order + 1,
             generate_key_request.session_tag.clone(),
@@ -165,8 +166,8 @@ impl DecryptorActor {
             correlation_id,
             &DecryptorEvent {
                 event: Some(decryptor_event::Event::GenerateKeyEvent(GenerateKeyEvent {
-                    public_key_share: key_pair.public_key_share.to_vec(),
-                    private_key_share: key_pair.decryptor_state.to_vec(),
+                    public_key: key_pair.public_key.to_vec(),
+                    decryptor_state: key_pair.decryptor_state.to_vec(),
                     sequential_order: key_pair.sequential_order,
                     key_id: key_id.into(),
                     session_tag: generate_key_request.session_tag,
@@ -240,7 +241,7 @@ impl DecryptorActor {
         for (key_id, key_pair) in matching_keys {
             public_keys.push(Self::serialize_key_proto(
                 key_id,
-                &key_pair.public_key_share,
+                &key_pair.public_key,
                 &key_pair.session_tag,
                 key_pair.created_timestamp.as_ref(),
             ));
@@ -260,8 +261,8 @@ impl DecryptorActor {
         correlation_id: u64,
         generate_key_event: GenerateKeyEvent,
     ) -> Result<EventOutcome, ActorError> {
-        let public_key_share: Bytes = generate_key_event.public_key_share.into();
-        let decryptor_state: Bytes = generate_key_event.private_key_share.into();
+        let public_key: Bytes = generate_key_event.public_key.into();
+        let decryptor_state: Bytes = generate_key_event.decryptor_state.into();
         let sequential_order: i32 = generate_key_event.sequential_order;
 
         // If the number of key pairs has reached the maximum, remove the oldest one
@@ -284,7 +285,7 @@ impl DecryptorActor {
         self.key_pairs.insert(
             generate_key_event.key_id.clone().into(),
             KeyPair {
-                public_key_share: public_key_share.clone(),
+                public_key: public_key.clone(),
                 decryptor_state,
                 sequential_order,
                 session_tag,
@@ -295,7 +296,7 @@ impl DecryptorActor {
         if context.owned {
             let public_key = Self::serialize_key_proto(
                 &generate_key_event.key_id,
-                &public_key_share,
+                &public_key,
                 &generate_key_event.session_tag,
                 generate_key_event.created_timestamp.as_ref(),
             );
@@ -339,7 +340,7 @@ impl DecryptorActor {
         Ok(EventOutcome::with_none())
     }
 
-    fn create_public_key_share(
+    fn create_key_pair(
         &self,
         key_id: Vec<u8>,
         sequential_order: i32,
@@ -347,17 +348,17 @@ impl DecryptorActor {
         created_timestamp: Option<prost_types::Timestamp>,
     ) -> KeyPair {
         let mut decryptor_state = DecryptorState::default();
-        let decryptor = self.create_willow_v1_decryptor(key_id);
+        let decryptor = self.create_single_decryptor(key_id);
 
-        let public_key_share_proto = decryptor
-            .create_public_key_share(&mut decryptor_state)
+        let public_key_proto = decryptor
+            .create_public_key(&mut decryptor_state)
             .unwrap()
-            .to_proto(&decryptor.vahe.as_ref())
+            .to_proto(decryptor.vahe())
             .unwrap();
         let decryptor_state_proto = decryptor_state.to_proto(&decryptor).unwrap();
 
         KeyPair {
-            public_key_share: public_key_share_proto.serialize().unwrap().into(),
+            public_key: public_key_proto.serialize().unwrap().into(),
             decryptor_state: decryptor_state_proto.serialize().unwrap().into(),
             sequential_order,
             session_tag,
@@ -375,7 +376,7 @@ impl DecryptorActor {
         request_bytes: Bytes,
         decryptor_state_bytes: Bytes,
     ) -> Result<Bytes, Status> {
-        let decryptor = self.create_willow_v1_decryptor(key_id);
+        let decryptor = self.create_single_decryptor(key_id);
 
         let decryptor_state_proto = DecryptorStateProto::parse(&decryptor_state_bytes).unwrap();
         let mut decryptor_state =
@@ -386,8 +387,7 @@ impl DecryptorActor {
 
         let partial_decryption =
             decryptor.handle_partial_decryption_request(request, &mut decryptor_state).unwrap();
-        let partial_decryption_proto =
-            partial_decryption.to_proto((&decryptor, decryptor_state.kahe.as_deref())).unwrap();
+        let partial_decryption_proto = partial_decryption.to_proto((&decryptor, None)).unwrap();
 
         Ok(partial_decryption_proto.serialize().unwrap().into())
     }
@@ -420,23 +420,23 @@ impl DecryptorActor {
         )))
     }
 
-    fn create_willow_v1_decryptor(&self, key_id: Vec<u8>) -> WillowV1Decryptor<ShellVahe> {
+    fn create_single_decryptor(&self, key_id: Vec<u8>) -> SingleDecryptor<ShellVahe> {
         let vahe = Rc::new(
             ShellVahe::new(create_shell_ahe_config(MAX_NUMBER_OF_DECRYPTORS).unwrap(), &key_id)
                 .unwrap(),
         );
-        WillowV1Decryptor::new_with_randomly_generated_seed(Rc::clone(&vahe)).unwrap()
+        SingleDecryptor::new_with_randomly_generated_seed(Rc::clone(&vahe)).unwrap()
     }
 
     fn serialize_key_proto(
         key_id: &[u8],
-        public_key_share: &[u8],
+        public_key: &[u8],
         session_tag: &str,
         created_timestamp: Option<&prost_types::Timestamp>,
     ) -> Vec<u8> {
         let mut key = KeyProto::default();
         key.set_key_id(key_id.to_vec());
-        key.set_key_material(public_key_share.to_vec());
+        key.set_key_material(public_key.to_vec());
         key.set_session_tag(session_tag.to_string());
         if let Some(ts) = created_timestamp {
             let mut protobuf_ts = ::timestamp_proto::Timestamp::new();
@@ -462,8 +462,8 @@ impl Actor for DecryptorActor {
 
         for (key_id, key_pair) in &self.key_pairs {
             snapshot.key_pairs.push(SnapshotKeyPair {
-                public_key_share: key_pair.public_key_share.clone(),
-                private_key_share: key_pair.decryptor_state.clone(),
+                public_key: key_pair.public_key.clone(),
+                decryptor_state: key_pair.decryptor_state.clone(),
                 key_id: key_id.clone().into(),
                 sequential_order: key_pair.sequential_order,
                 session_tag: key_pair.session_tag.clone(),
@@ -485,8 +485,8 @@ impl Actor for DecryptorActor {
             self.key_pairs.insert(
                 key_pair.key_id.into(),
                 KeyPair {
-                    public_key_share: key_pair.public_key_share,
-                    decryptor_state: key_pair.private_key_share,
+                    public_key: key_pair.public_key,
+                    decryptor_state: key_pair.decryptor_state,
                     sequential_order: key_pair.sequential_order,
                     session_tag: key_pair.session_tag,
                     created_timestamp: key_pair.created_timestamp,

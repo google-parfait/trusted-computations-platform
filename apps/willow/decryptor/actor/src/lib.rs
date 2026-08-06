@@ -24,10 +24,7 @@ pub mod apps {
     pub mod willow {
         pub mod decryptor {
             pub mod service {
-                include!(concat!(
-                    env!("OUT_DIR"),
-                    "/apps.willow.decryptor.service.rs"
-                ));
+                include!(concat!(env!("OUT_DIR"), "/apps.willow.decryptor.service.rs"));
             }
         }
     }
