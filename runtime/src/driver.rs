@@ -42,7 +42,7 @@ use raft::{
     eraftpb::Entry as RaftEntry, eraftpb::EntryType as RaftEntryType,
     eraftpb::Message as RaftMessage, eraftpb::MessageType as RaftMessageType, eraftpb::MessageType,
     eraftpb::Snapshot as RaftSnapshot, Error as RaftError, SnapshotStatus as RaftSnapshotStatus,
-    Storage as RaftStorage,
+    StateRole as RaftStateRole, Storage as RaftStorage,
 };
 use slog::{debug, error, info, o, warn, Logger};
 use tcp_proto::runtime::endpoint::*;
@@ -171,10 +171,7 @@ struct RaftProgress {
 
 impl RaftProgress {
     fn new() -> RaftProgress {
-        RaftProgress {
-            applied_index: 0,
-            config_state: RaftConfigState::default(),
-        }
+        RaftProgress { applied_index: 0, config_state: RaftConfigState::default() }
     }
 }
 
@@ -219,18 +216,12 @@ impl<
         logger: Option<Logger>,
     ) -> Self {
         let (logger, logger_output) = match logger {
-            Some(logger) => (
-                logger,
-                Box::new(EmptyDrainOutput {}) as Box<dyn DrainOutput>,
-            ),
+            Some(logger) => (logger, Box::new(EmptyDrainOutput {}) as Box<dyn DrainOutput>),
             None => create_remote_logger(),
         };
         Driver {
             core: Rc::new(RefCell::new(DriverContextCore::new())),
-            driver_config: DriverConfig {
-                tick_period: 100,
-                snapshot_count: 1000,
-            },
+            driver_config: DriverConfig { tick_period: 100, snapshot_count: 1000 },
             driver_state: DriverState::Created,
             messages: Vec::new(),
             snapshots: Vec::new(),
@@ -248,9 +239,7 @@ impl<
             raft_progress: RaftProgress::new(),
             communication,
             is_ephemeral: false,
-            default_clock: Arc::new(DefaultClock {
-                instant: AtomicI64::new(0),
-            }),
+            default_clock: Arc::new(DefaultClock { instant: AtomicI64::new(0) }),
             lameduck_mode: false,
         }
     }
@@ -265,10 +254,7 @@ impl<
         snapshot: Bytes,
         leader: bool,
     ) -> Result<(), PalError> {
-        let mut config = raft::Config {
-            id: self.id,
-            ..Default::default()
-        };
+        let mut config = raft::Config { id: self.id, ..Default::default() };
 
         if let Some(raft_config) = raft_config {
             // Store driver relavant parts of the config.
@@ -309,15 +295,13 @@ impl<
         if leader {
             self.raft_progress = RaftProgress {
                 applied_index: 1,
-                config_state: RaftConfigState {
-                    voters: vec![self.id],
-                    ..Default::default()
-                },
+                config_state: RaftConfigState { voters: vec![self.id], ..Default::default() },
             };
         }
 
         self.tick_instant = self.instant;
-        // No need to initially report the state of the cluster, only after the changes.
+        // No need to initially report the state of the cluster, only after the
+        // changes.
         self.prev_raft_state = self.get_raft_state();
 
         Ok(())
@@ -329,7 +313,8 @@ impl<
 
     fn get_raft_state(&self) -> RaftState {
         let mut raft_state = self.raft.state();
-        // Report committed cluster config only if current replica is the leader.
+        // Report committed cluster config only if current replica is the
+        // leader.
         if raft_state.leader_replica_id == self.id {
             raft_state.committed_cluster_config = self.raft_progress.config_state.voters.clone();
         }
@@ -344,10 +329,7 @@ impl<
     ) -> Result<(), PalError> {
         match deserialize_raft_message(message_contents) {
             Err(e) => {
-                warn!(
-                    self.logger,
-                    "Ignoring failed to deserialize Raft message: {}", e
-                );
+                warn!(self.logger, "Ignoring failed to deserialize Raft message: {}", e);
 
                 Ok(())
             }
@@ -413,8 +395,9 @@ impl<
     }
 
     fn trigger_raft_tick(&mut self) {
-        // Given that Raft is being driven from the outside and arbitrary amount of time can
-        // pass between driver invocation we may need to produce multiple ticks.
+        // Given that Raft is being driven from the outside and arbitrary amount
+        // of time can pass between driver invocation we may need to produce
+        // multiple ticks.
         if self.instant - self.tick_instant >= self.driver_config.tick_period {
             self.tick_instant = self.instant;
             // invoke Raft tick to trigger timer based changes.
@@ -426,15 +409,16 @@ impl<
         &mut self,
         mut committed_entries: Vec<RaftEntry>,
     ) -> Result<(), PalError> {
-        // Sort committed entries by entry index to make sure they are applied in order.
+        // Sort committed entries by entry index to make sure they are applied
+        // in order.
         committed_entries.sort_by(|a, b| a.index.cmp(&b.index));
         for committed_entry in committed_entries {
             // Remember progress of applying committed entries.
             self.raft_progress.applied_index = committed_entry.index;
 
             if committed_entry.data.is_empty() {
-                // Empty entry is produced by the newly elected leader to commit entries
-                // from the previous terms.
+                // Empty entry is produced by the newly elected leader to commit
+                // entries from the previous terms.
                 continue;
             }
             // The entry may either be a config change or a normal proposal.
@@ -443,24 +427,20 @@ impl<
                 let config_change = match deserialize_config_change(&committed_entry.data) {
                     Ok(config_change) => config_change,
                     Err(e) => {
-                        error!(
-                            self.logger,
-                            "Failed to deserialize Raft config change: {}", e
-                        );
-                        // Failure to deserialize Raft config change must lead to termination.
+                        error!(self.logger, "Failed to deserialize Raft config change: {}", e);
+                        // Failure to deserialize Raft config change must lead
+                        // to termination.
                         return Err(PalError::Raft);
                     }
                 };
 
-                debug!(
-                    self.logger,
-                    "Applying Raft config change entry: {:?}", config_change
-                );
+                debug!(self.logger, "Applying Raft config change entry: {:?}", config_change);
 
                 match self.raft.apply_config_change(&config_change) {
                     Err(e) => {
                         error!(self.logger, "Failed to apply Raft config change: {}", e);
-                        // Failure to apply Raft config change must lead to termination.
+                        // Failure to apply Raft config change must lead to
+                        // termination.
                         return Err(PalError::Raft);
                     }
                     Ok(config_state) => {
@@ -468,14 +448,13 @@ impl<
                     }
                 };
             } else {
-                debug!(
-                    self.logger,
-                    "Applying Raft entry #{}", committed_entry.index
-                );
-                // Recover the entry id so that original message can be correlated
+                debug!(self.logger, "Applying Raft entry #{}", committed_entry.index);
+                // Recover the entry id so that original message can be
+                // correlated
                 let entry = Entry::decode(committed_entry.get_data()).map_err(|e| {
                     error!(self.logger, "Failed to deserialize Raft entry: {}", e);
-                    // Failure to deserialize Raft config change must lead to termination.
+                    // Failure to deserialize Raft config change must lead to
+                    // termination.
                     return PalError::Raft;
                 })?;
 
@@ -496,7 +475,8 @@ impl<
                             self.logger,
                             "Failed to apply committed event to actor state: {}", e
                         );
-                        // Failure to apply committed event to actor state must lead to termination.
+                        // Failure to apply committed event to actor state must
+                        // lead to termination.
                         PalError::Actor
                     })?;
 
@@ -515,7 +495,8 @@ impl<
 
     fn send_raft_messages(&mut self, raft_messages: Vec<RaftMessage>) -> Result<(), PalError> {
         for raft_message in raft_messages {
-            // Stash messages that contain snapshot to be sent out by the snapshot processor.
+            // Stash messages that contain snapshot to be sent out by the
+            // snapshot processor.
             if raft_message.msg_type
                 == <MessageType as Into<i32>>::into(RaftMessageType::MsgSnapshot)
             {
@@ -523,19 +504,18 @@ impl<
                 continue;
             }
 
-            self.communication
-                .process_out_message(OutgoingMessage::DeliverSystemMessage(
-                    DeliverSystemMessage {
-                        recipient_replica_id: raft_message.to,
-                        sender_replica_id: self.id,
-                        payload: Some(Payload {
-                            contents: serialize_raft_message(&raft_message).unwrap(),
-                            ..Default::default()
-                        }),
+            self.communication.process_out_message(OutgoingMessage::DeliverSystemMessage(
+                DeliverSystemMessage {
+                    recipient_replica_id: raft_message.to,
+                    sender_replica_id: self.id,
+                    payload: Some(Payload {
+                        contents: serialize_raft_message(&raft_message).unwrap(),
                         ..Default::default()
-                    },
-                    raft_message.msg_type(),
-                ))?;
+                    }),
+                    ..Default::default()
+                },
+                raft_message.msg_type(),
+            ))?;
         }
 
         Ok(())
@@ -547,22 +527,17 @@ impl<
             return Ok(());
         }
 
-        info!(
-            self.logger,
-            "Restoring Raft snappshot: {:?}",
-            get_metadata(raft_snapshot)
-        );
+        info!(self.logger, "Restoring Raft snappshot: {:?}", get_metadata(raft_snapshot));
 
         self.collect_config_state(get_config_state(raft_snapshot).clone());
 
-        // Persist unstable snapshot received from a peer into the stable storage.
+        // Persist unstable snapshot received from a peer into the stable
+        // storage.
         let apply_result = self.raft.mut_store().apply_snapshot(raft_snapshot.clone());
         if let Err(e) = apply_result {
-            error!(
-                self.logger,
-                "Failed to apply Raft snapshot to storage: {}", e
-            );
-            // Failure to apply Raft snapshot to storage snapshot must lead to termination.
+            error!(self.logger, "Failed to apply Raft snapshot to storage: {}", e);
+            // Failure to apply Raft snapshot to storage snapshot must lead to
+            // termination.
             return Err(PalError::Raft);
         }
 
@@ -581,37 +556,40 @@ impl<
     }
 
     fn maybe_create_raft_snapshot(&mut self) -> Result<(), PalError> {
-        if !self.raft.mut_store().should_snapshot(
-            self.raft_progress.applied_index,
-            &self.raft_progress.config_state,
-        ) {
+        if !self
+            .raft
+            .mut_store()
+            .should_snapshot(self.raft_progress.applied_index, &self.raft_progress.config_state)
+        {
             return Ok(());
         }
 
         let snapshot_data = self.actor.on_save_snapshot().map_err(|e| {
             error!(self.logger, "Failed to save actor state to snapshot: {}", e);
-            // Failure to apply Raft snapshot to storage snapshot must lead to termination.
+            // Failure to apply Raft snapshot to storage snapshot must lead to
+            // termination.
             PalError::Actor
         })?;
 
         let applied_index = self.raft_progress.applied_index;
         let config_state = self.raft_progress.config_state.clone();
-        self.raft
-            .mut_store()
-            .create_snapshot(applied_index, config_state, snapshot_data)
-            .map_err(|e| {
+        self.raft.mut_store().create_snapshot(applied_index, config_state, snapshot_data).map_err(
+            |e| {
                 error!(self.logger, "Failed to save actor state to snapshot: {}", e);
-                // Failure to create Raft snapshot to storage snapshot must lead to termination.
+                // Failure to create Raft snapshot to storage snapshot must lead
+                // to termination.
                 PalError::Actor
-            })
+            },
+        )
     }
 
     fn advance_raft(&mut self) -> Result<(), PalError> {
         // Trigger raft ticks only when the replica is NOT in lameduck mode.
-        // If this replica is a leader, in lameduck mode raft ticks are ignored which
-        // would cause the leader to relinquish leadership by not triggering heartbeats.
-        // If this replica is a follower, ignoring ticks will ensure no election is triggered
-        // by this replica in lameduck mode.
+        // If this replica is a leader, in lameduck mode raft ticks are ignored
+        // which would cause the leader to relinquish leadership by not
+        // triggering heartbeats. If this replica is a follower, ignoring ticks
+        // will ensure no election is triggered by this replica in lameduck
+        // mode.
         if !self.lameduck_mode {
             self.trigger_raft_tick();
         }
@@ -628,9 +606,7 @@ impl<
 
         if let Some(raft_hard_state) = raft_ready.hard_state() {
             // Persist changed hard state into the stable storage.
-            self.raft
-                .mut_store()
-                .set_hard_state(raft_hard_state.clone());
+            self.raft.mut_store().set_hard_state(raft_hard_state.clone());
         }
 
         // If not empty persist snapshot to stable storage and apply it to the
@@ -640,8 +616,8 @@ impl<
 
         // Apply committed entries to the actor state machine.
         self.apply_raft_committed_entries(raft_ready.take_committed_entries())?;
-        // Send out messages that had to await the persistence of the hard state, entries
-        // and snapshot to the stable storage.
+        // Send out messages that had to await the persistence of the hard
+        // state, entries and snapshot to the stable storage.
         self.send_raft_messages(raft_ready.take_persisted_messages())?;
 
         let entries = raft_ready.take_entries();
@@ -649,11 +625,9 @@ impl<
             // Persist unstable entries into the stable storage.
             let append_result = self.raft.mut_store().append_entries(entries.as_ref());
             if let Err(e) = append_result {
-                error!(
-                    self.logger,
-                    "Failed to append Raft entries to storage: {}", e
-                );
-                // Failure to append Raft entries to storage snapshot must lead to termination.
+                error!(self.logger, "Failed to append Raft entries to storage: {}", e);
+                // Failure to append Raft entries to storage snapshot must lead
+                // to termination.
                 return Err(PalError::Actor);
             }
         }
@@ -692,8 +666,7 @@ impl<
         self.update_snapshot_cluster_change();
 
         // Update communication module with the latest set of known replicas.
-        self.communication
-            .process_cluster_change(&self.raft_progress.config_state.voters);
+        self.communication.process_cluster_change(&self.raft_progress.config_state.voters);
 
         // Sent out cluster check message with the update.
         self.stash_message(out_message::Msg::CheckCluster(CheckClusterResponse {
@@ -777,11 +750,7 @@ impl<
                 Some(raft_config) => &raft_config.snapshot_config,
                 None => &None,
             };
-            self.snapshot.init(
-                self.logger.new(o!("type" => "snapshot")),
-                self.id,
-                snapshot_config,
-            );
+            self.snapshot.init(self.logger.new(o!("type" => "snapshot")), self.id, snapshot_config);
 
             self.initialize_raft_node(
                 &start_replica_request.raft_config,
@@ -811,9 +780,7 @@ impl<
         self.communication.init(
             self.id,
             self.logger.new(o!("type" => "communication")),
-            self.actor
-                .get_clock_override()
-                .unwrap_or_else(|| self.default_clock.clone()),
+            self.actor.get_clock_override().unwrap_or_else(|| self.default_clock.clone()),
             communication_config,
         );
 
@@ -894,11 +861,9 @@ impl<
         self.check_driver_started()?;
         self.check_non_ephemeral()?;
 
-        let message =
-            self.communication
-                .process_in_message(in_message::Msg::DeliverSystemMessage(
-                    deliver_system_message,
-                ))?;
+        let message = self
+            .communication
+            .process_in_message(in_message::Msg::DeliverSystemMessage(deliver_system_message))?;
 
         if message.is_none() {
             return Ok(());
@@ -941,11 +906,9 @@ impl<
         deliver_snapshot_request: DeliverSnapshotRequest,
     ) -> Result<(), PalError> {
         self.check_non_ephemeral()?;
-        let message =
-            self.communication
-                .process_in_message(in_message::Msg::DeliverSnapshotRequest(
-                    deliver_snapshot_request,
-                ))?;
+        let message = self.communication.process_in_message(
+            in_message::Msg::DeliverSnapshotRequest(deliver_snapshot_request),
+        )?;
 
         if message.is_none() {
             return Ok(());
@@ -964,10 +927,9 @@ impl<
                     }
                     SnapshotProcessorRole::Receiver(receiver) => receiver.process_request(m),
                 };
-                self.communication
-                    .process_out_message(OutgoingMessage::DeliverSnapshotResponse(
-                        deliver_snapshot_response,
-                    ))
+                self.communication.process_out_message(OutgoingMessage::DeliverSnapshotResponse(
+                    deliver_snapshot_response,
+                ))
             }
             _ => {
                 warn!(self.logger, "Unexpected message type {:?}", message);
@@ -981,11 +943,9 @@ impl<
         deliver_snapshot_response: DeliverSnapshotResponse,
     ) -> Result<(), PalError> {
         self.check_non_ephemeral()?;
-        let message =
-            self.communication
-                .process_in_message(in_message::Msg::DeliverSnapshotResponse(
-                    deliver_snapshot_response,
-                ))?;
+        let message = self.communication.process_in_message(
+            in_message::Msg::DeliverSnapshotResponse(deliver_snapshot_response),
+        )?;
 
         if message.is_none() {
             return Ok(());
@@ -1062,10 +1022,7 @@ impl<
                             }
                         }
                         Err(_) => {
-                            warn!(
-                                self.logger,
-                                "Snapshot has been received but failed validation"
-                            );
+                            warn!(self.logger, "Snapshot has been received but failed validation");
                         }
                     }
                 }
@@ -1089,13 +1046,9 @@ impl<
             }
             SnapshotProcessorRole::Receiver(_) => {
                 if !snapshot_messages.is_empty() {
-                    warn!(
-                        self.logger,
-                        "Unexpected snapshot sending while playing receiver role"
-                    );
+                    warn!(self.logger, "Unexpected snapshot sending while playing receiver role");
                     for snapshot_message in snapshot_messages {
-                        self.raft
-                            .report_snapshot(snapshot_message.to, RaftSnapshotStatus::Failure);
+                        self.raft.report_snapshot(snapshot_message.to, RaftSnapshotStatus::Failure);
                     }
                 }
             }
@@ -1138,19 +1091,15 @@ impl<
 
         if let Some(actor_event) = message_outcome.event {
             if self.is_ephemeral {
-                // For ephemeral replica, apply the event immediately since it is not replicated.
+                // For ephemeral replica, apply the event immediately since it
+                // is not replicated.
                 let event_outcome = self
                     .actor
-                    .on_apply_event(
-                        ActorEventContext {
-                            index: 0,
-                            owned: true,
-                        },
-                        actor_event,
-                    )
+                    .on_apply_event(ActorEventContext { index: 0, owned: true }, actor_event)
                     .map_err(|e| {
                         error!(self.logger, "Failed to apply event to actor state: {}", e);
-                        // Failure to apply event to actor state must lead to termination.
+                        // Failure to apply event to actor state must lead to
+                        // termination.
                         PalError::Actor
                     })?;
 
@@ -1163,14 +1112,10 @@ impl<
                 }
             } else {
                 let entry = create_entry(
-                    EntryId {
-                        entry_id: actor_event.correlation_id,
-                        replica_id: self.id,
-                    },
+                    EntryId { entry_id: actor_event.correlation_id, replica_id: self.id },
                     actor_event.contents,
                 );
-                self.mut_core()
-                    .append_proposal(entry.encode_to_vec().into())
+                self.mut_core().append_proposal(entry.encode_to_vec().into())
             }
         }
 
@@ -1189,9 +1134,27 @@ impl<
             ));
         } else {
             let latest_snapshot_size = self.raft.mut_store().latest_snapshot_size();
+            let raft_replica_status = self.raft.replica_status();
+            // The leader is checked first since the leader may still be
+            // finalizing its own removal from the cluster. Otherwise membership
+            // is determined by the latest cluster configuration applied by this
+            // replica. A replica that has been added by the leader but hasn't
+            // caught up yet is not considered joined. Replicas campaigning in
+            // an election are voters and therefore considered followers.
+            let replica_status = if raft_replica_status.role == RaftStateRole::Leader {
+                ReplicaStatus::Leader
+            } else if self.raft_progress.config_state.voters.contains(&self.id) {
+                ReplicaStatus::Follower
+            } else {
+                ReplicaStatus::NotJoined
+            };
+
             self.stash_message(out_message::Msg::GetReplicaState(GetReplicaStateResponse {
                 applied_index: self.raft_progress.applied_index,
                 latest_snapshot_size,
+                replica_status: replica_status.into(),
+                leader_replica_id: raft_replica_status.leader_replica_id,
+                term: raft_replica_status.term,
             }));
         }
 
@@ -1204,10 +1167,9 @@ impl<
     ) -> Result<(), PalError> {
         self.check_driver_started()?;
 
-        self.communication
-            .process_in_message(in_message::Msg::SecureChannelHandshake(
-                secure_channel_handshake,
-            ))?;
+        self.communication.process_in_message(in_message::Msg::SecureChannelHandshake(
+            secure_channel_handshake,
+        ))?;
         Ok(())
     }
 
@@ -1224,7 +1186,8 @@ impl<
             // Advance Raft internal state.
             self.advance_raft()?;
 
-            // Maybe create a snashot of the actor to reduce the size of the log.
+            // Maybe create a snashot of the actor to reduce the size of the
+            // log.
             self.maybe_create_raft_snapshot()?;
 
             // If the leader state has changed send it out for observability.
@@ -1246,8 +1209,7 @@ impl<
     }
 
     fn stash_comms_module_entries(&mut self) {
-        self.messages
-            .append(&mut self.communication.take_out_messages());
+        self.messages.append(&mut self.communication.take_out_messages());
     }
 
     fn stash_message(&mut self, message: out_message::Msg) {
@@ -1274,8 +1236,8 @@ impl<
         instant: u64,
         opt_message: Option<InMessage>,
     ) -> Result<(), PalError> {
-        // Update state of the context that will remain unchanged while messages are
-        // dispatched for processing.
+        // Update state of the context that will remain unchanged while messages
+        // are dispatched for processing.
         self.preset_state_machine(instant);
 
         let mut deliver_app_message_opt = None;
@@ -1367,7 +1329,7 @@ mod test {
     extern crate spin;
 
     use crate::{
-        consensus::{RaftLightReady, RaftReady},
+        consensus::{RaftLightReady, RaftReady, RaftReplicaStatus},
         mock::{MockSnapshotReceiver, MockSnapshotSender},
         model::{CommandOutcome, EventOutcome},
         snapshot::DefaultSnapshotProcessor,
@@ -1455,9 +1417,7 @@ mod test {
     }
 
     fn create_stop_replica_request() -> InMessage {
-        let envelope = InMessage {
-            msg: Some(in_message::Msg::StopReplica(StopReplicaRequest {})),
-        };
+        let envelope = InMessage { msg: Some(in_message::Msg::StopReplica(StopReplicaRequest {})) };
         envelope
     }
 
@@ -1506,9 +1466,8 @@ mod test {
     }
 
     fn create_check_cluster_request() -> InMessage {
-        let envelope = InMessage {
-            msg: Some(in_message::Msg::CheckCluster(CheckClusterRequest {})),
-        };
+        let envelope =
+            InMessage { msg: Some(in_message::Msg::CheckCluster(CheckClusterRequest {})) };
         envelope
     }
 
@@ -1522,19 +1481,24 @@ mod test {
     }
 
     fn create_get_replica_state_request() -> InMessage {
-        let envelope = InMessage {
-            msg: Some(in_message::Msg::GetReplicaState(GetReplicaStateRequest {})),
-        };
+        let envelope =
+            InMessage { msg: Some(in_message::Msg::GetReplicaState(GetReplicaStateRequest {})) };
         envelope
     }
 
     fn create_get_replica_state_response(
         applied_index: u64,
         latest_snapshot_size: u64,
+        replica_status: ReplicaStatus,
+        leader_replica_id: u64,
+        term: u64,
     ) -> out_message::Msg {
         out_message::Msg::GetReplicaState(GetReplicaStateResponse {
             applied_index,
             latest_snapshot_size,
+            replica_status: replica_status.into(),
+            leader_replica_id,
+            term,
         })
     }
 
@@ -1542,26 +1506,20 @@ mod test {
         sender_replica_id: u64,
         recipient_replica_id: u64,
     ) -> SecureChannelHandshake {
-        SecureChannelHandshake {
-            recipient_replica_id,
-            sender_replica_id,
-            encryption: None,
-        }
+        SecureChannelHandshake { recipient_replica_id, sender_replica_id, encryption: None }
     }
 
     fn create_deliver_system_message_request(raft_message: &RaftMessage) -> InMessage {
         let envelope = InMessage {
-            msg: Some(in_message::Msg::DeliverSystemMessage(
-                DeliverSystemMessage {
-                    recipient_replica_id: raft_message.to,
-                    sender_replica_id: raft_message.from,
-                    payload: Some(Payload {
-                        contents: serialize_raft_message(raft_message).unwrap(),
-                        ..Default::default()
-                    }),
+            msg: Some(in_message::Msg::DeliverSystemMessage(DeliverSystemMessage {
+                recipient_replica_id: raft_message.to,
+                sender_replica_id: raft_message.from,
+                payload: Some(Payload {
+                    contents: serialize_raft_message(raft_message).unwrap(),
                     ..Default::default()
-                },
-            )),
+                }),
+                ..Default::default()
+            })),
         };
         envelope
     }
@@ -1604,9 +1562,7 @@ mod test {
     }
 
     fn wrap_deliver_snapshot_request_in(request: DeliverSnapshotRequest) -> InMessage {
-        InMessage {
-            msg: Some(in_message::Msg::DeliverSnapshotRequest(request)),
-        }
+        InMessage { msg: Some(in_message::Msg::DeliverSnapshotRequest(request)) }
     }
 
     fn create_deliver_snapshot_request(
@@ -1631,9 +1587,7 @@ mod test {
     }
 
     fn wrap_deliver_snapshot_response_in(response: DeliverSnapshotResponse) -> InMessage {
-        InMessage {
-            msg: Some(in_message::Msg::DeliverSnapshotResponse(response)),
-        }
+        InMessage { msg: Some(in_message::Msg::DeliverSnapshotResponse(response)) }
     }
 
     fn create_deliver_snapshot_response(
@@ -1645,25 +1599,17 @@ mod test {
             recipient_replica_id: recipient_id,
             sender_replica_id: sender_id,
             delivery_id,
-            payload: Some(Payload {
-                contents: vec![6, 7, 8, 9].into(),
-                ..Default::default()
-            }),
+            payload: Some(Payload { contents: vec![6, 7, 8, 9].into(), ..Default::default() }),
             ..Default::default()
         }
     }
 
     fn wrap_deliver_snapshot_failure_in(failure: DeliverSnapshotFailure) -> InMessage {
-        InMessage {
-            msg: Some(in_message::Msg::DeliverSnapshotFailure(failure)),
-        }
+        InMessage { msg: Some(in_message::Msg::DeliverSnapshotFailure(failure)) }
     }
 
     fn create_deliver_snapshot_failure(sender_id: u64, delivery_id: u64) -> DeliverSnapshotFailure {
-        DeliverSnapshotFailure {
-            sender_replica_id: sender_id,
-            delivery_id,
-        }
+        DeliverSnapshotFailure { sender_replica_id: sender_id, delivery_id }
     }
 
     fn get_default_comm_config(raft_config: RaftConfig) -> CommunicationConfig {
@@ -1684,18 +1630,14 @@ mod test {
 
     impl MockHostBuilder {
         fn new() -> MockHostBuilder {
-            MockHostBuilder {
-                mock_host: MockHost::new(),
-            }
+            MockHostBuilder { mock_host: MockHost::new() }
         }
 
         fn expect_public_signing_key(
             &mut self,
             public_signing_key: Vec<u8>,
         ) -> &mut MockHostBuilder {
-            self.mock_host
-                .expect_public_signing_key()
-                .return_once(move || public_signing_key);
+            self.mock_host.expect_public_signing_key().return_once(move || public_signing_key);
             self
         }
 
@@ -1723,10 +1665,7 @@ mod test {
 
     impl RaftBuilder {
         fn new() -> RaftBuilder {
-            RaftBuilder {
-                mock_store: MockStore::new(),
-                mock_raft: MockRaft::new(),
-            }
+            RaftBuilder { mock_store: MockStore::new(), mock_raft: MockRaft::new() }
         }
 
         fn expect_leader(mut self, leader: bool) -> RaftBuilder {
@@ -1747,16 +1686,12 @@ mod test {
         }
 
         fn expect_should_snapshot(mut self, should_snapshot: bool) -> RaftBuilder {
-            self.mock_store
-                .expect_should_snapshot()
-                .return_const(should_snapshot);
+            self.mock_store.expect_should_snapshot().return_const(should_snapshot);
             self
         }
 
         fn expect_latest_snapshot_size(mut self, latest_snapshot_size: u64) -> RaftBuilder {
-            self.mock_store
-                .expect_latest_snapshot_size()
-                .return_const(latest_snapshot_size);
+            self.mock_store.expect_latest_snapshot_size().return_const(latest_snapshot_size);
             self
         }
 
@@ -1765,10 +1700,7 @@ mod test {
             snapshot: RaftSnapshot,
             handler: impl Fn(RaftSnapshot) -> Result<(), RaftError> + 'static,
         ) -> RaftBuilder {
-            self.mock_store
-                .expect_apply_snapshot()
-                .with(eq(snapshot))
-                .return_once_st(handler);
+            self.mock_store.expect_apply_snapshot().with(eq(snapshot)).return_once_st(handler);
             self
         }
 
@@ -1777,10 +1709,7 @@ mod test {
             entries: Vec<RaftEntry>,
             handler: impl Fn(&[RaftEntry]) -> Result<(), RaftError> + 'static,
         ) -> RaftBuilder {
-            self.mock_store
-                .expect_append_entries()
-                .with(eq(entries))
-                .return_once_st(handler);
+            self.mock_store.expect_append_entries().with(eq(entries)).return_once_st(handler);
             self
         }
 
@@ -1816,25 +1745,22 @@ mod test {
         }
 
         fn expect_has_ready(mut self, has_ready: bool) -> RaftBuilder {
-            self.mock_raft
-                .expect_has_ready()
-                .once()
-                .return_const(has_ready);
+            self.mock_raft.expect_has_ready().once().return_const(has_ready);
             self
         }
 
         fn expect_state(mut self, raft_state: &RaftState) -> RaftBuilder {
-            self.mock_raft
-                .expect_state()
-                .return_const(raft_state.clone());
+            self.mock_raft.expect_state().return_const(raft_state.clone());
             self
         }
 
         fn expect_state_once(mut self, raft_state: &RaftState) -> RaftBuilder {
-            self.mock_raft
-                .expect_state()
-                .once()
-                .return_const(raft_state.clone());
+            self.mock_raft.expect_state().once().return_const(raft_state.clone());
+            self
+        }
+
+        fn expect_replica_status(mut self, replica_status: RaftReplicaStatus) -> RaftBuilder {
+            self.mock_raft.expect_replica_status().once().return_const(replica_status);
             self
         }
 
@@ -1866,10 +1792,7 @@ mod test {
 
         fn expect_ready(mut self, ready: &RaftReady) -> RaftBuilder {
             let ready = ready.clone();
-            self.mock_raft
-                .expect_get_ready()
-                .once()
-                .return_once(move || ready);
+            self.mock_raft.expect_get_ready().once().return_once(move || ready);
             self
         }
 
@@ -1918,10 +1841,7 @@ mod test {
         }
 
         fn take(&mut self) -> (MockStore, MockRaft<MockStore>) {
-            (
-                mem::take(&mut self.mock_store),
-                mem::take(&mut self.mock_raft),
-            )
+            (mem::take(&mut self.mock_store), mem::take(&mut self.mock_raft))
         }
     }
 
@@ -1954,9 +1874,7 @@ mod test {
         }
 
         fn expect_receiver_set_instant(mut self) -> SnapshotBuilder {
-            self.mock_snapshot_receiver
-                .expect_set_instant()
-                .return_const(());
+            self.mock_snapshot_receiver.expect_set_instant().return_const(());
 
             self
         }
@@ -1965,10 +1883,7 @@ mod test {
             mut self,
             result: Option<Result<(u64, RaftSnapshot), SnapshotError>>,
         ) -> SnapshotBuilder {
-            self.mock_snapshot_receiver
-                .expect_try_complete()
-                .once()
-                .return_once(|| result);
+            self.mock_snapshot_receiver.expect_try_complete().once().return_once(|| result);
 
             self
         }
@@ -1994,9 +1909,7 @@ mod test {
         }
 
         fn expect_sender_set_instant(mut self) -> SnapshotBuilder {
-            self.mock_snapshot_sender
-                .expect_set_instant()
-                .return_const(());
+            self.mock_snapshot_sender.expect_set_instant().return_const(());
 
             self
         }
@@ -2019,10 +1932,7 @@ mod test {
             mut self,
             request: Option<DeliverSnapshotRequest>,
         ) -> SnapshotBuilder {
-            self.mock_snapshot_sender
-                .expect_next_request()
-                .once()
-                .return_once(|| request);
+            self.mock_snapshot_sender.expect_next_request().once().return_once(|| request);
 
             self
         }
@@ -2031,10 +1941,7 @@ mod test {
             mut self,
             result: Option<(u64, RaftSnapshotStatus)>,
         ) -> SnapshotBuilder {
-            self.mock_snapshot_sender
-                .expect_try_complete()
-                .once()
-                .return_once(move || result);
+            self.mock_snapshot_sender.expect_try_complete().once().return_once(move || result);
 
             self
         }
@@ -2054,10 +1961,7 @@ mod test {
         }
 
         fn take(mut self) -> (MockSnapshotSender, MockSnapshotReceiver) {
-            (
-                mem::take(&mut self.mock_snapshot_sender),
-                mem::take(&mut self.mock_snapshot_receiver),
-            )
+            (mem::take(&mut self.mock_snapshot_sender), mem::take(&mut self.mock_snapshot_receiver))
         }
     }
 
@@ -2067,9 +1971,7 @@ mod test {
 
     impl CommunicationBuilder {
         fn new() -> CommunicationBuilder {
-            CommunicationBuilder {
-                mock_communication_module: MockCommunicationModule::new(),
-            }
+            CommunicationBuilder { mock_communication_module: MockCommunicationModule::new() }
         }
 
         fn expect_init(
@@ -2087,10 +1989,7 @@ mod test {
         }
 
         fn expect_make_tick(mut self) -> CommunicationBuilder {
-            self.mock_communication_module
-                .expect_make_tick()
-                .once()
-                .return_const(());
+            self.mock_communication_module.expect_make_tick().once().return_const(());
             self
         }
 
@@ -2121,10 +2020,7 @@ mod test {
         }
 
         fn expect_take_out_messages(mut self, messages: Vec<OutMessage>) -> CommunicationBuilder {
-            self.mock_communication_module
-                .expect_take_out_messages()
-                .once()
-                .return_const(messages);
+            self.mock_communication_module.expect_take_out_messages().once().return_const(messages);
 
             self
         }
@@ -2149,18 +2045,14 @@ mod test {
 
     impl DriverBuilder {
         fn new() -> DriverBuilder {
-            DriverBuilder {
-                mock_actor: MockActor::new(),
-            }
+            DriverBuilder { mock_actor: MockActor::new() }
         }
 
         fn expect_on_init(
             &mut self,
             init_handler: impl Fn(Box<dyn ActorContext>) -> Result<(), ActorError> + 'static,
         ) -> &mut DriverBuilder {
-            self.mock_actor
-                .expect_on_init()
-                .return_once_st(init_handler);
+            self.mock_actor.expect_on_init().return_once_st(init_handler);
 
             self
         }
@@ -2175,10 +2067,7 @@ mod test {
             &mut self,
             reference_values: ReferenceValues,
         ) -> &mut DriverBuilder {
-            self.mock_actor
-                .expect_get_reference_values()
-                .once()
-                .return_once(|| reference_values);
+            self.mock_actor.expect_get_reference_values().once().return_once(|| reference_values);
 
             self
         }
@@ -2201,10 +2090,7 @@ mod test {
             snapshot: Bytes,
             result: Result<(), ActorError>,
         ) -> &mut DriverBuilder {
-            self.mock_actor
-                .expect_on_load_snapshot()
-                .with(eq(snapshot))
-                .return_once(|_| result);
+            self.mock_actor.expect_on_load_snapshot().with(eq(snapshot)).return_once(|_| result);
             self
         }
 
@@ -2212,9 +2098,7 @@ mod test {
             &mut self,
             result: Result<Bytes, ActorError>,
         ) -> &mut DriverBuilder {
-            self.mock_actor
-                .expect_on_save_snapshot()
-                .return_once(|| result);
+            self.mock_actor.expect_on_save_snapshot().return_once(|| result);
             self
         }
 
@@ -2260,7 +2144,7 @@ mod test {
                 ),
                 mock_actor,
                 mock_communication_module,
-                /*logger=*/ None,
+                /* logger= */ None,
             )
         }
     }
@@ -2282,10 +2166,7 @@ mod test {
             .expect_init(move |id, config, snapshot, leader, _, _| {
                 assert_eq!(node_id, config.id);
                 assert_eq!(exp_raft_config.election_tick as usize, config.election_tick);
-                assert_eq!(
-                    exp_raft_config.heartbeat_tick as usize,
-                    config.heartbeat_tick
-                );
+                assert_eq!(exp_raft_config.heartbeat_tick as usize, config.heartbeat_tick);
                 assert_eq!(exp_raft_config.max_size_per_msg, config.max_size_per_msg);
                 assert_eq!(node_id, id);
                 assert_eq!(exp_init_snapshot, snapshot);
@@ -2580,10 +2461,7 @@ mod test {
             header: proposal_contents.clone(),
             payload: Bytes::new(),
         };
-        let actor_event = ActorEvent {
-            correlation_id,
-            contents: proposal_contents.clone(),
-        };
+        let actor_event = ActorEvent { correlation_id, contents: proposal_contents.clone() };
         let proposal_result = vec![4, 4, 6];
         let actor_command_2 = ActorCommand {
             correlation_id,
@@ -2632,10 +2510,7 @@ mod test {
                 )),
             )
             .expect_on_apply_event(
-                ActorEventContext {
-                    index: 0,
-                    owned: true,
-                },
+                ActorEventContext { index: 0, owned: true },
                 actor_event.clone(),
                 Ok(EventOutcome::with_command(actor_command_2.clone())),
             )
@@ -2849,12 +2724,8 @@ mod test {
         let proposal_result = vec![4, 5, 6];
         let entry_id = create_entry_id(node_id, 1);
         let entry = create_entry(entry_id.clone(), proposal_result.clone().into());
-        let committed_normal_entry = create_raft_entry(
-            2,
-            2,
-            RaftEntryType::EntryNormal,
-            entry.encode_to_vec().into(),
-        );
+        let committed_normal_entry =
+            create_raft_entry(2, 2, RaftEntryType::EntryNormal, entry.encode_to_vec().into());
 
         let config_change = create_raft_config_change(peer_id, RaftConfigChangeType::AddNode);
         let config_state = create_raft_config_state(vec![node_id, peer_id]);
@@ -2864,10 +2735,8 @@ mod test {
             RaftEntryType::EntryConfChange,
             serialize_config_change(&config_change).unwrap(),
         );
-        let committed_entries = vec![
-            committed_normal_entry.clone(),
-            committed_config_entry.clone(),
-        ];
+        let committed_entries =
+            vec![committed_normal_entry.clone(), committed_config_entry.clone()];
 
         let snapshot = create_raft_snapshot(
             create_raft_snapshot_metadata(1, 1, create_raft_config_state(vec![node_id, peer_id])),
@@ -2937,10 +2806,7 @@ mod test {
             .expect_on_load_snapshot(snapshot.data.into(), Ok(()))
             .expect_on_process_command(None, Ok(CommandOutcome::with_none()))
             .expect_on_apply_event(
-                ActorEventContext {
-                    index: committed_normal_entry.index,
-                    owned: true,
-                },
+                ActorEventContext { index: committed_normal_entry.index, owned: true },
                 ActorEvent {
                     correlation_id: entry_id.entry_id,
                     contents: entry.entry_contents.into(),
@@ -2967,10 +2833,7 @@ mod test {
             )
         );
 
-        assert_eq!(
-            Ok(()),
-            driver.receive_message(&mut mock_host, instant + 10, None)
-        );
+        assert_eq!(Ok(()), driver.receive_message(&mut mock_host, instant + 10, None));
     }
 
     #[test]
@@ -3082,14 +2945,8 @@ mod test {
             .expect_make_tick()
             .expect_take_out_messages(Vec::new())
             .expect_process_in_message(
-                create_deliver_system_message_request(&message_a)
-                    .msg
-                    .unwrap(),
-                Ok(Some(
-                    create_deliver_system_message_request(&message_a)
-                        .msg
-                        .unwrap(),
-                )),
+                create_deliver_system_message_request(&message_a).msg.unwrap(),
+                Ok(Some(create_deliver_system_message_request(&message_a).msg.unwrap())),
             )
             .expect_make_tick()
             .expect_take_out_messages(Vec::new());
@@ -3121,9 +2978,7 @@ mod test {
                 &mut mock_host,
                 instant + 10,
                 Some(InMessage {
-                    msg: Some(in_message::Msg::SecureChannelHandshake(
-                        handshake_message.clone()
-                    ))
+                    msg: Some(in_message::Msg::SecureChannelHandshake(handshake_message.clone()))
                 }),
             )
         );
@@ -3150,12 +3005,8 @@ mod test {
         let entry_id = create_entry_id(node_id, 1);
         let entry = create_entry(entry_id.clone(), proposal_result.clone().into());
 
-        let committed_normal_entry = create_raft_entry(
-            2,
-            2,
-            RaftEntryType::EntryNormal,
-            entry.encode_to_vec().into(),
-        );
+        let committed_normal_entry =
+            create_raft_entry(2, 2, RaftEntryType::EntryNormal, entry.encode_to_vec().into());
 
         let snapshot = Bytes::from(vec![4, 5, 6]);
         let latest_snapshot_size = snapshot.len() as u64;
@@ -3170,6 +3021,9 @@ mod test {
             .expect_send_messages(vec![create_get_replica_state_response(
                 committed_normal_entry.index,
                 latest_snapshot_size,
+                ReplicaStatus::Leader,
+                node_id,
+                raft_state.leader_term,
             )])
             .take();
 
@@ -3202,7 +3056,12 @@ mod test {
             .expect_state(&raft_state)
             .expect_advance_ready(ready.number(), light_ready)
             .expect_advance_apply()
-            .expect_latest_snapshot_size(latest_snapshot_size);
+            .expect_latest_snapshot_size(latest_snapshot_size)
+            .expect_replica_status(RaftReplicaStatus {
+                role: RaftStateRole::Leader,
+                leader_replica_id: node_id,
+                term: raft_state.leader_term,
+            });
 
         let snapshot_builder = SnapshotBuilder::new()
             .expect_init(node_id)
@@ -3226,14 +3085,8 @@ mod test {
             .expect_on_save_snapshot(Ok(init_snapshot.clone()))
             .expect_on_process_command(None, Ok(CommandOutcome::with_none()))
             .expect_on_apply_event(
-                ActorEventContext {
-                    index: committed_normal_entry.index,
-                    owned: true,
-                },
-                ActorEvent {
-                    correlation_id: entry_id.entry_id,
-                    contents: entry.entry_contents,
-                },
+                ActorEventContext { index: committed_normal_entry.index, owned: true },
+                ActorEvent { correlation_id: entry_id.entry_id, contents: entry.entry_contents },
                 Ok(EventOutcome::with_command(ActorCommand {
                     correlation_id: entry_id.entry_id,
                     header: proposal_result.into(),
@@ -3257,10 +3110,7 @@ mod test {
             )
         );
 
-        assert_eq!(
-            Ok(()),
-            driver.receive_message(&mut mock_host, instant + 10, None)
-        );
+        assert_eq!(Ok(()), driver.receive_message(&mut mock_host, instant + 10, None));
 
         assert_eq!(
             Ok(()),
@@ -3343,9 +3193,7 @@ mod test {
             }])
             .expect_process_in_message(
                 in_message::Msg::DeliverSnapshotRequest(deliver_snapshot_request.clone()),
-                Ok(Some(in_message::Msg::DeliverSnapshotRequest(
-                    deliver_snapshot_request.clone(),
-                ))),
+                Ok(Some(in_message::Msg::DeliverSnapshotRequest(deliver_snapshot_request.clone()))),
             )
             .expect_process_out_message(
                 OutgoingMessage::DeliverSnapshotResponse(deliver_snapshot_response.clone()),
@@ -3353,9 +3201,7 @@ mod test {
             )
             .expect_make_tick()
             .expect_take_out_messages(vec![OutMessage {
-                msg: Some(wrap_deliver_snapshot_response_out(
-                    deliver_snapshot_response.clone(),
-                )),
+                msg: Some(wrap_deliver_snapshot_response_out(deliver_snapshot_response.clone())),
             }]);
 
         let mut driver = DriverBuilder::new()
@@ -3426,9 +3272,7 @@ mod test {
             Vec::new(),
             Vec::new(),
             None,
-            RaftSnapshot {
-                ..Default::default()
-            },
+            RaftSnapshot { ..Default::default() },
             1,
         );
 
@@ -3502,9 +3346,7 @@ mod test {
             )
             .expect_make_tick()
             .expect_take_out_messages(vec![OutMessage {
-                msg: Some(wrap_deliver_snapshot_request_out(
-                    deliver_snapshot_request.clone(),
-                )),
+                msg: Some(wrap_deliver_snapshot_request_out(deliver_snapshot_request.clone())),
             }])
             .expect_process_in_message(
                 in_message::Msg::DeliverSnapshotResponse(deliver_snapshot_response.clone()),

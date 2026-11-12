@@ -125,8 +125,8 @@ message StartReplicaRequest {
   RaftConfig raft_config = 3;
   // Serialized application configuration, accessible through the actor context.
   bytes app_config = 4;
-  // Indicates if this is an ephemeral node i.e. it is not replicated and raft is
-  // disabled.
+  // Indicates if this is an ephemeral node i.e. it is not replicated and raft
+  // is disabled.
   bool is_ephemeral = 6;
 
   // Endorsements of the trusted app that this node represents.
@@ -278,7 +278,7 @@ message DeliverSystemMessage {
   // The replica id of the sender.
   uint64 sender_replica_id = 2;
   // Message to be delivered, potentially encrypted. Use `Payload` instead.
-  bytes message_contents = 3 [deprecated=true];
+  bytes message_contents = 3 [deprecated = true];
   // Payload to be delivered, potentially encrypted.
   Payload payload = 4;
 }
@@ -292,9 +292,11 @@ message DeliverSnapshotRequest {
   // The unique id that is used to correlate attempt to deliver part of the
   // snapshot and failure or response.
   uint64 delivery_id = 3;
-  // The serialized payload message, potentially encrypted. Use `Payload` instead.
-  bytes payload_contents = 4 [deprecated=true];
-  // Payload carrying the serialized `SnapshotContent` message, potentially encrypted.
+  // The serialized payload message, potentially encrypted. Use `Payload`
+  // instead.
+  bytes payload_contents = 4 [deprecated = true];
+  // Payload carrying the serialized `SnapshotContent` message, potentially
+  // encrypted.
   Payload payload = 5;
 
   message SnapshotContent {
@@ -347,9 +349,11 @@ message DeliverSnapshotResponse {
   // The unique id that is used to correlate attempt to deliver part of the
   // snapshot and failure or response.
   uint64 delivery_id = 3;
-  // The serialized payload message, potentially encrypted. Use `Payload` instead.
-  bytes payload_contents = 4 [deprecated=true];
-  // Payload carrying the serialized `SnapshotAck` message, potentially encrypted.
+  // The serialized payload message, potentially encrypted. Use `Payload`
+  // instead.
+  bytes payload_contents = 4 [deprecated = true];
+  // Payload carrying the serialized `SnapshotAck` message, potentially
+  // encrypted.
   Payload payload = 5;
 
   message SnapshotAck {
@@ -409,6 +413,30 @@ message GetReplicaStateResponse {
 
   // Size (in bytes) of the latest Raft snapshot.
   uint64 latest_snapshot_size = 2;
+
+  // Status of this replica as known by the replica itself.
+  ReplicaStatus replica_status = 3;
+
+  // Id of the leader replica as known by this replica, 0 if unknown. The leader
+  // is temporarily unknown during elections.
+  uint64 leader_replica_id = 4;
+
+  // Current Raft term as known by this replica.
+  uint64 term = 5;
+}
+
+enum ReplicaStatus {
+  REPLICA_STATUS_UNSPECIFIED = 0;
+  // The replica isn't a voter according to the latest cluster configuration
+  // applied by this replica. This includes replicas that have been added to
+  // the cluster by the leader but haven't caught up yet (e.g. haven't
+  // received the leader's snapshot), and replicas that have been removed from
+  // the cluster.
+  REPLICA_STATUS_NOT_JOINED = 1;
+  // The replica is a follower.
+  REPLICA_STATUS_FOLLOWER = 2;
+  // The replica is the leader.
+  REPLICA_STATUS_LEADER = 3;
 }
 
 // Handshake message to establish a secure communication channel between two
@@ -438,7 +466,7 @@ message SecureChannelHandshake {
         // Request message for establishing a session with a peer.
         oak.session.v1.SessionRequest session_request = 3;
       }
-      reserved 1,2;
+      reserved 1, 2;
     }
 
     message RecipientResponse {
@@ -446,7 +474,7 @@ message SecureChannelHandshake {
         // Response to `SessionRequest` message.
         oak.session.v1.SessionResponse session_response = 3;
       }
-      reserved 1,2;
+      reserved 1, 2;
     }
   }
 }

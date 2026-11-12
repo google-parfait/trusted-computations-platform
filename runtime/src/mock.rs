@@ -167,6 +167,8 @@ mock! {
 
         fn state(&self) -> consensus::RaftState;
 
+        fn replica_status(&self) -> consensus::RaftReplicaStatus;
+
         fn leader(&self) -> bool;
 
         fn mut_store(&mut self) -> &mut S;

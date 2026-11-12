@@ -43,18 +43,19 @@ pub trait Store {
     ///
     /// # Panics
     ///
-    /// Panics if `entries` contains compacted entries, or there's a gap between `entries`
-    /// and the last received entry in the storage.
+    /// Panics if `entries` contains compacted entries, or there's a gap between
+    /// `entries` and the last received entry in the storage.
     fn append_entries(&mut self, entries: &[RaftEntry]) -> Result<(), RaftError>;
 
-    /// Overwrites the contents of this Storage object with those of the given snapshot.
+    /// Overwrites the contents of this Storage object with those of the given
+    /// snapshot.
     fn apply_snapshot(&mut self, snapshot: RaftSnapshot) -> Result<(), RaftError>;
 
     /// Checks if snapshotting at given index is desirable.
     fn should_snapshot(&self, applied_index: u64, config_state: &RaftConfigState) -> bool;
 
-    /// CreateSnapshot makes a snapshot which can be retrieved with Snapshot() and
-    /// can be used to reconstruct the state at that point.
+    /// CreateSnapshot makes a snapshot which can be retrieved with Snapshot()
+    /// and can be used to reconstruct the state at that point.
     ///
     /// If any configuration changes have been made since the last compaction,
     /// the result of the last ApplyConfChange must be passed in.
@@ -80,10 +81,17 @@ pub struct RaftState {
 
 impl RaftState {
     pub fn new() -> RaftState {
-        RaftState {
-            ..Default::default()
-        }
+        RaftState { ..Default::default() }
     }
+}
+
+/// Status of the Raft replica as known by the replica itself, irrespective of
+/// whether the replica is the leader.
+#[derive(PartialEq, Eq, Clone, Debug)]
+pub struct RaftReplicaStatus {
+    pub role: RaftStateRole,
+    pub leader_replica_id: u64,
+    pub term: u64,
 }
 
 #[derive(Default, Clone)]
@@ -155,10 +163,7 @@ pub struct RaftLightReady {
 
 impl RaftLightReady {
     pub fn new(messages: Vec<RaftMessage>, committed_entries: Vec<RaftEntry>) -> RaftLightReady {
-        RaftLightReady {
-            messages,
-            committed_entries,
-        }
+        RaftLightReady { messages, committed_entries }
     }
 
     pub fn take_messages(&mut self) -> Vec<RaftMessage> {
@@ -178,6 +183,8 @@ pub trait Raft {
     fn leader(&self) -> bool;
 
     fn state(&self) -> RaftState;
+
+    fn replica_status(&self) -> RaftReplicaStatus;
 
     fn mut_store(&mut self) -> &mut Self::S;
 
@@ -226,24 +233,15 @@ pub struct RaftSimple<S: Store + RaftStorage> {
 
 impl<S: Store + RaftStorage> RaftSimple<S> {
     pub fn new() -> RaftSimple<S> {
-        RaftSimple {
-            raft_node: None,
-            raft_ready: HashMap::new(),
-        }
+        RaftSimple { raft_node: None, raft_ready: HashMap::new() }
     }
 
     fn mut_raft_node(&mut self) -> &mut RaftNode<S> {
-        self.raft_node
-            .as_mut()
-            .expect("Raft node is initialized")
-            .as_mut()
+        self.raft_node.as_mut().expect("Raft node is initialized").as_mut()
     }
 
     fn raft_node(&self) -> &RaftNode<S> {
-        self.raft_node
-            .as_ref()
-            .expect("Raft node is initialized")
-            .as_ref()
+        self.raft_node.as_ref().expect("Raft node is initialized").as_ref()
     }
 }
 
@@ -275,6 +273,11 @@ impl<S: Store + RaftStorage> Raft for RaftSimple<S> {
         }
 
         state
+    }
+
+    fn replica_status(&self) -> RaftReplicaStatus {
+        let raft = &self.raft_node().raft;
+        RaftReplicaStatus { role: raft.state, leader_replica_id: raft.leader_id, term: raft.term }
     }
 
     fn mut_store(&mut self) -> &mut S {
@@ -316,8 +319,7 @@ impl<S: Store + RaftStorage> Raft for RaftSimple<S> {
         &mut self,
         config_change: RaftConfigChange,
     ) -> Result<(), RaftError> {
-        self.mut_raft_node()
-            .propose_conf_change(vec![], config_change)
+        self.mut_raft_node().propose_conf_change(vec![], config_change)
     }
 
     fn make_tick(&mut self) {
@@ -344,7 +346,8 @@ impl<S: Store + RaftStorage> Raft for RaftSimple<S> {
             ready.take_entries(),
             ready.take_committed_entries(),
             ready.hs().cloned(),
-            // Cloning of the snapshot is unfortunate here, will address this later.
+            // Cloning of the snapshot is unfortunate here, will address this
+            // later.
             ready.snapshot().clone(),
             ready.number(),
         );
@@ -357,10 +360,7 @@ impl<S: Store + RaftStorage> Raft for RaftSimple<S> {
     fn advance_ready(&mut self, raft_ready: RaftReady) -> RaftLightReady {
         let ready = self.raft_ready.remove(&raft_ready.number()).unwrap();
         let mut light_ready = self.mut_raft_node().advance(ready);
-        RaftLightReady::new(
-            light_ready.take_messages(),
-            light_ready.take_committed_entries(),
-        )
+        RaftLightReady::new(light_ready.take_messages(), light_ready.take_committed_entries())
     }
 
     fn advance_apply(&mut self) {
